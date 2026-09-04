@@ -17,6 +17,7 @@
 import { FIELD_ALIASES, POINT_FIELD_CANDIDATES, readSocrataPoint } from '../src/data-sources/camden/schema';
 import { redactRegistrations, isForbiddenField } from '../src/data-sources/shared/pii';
 import { normaliseCamdenRow } from '../src/data-sources/camden/adapter';
+import { classifyEnforcement } from '../src/data-sources/camden/enforcement-class';
 
 const SAMPLE_SIZE = 50;
 
@@ -149,6 +150,48 @@ async function main(): Promise<void> {
     }`,
   );
 
+  /* -- Enforcement mix and precision claim --------------------------------- */
+
+  // Learned from the sample rather than assumed. Camden's dataset is not a
+  // parking dataset: the live sample contains `MTC` (moving traffic). Anything
+  // presented as a count needs to say which enforcement classes it covers.
+  console.log('\nENFORCEMENT MIX (from the sample)');
+  console.log('─'.repeat(100));
+  const ticketTypeCounts = countDistinct(payload, 'ticket_type');
+  if (ticketTypeCounts.size === 0) {
+    console.log('  (no ticket_type column in this dataset)');
+  } else {
+    for (const [value, count] of sortedByCount(ticketTypeCounts)) {
+      const c = classifyEnforcement(value);
+      console.log(
+        `  ${value.padEnd(24)} ${String(count).padStart(4)}  → ${c.enforcementClass}${c.recognised ? '' : '  ✗ UNRECOGNISED — classify before ingesting'}`,
+      );
+    }
+  }
+
+  const cctvCounts = countDistinct(payload, 'ticket_issued_via_cctv_camera');
+  if (cctvCounts.size > 0) {
+    console.log('\n  Issued via CCTV camera:');
+    for (const [value, count] of sortedByCount(cctvCounts)) {
+      console.log(`    ${value.padEnd(22)} ${String(count).padStart(4)}`);
+    }
+  }
+
+  console.log('\nPRECISION THE PUBLISHER CLAIMS');
+  console.log('─'.repeat(100));
+  const accuracyCounts = countDistinct(payload, 'spatial_accuracy');
+  if (accuracyCounts.size === 0) {
+    console.log('  (no spatial_accuracy column; the publisher makes no precision claim)');
+  } else {
+    for (const [value, count] of sortedByCount(accuracyCounts)) {
+      console.log(`  ${value.padEnd(24)} ${String(count).padStart(4)}`);
+    }
+    console.log(
+      '  This is the publisher\'s own claim about how precisely a notice is located.',
+    );
+    console.log('  The product may not claim precision finer than this value.');
+  }
+
   /* -- Dry normalisation --------------------------------------------------- */
 
   console.log('\nNORMALISATION OF THE SAMPLE');
@@ -184,8 +227,17 @@ async function main(): Promise<void> {
     console.log(`  ✗ Only ${Math.round(acceptRate * 100)}% of the sample normalised successfully.`);
     console.log('    Fix the rejections above before attempting a full ingestion.');
   } else if (geolocated === 0) {
-    console.log('  ! Rows normalise, but none carry usable coordinates.');
-    console.log('    The map needs coordinates; hotspot pages would have no position.');
+    const publishesCoordinates =
+      names.has('longitude') || names.has('latitude') || pointColumn !== undefined;
+    if (publishesCoordinates) {
+      console.log('  ! Rows normalise, but no coordinate could be read from the columns that exist.');
+      console.log('    That is an adapter or format problem — fix it before ingesting.');
+    } else {
+      console.log('  ! Rows normalise. This dataset publishes no coordinates at all.');
+      console.log('    Street names, dates and contravention codes are intact and worth ingesting;');
+      console.log('    nothing can be placed on a map until a street-reference dataset is loaded.');
+      console.log('    See docs/geography.md. No position will be invented in the meantime.');
+    }
   } else {
     console.log(`  ✓ The adapter reads this dataset. ${Math.round(acceptRate * 100)}% of the sample`);
     console.log(`    normalised, ${Math.round((geolocated / accepted) * 100)}% with coordinates.`);
@@ -194,6 +246,24 @@ async function main(): Promise<void> {
   console.log('');
 
   process.exit(missingRequired > 0 || acceptRate < 0.8 ? 1 : 0);
+}
+
+/** Distinct non-empty values of one column across the sample, with counts. */
+function countDistinct(rows: readonly unknown[], column: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (typeof row !== 'object' || row === null) continue;
+    const value = (row as Record<string, unknown>)[column];
+    if (value === null || value === undefined) continue;
+    const key = String(value).trim();
+    if (key === '') continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function sortedByCount(counts: Map<string, number>): [string, number][] {
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
 /** Truncated, scrubbed sample value — safe to paste into an issue. */

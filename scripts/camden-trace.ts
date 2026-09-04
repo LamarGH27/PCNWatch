@@ -161,6 +161,7 @@ async function traceLocation(
 ): Promise<void> {
   console.log(`\n\n${'='.repeat(96)}`);
   console.log(`LOCATION  ${location.display_name}   (/hotspots/camden/${location.slug})`);
+  console.log(`period ${period}   ·   scores recomputed as of ${asOf}`);
   console.log('='.repeat(96));
 
   /* 1. Raw source rows ---------------------------------------------------- */

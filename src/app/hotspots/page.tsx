@@ -6,6 +6,7 @@ import { getContravention } from '@/core/reference/store';
 import {
   Card,
   CoverageNotice,
+  MeasurementBasis,
   ScoreBadge,
   ScoreExplanation,
   ScoreUnavailable,
@@ -57,6 +58,10 @@ export default async function HotspotsPage({
         within the data we hold. Ranking high does not mean parking is prohibited, and ranking low
         does not mean it is allowed.
       </p>
+
+      <div style={{ marginTop: 14 }}>
+        <MeasurementBasis />
+      </div>
 
       <div style={{ marginTop: 22, maxWidth: 620 }}>
         <CoverageNotice coverage={coverage} />

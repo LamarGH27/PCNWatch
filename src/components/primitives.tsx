@@ -120,6 +120,50 @@ export function ScoreUnavailable({ reason }: { reason: string }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* What is being measured                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * States what a count on this page actually counts.
+ *
+ * Camden's published dataset mixes enforcement classes — the live sample
+ * contains moving traffic contraventions alongside parking. A figure captioned
+ * "parking" would misdescribe it, so every surface that shows a count says which
+ * classes are included and, where relevant, that positions are street-level.
+ *
+ * The wording describes the method, which is true of any mix: classes are
+ * counted together, and the page does not claim to have separated them.
+ */
+export const MEASUREMENT_BASIS =
+  'These figures count penalty charge notices of every enforcement class the authority publishes — ' +
+  'parking, bus lane and moving traffic contraventions are counted together, not separated. ' +
+  'They are not parking tickets alone.';
+
+export function MeasurementBasis({
+  /** Overrides the default when real per-class counts are known. */
+  statement,
+  geography,
+}: {
+  statement?: string;
+  /** Optional sentence describing how precisely notices are positioned. */
+  geography?: string | null;
+}) {
+  return (
+    <p
+      style={{
+        margin: 0,
+        fontSize: 13,
+        color: 'var(--text-muted)',
+        maxWidth: 640,
+      }}
+    >
+      {statement ?? MEASUREMENT_BASIS}
+      {geography ? ` ${geography}` : null}
+    </p>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Coverage                                                            */
 /* ------------------------------------------------------------------ */
 

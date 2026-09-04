@@ -17,6 +17,16 @@ import type {
   SourceDescriptor,
 } from '../shared/types';
 import {
+  type GeometryResult,
+  type NoGeometryReason,
+  type SourceLocation,
+  hasGeometry,
+  noGeometry,
+  sourcePublishedGeometry,
+} from '@/core/geography/types';
+import { getStreetReference } from '@/core/geography/street-reference';
+import { classifyEnforcement } from './enforcement-class';
+import {
   CAMDEN_BBOX,
   ERROR_EXCERPT_FIELDS,
   RETAINABLE_METADATA_FIELDS,
@@ -285,22 +295,23 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
   const latField = resolveField(raw, 'latitude');
   const nestedPoint = resolvePoint(raw);
 
-  let coordinates: { longitude: number; latitude: number } | null = null;
+  const sourcePublishesCoordinates = Boolean(lonField || latField || nestedPoint);
+  let sourcePoint: { longitude: number; latitude: number } | null = null;
   let coordinateSource: string | null = null;
 
   if (lonField && latField) {
-    coordinates = parseCoordinates(lonField.value, latField.value, CAMDEN_BBOX);
-    coordinateSource = coordinates ? `${lonField.key}/${latField.key}` : null;
-    if (!coordinates) warnings.push('COORDINATES_OUT_OF_RANGE');
+    sourcePoint = parseCoordinates(lonField.value, latField.value, CAMDEN_BBOX);
+    coordinateSource = sourcePoint ? `${lonField.key}/${latField.key}` : null;
+    if (!sourcePoint) warnings.push('COORDINATES_OUT_OF_RANGE');
   }
 
-  if (!coordinates && nestedPoint) {
-    coordinates = parseCoordinates(nestedPoint.longitude, nestedPoint.latitude, CAMDEN_BBOX);
-    coordinateSource = coordinates ? nestedPoint.key : null;
-    if (!coordinates) warnings.push('COORDINATES_OUT_OF_RANGE');
+  if (!sourcePoint && nestedPoint) {
+    sourcePoint = parseCoordinates(nestedPoint.longitude, nestedPoint.latitude, CAMDEN_BBOX);
+    coordinateSource = sourcePoint ? nestedPoint.key : null;
+    if (!sourcePoint) warnings.push('COORDINATES_OUT_OF_RANGE');
   }
 
-  if (!lonField && !latField && !nestedPoint) warnings.push('COORDINATES_ABSENT');
+  if (!sourcePublishesCoordinates) warnings.push('COORDINATES_ABSENT');
 
   /* -- Contravention ------------------------------------------------------ */
 
@@ -309,17 +320,62 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
   if (codeField && !contravention) warnings.push('CONTRAVENTION_CODE_UNPARSEABLE');
   if (!codeField) warnings.push('CONTRAVENTION_CODE_ABSENT');
 
+  // Camden publishes the suffix in its own column. Prefer that over the letter
+  // parsed out of the code, which is only a fallback for sources that inline it.
+  const suffixField = resolveField(raw, 'contraventionSuffix');
+  const suffix =
+    (suffixField ? String(suffixField.value).trim().toLowerCase() : null) || contravention?.suffix || null;
+
+  const descriptionField = resolveField(raw, 'contraventionDescription');
+
+  // Enforcement class. An unrecognised ticket type becomes UNKNOWN and is
+  // counted separately; it is never assumed to be parking.
   const enforcementTypeField = resolveField(raw, 'enforcementType');
-  const enforcementType = mapEnforcementType(enforcementTypeField?.value);
+  const classification = classifyEnforcement(
+    enforcementTypeField?.value,
+    descriptionField?.value ?? raw.ticket_description,
+    raw.ticket_issued_via_cctv_camera,
+  );
+  const enforcementType = classification.enforcementClass;
+  if (!classification.recognised) {
+    warnings.push(
+      classification.rawTicketType ? 'ENFORCEMENT_TYPE_UNRECOGNISED' : 'ENFORCEMENT_TYPE_ABSENT',
+    );
+  }
 
   const localityField = resolveField(raw, 'locality');
   const postcodeField = resolveField(raw, 'postcode');
+
+  /* -- Geography ----------------------------------------------------------- */
+
+  // A. What the authority published about where this notice was issued.
+  const sourceLocation: SourceLocation = {
+    streetName,
+    streetNameNormalised,
+    locality: localityField ? String(localityField.value).trim() : null,
+    postcodeDistrict: postcodeField ? parsePostcodeDistrict(postcodeField.value) : null,
+    publisherSpatialAccuracy:
+      typeof raw.spatial_accuracy === 'string' && raw.spatial_accuracy.trim() !== ''
+        ? raw.spatial_accuracy.trim()
+        : null,
+  };
+
+  // B. A coordinate, if one can be justified. A source-published point is used
+  // as-is; otherwise the street reference is asked, and today it declines. No
+  // branch of this produces a coordinate without provenance.
+  const geometry: GeometryResult = sourcePoint
+    ? sourcePublishedGeometry(sourcePoint.longitude, sourcePoint.latitude, coordinateSource ?? 'unknown')
+    : sourcePublishesCoordinates
+      ? geometryOrReference(sourceLocation, 'SOURCE_COORDINATES_UNUSABLE')
+      : geometryOrReference(sourceLocation, 'SOURCE_PUBLISHES_NO_COORDINATES');
+
+  if (!hasGeometry(geometry)) warnings.push(`NO_GEOMETRY_${geometry.reason}`);
 
   /* -- Provenance and confidence ------------------------------------------ */
 
   const sanitised = sanitiseSourceMetadata(raw, RETAINABLE_METADATA_FIELDS);
   const dataConfidence = scoreConfidence({
-    hasCoordinates: coordinates !== null,
+    hasCoordinates: hasGeometry(geometry),
     hasContravention: contravention !== null,
     hasTime: timing.hour !== null,
     hasLocality: localityField !== null,
@@ -344,10 +400,10 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
       streetName,
       streetNameNormalised,
       locationSlug: slugify(streetNameNormalised),
-      locality: localityField ? String(localityField.value).trim() : null,
-      postcodeDistrict: postcodeField ? parsePostcodeDistrict(postcodeField.value) : null,
-      longitude: coordinates?.longitude ?? null,
-      latitude: coordinates?.latitude ?? null,
+      locality: sourceLocation.locality,
+      postcodeDistrict: sourceLocation.postcodeDistrict,
+      longitude: geometry.longitude,
+      latitude: geometry.latitude,
       dataConfidence,
       sourceMetadata: {
         ...sanitised.metadata,
@@ -357,7 +413,18 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
           date: timestampField?.key ?? dateField?.key ?? null,
           contravention: codeField?.key ?? null,
           coordinates: coordinateSource,
+          enforcementType: enforcementTypeField?.key ?? null,
         },
+        _contraventionSuffix: suffix,
+        _geometry: {
+          precision: geometry.precision,
+          ...geometry.provenance,
+          ...(hasGeometry(geometry) ? {} : { reason: geometry.reason }),
+        },
+        _publisherSpatialAccuracy: sourceLocation.publisherSpatialAccuracy,
+        _enforcementClass: enforcementType,
+        _enforcementClassRecognised: classification.recognised,
+        _viaCctv: classification.viaCctv,
         _droppedFieldCount: sanitised.droppedFields.length,
       },
       rowHash: rowHash([
@@ -365,11 +432,28 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
         timing.timestamp ?? timing.date,
         streetNameNormalised,
         contravention?.code ?? null,
-        coordinates?.longitude ?? null,
-        coordinates?.latitude ?? null,
+        geometry.longitude,
+        geometry.latitude,
       ]),
     },
   };
+}
+
+/**
+ * Ask the street reference for geometry the source did not publish.
+ *
+ * When no reference is configured this returns the *source's* reason rather
+ * than the resolver's, so an ingestion report distinguishes "this dataset has no
+ * geography" from "geography was there and we could not read it".
+ */
+function geometryOrReference(
+  location: SourceLocation,
+  sourceReason: NoGeometryReason,
+): GeometryResult {
+  const reference = getStreetReference();
+  if (!reference.available) return noGeometry(sourceReason);
+  // A configured reference gives its own reason when it cannot match a street.
+  return reference.resolve(location);
 }
 
 /**
@@ -392,15 +476,6 @@ export function scoreConfidence(signals: {
   if (signals.hasLocality) confidence += 0.05;
   if (!signals.hasCoordinates) confidence = Math.min(confidence, 0.35);
   return Math.round(Math.min(1, confidence) * 1000) / 1000;
-}
-
-function mapEnforcementType(raw: unknown): 'PARKING' | 'BUS_LANE' | 'MOVING_TRAFFIC' | 'UNKNOWN' {
-  if (typeof raw !== 'string') return 'UNKNOWN';
-  const value = raw.toLowerCase();
-  if (value.includes('bus lane') || value.includes('bus_lane')) return 'BUS_LANE';
-  if (value.includes('moving') || value.includes('traffic')) return 'MOVING_TRAFFIC';
-  if (value.includes('park')) return 'PARKING';
-  return 'UNKNOWN';
 }
 
 function failure(

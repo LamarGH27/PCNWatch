@@ -19,7 +19,11 @@
 import { createCamdenAdapter, CAMDEN_AUTHORITY_SLUG, CamdenFetchError } from '../src/data-sources/camden/adapter';
 import { runIngestion } from '../src/data-sources/shared/pipeline';
 import { runCamdenIngestionJob, type IngestionJobResult } from '../src/server/ingestion/postgres/run';
-import { analyseQuality, evaluateQualityGate } from '../src/server/ingestion/postgres/quality';
+import {
+  analyseQuality,
+  evaluateQualityGate,
+  type MapReadiness,
+} from '../src/server/ingestion/postgres/quality';
 import { knownContraventionCodes } from '../src/core/reference/store';
 import type { IngestionError, NormalisedPcnEvent } from '../src/data-sources/shared/types';
 
@@ -231,7 +235,13 @@ function printReport(result: IngestionJobResult, datasetUrl: string): void {
 
   if (q) {
     section('LOCATION QUALITY');
+    row('Source geography', q.location.geographyAvailability);
     row('% geolocated', `${q.location.percentageGeolocated}%`);
+    for (const [reason, count] of Object.entries(q.location.noGeometryReasons).sort(
+      (a, b) => b[1] - a[1],
+    )) {
+      row(`  no geometry — ${reason}`, count);
+    }
     row('Unique locations', q.location.uniqueLocations);
     row('Unique coordinate pairs', q.location.uniqueCoordinatePairs);
     row('Shared coordinate pairs', q.location.sharedCoordinatePairs);
@@ -310,6 +320,7 @@ function printReport(result: IngestionJobResult, datasetUrl: string): void {
   if (result.qualityGate) {
     section('DATA QUALITY GATE');
     row('Result', result.qualityGate.pass ? 'PASS' : 'FAIL');
+    row('Map readiness', MAP_READINESS_LABELS[result.qualityGate.mapReadiness]);
     for (const f of result.qualityGate.failures) console.log(`  ✗ ${f}`);
     for (const c2 of result.qualityGate.cautions) console.log(`  ! ${c2}`);
   }
@@ -319,6 +330,15 @@ function printReport(result: IngestionJobResult, datasetUrl: string): void {
     console.log(`  ${result.fatalError}`);
   }
 }
+
+const MAP_READINESS_LABELS: Readonly<Record<MapReadiness, string>> = {
+  READY: 'READY — enough positioned records to draw the map',
+  SPARSE: 'SPARSE — too few records positioned for a map worth showing',
+  NO_SOURCE_GEOGRAPHY:
+    'NO SOURCE GEOGRAPHY — the dataset publishes no coordinates; needs a street reference, not a fix',
+  GEOGRAPHY_UNREADABLE:
+    'GEOGRAPHY UNREADABLE — coordinates are published but none could be read; needs an adapter fix',
+};
 
 function section(title: string): void {
   console.log(`\n${title}\n${'─'.repeat(Math.max(title.length, 46))}`);

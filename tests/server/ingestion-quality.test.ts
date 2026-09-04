@@ -145,6 +145,105 @@ describe('data-quality measurement', () => {
   });
 });
 
+describe('geography availability', () => {
+  // The remedies differ: a dataset with no coordinates needs a street-reference
+  // dataset, one whose coordinates we cannot read needs an adapter fix. Reporting
+  // both as "0% geolocated" would hide which of the two is true.
+  const noCoords = { longitude: null, latitude: null } as const;
+
+  it('recognises a source that publishes no coordinates at all', () => {
+    const events = batch(200).map((e) => ({
+      ...e,
+      ...noCoords,
+      sourceMetadata: { _geometry: { origin: 'NONE', reason: 'SOURCE_PUBLISHES_NO_COORDINATES' } },
+    }));
+    const q = analyseQuality(events, [], KNOWN_CODES, TODAY);
+    expect(q.location.geographyAvailability).toBe('SOURCE_PUBLISHES_NONE');
+    expect(q.location.noGeometryReasons['SOURCE_PUBLISHES_NO_COORDINATES']).toBe(200);
+    expect(q.warnings.join(' ')).toMatch(/does not contain geography/);
+    expect(q.warnings.join(' ')).not.toMatch(/adapter/);
+  });
+
+  it('recognises coordinates that are published but unreadable', () => {
+    const events = batch(200).map((e) => ({
+      ...e,
+      ...noCoords,
+      sourceMetadata: { _geometry: { origin: 'NONE', reason: 'SOURCE_COORDINATES_UNUSABLE' } },
+    }));
+    const q = analyseQuality(events, [], KNOWN_CODES, TODAY);
+    expect(q.location.geographyAvailability).toBe('PUBLISHED_BUT_UNUSABLE');
+    expect(q.warnings.join(' ')).toMatch(/adapter or source-format problem/);
+  });
+
+  it('fails the gate for both, but names the right remedy for each', () => {
+    const none = evaluateQualityGate(
+      analyseQuality(
+        batch(200).map((e) => ({
+          ...e,
+          ...noCoords,
+          sourceMetadata: { _geometry: { origin: 'NONE', reason: 'SOURCE_PUBLISHES_NO_COORDINATES' } },
+        })),
+        [],
+        KNOWN_CODES,
+        TODAY,
+      ),
+      200,
+      0,
+    );
+    expect(none.pass).toBe(false);
+    expect(none.mapReadiness).toBe('NO_SOURCE_GEOGRAPHY');
+    expect(none.failures.join(' ')).toMatch(/street-reference dataset/);
+    // And it must not slander the records themselves.
+    expect(none.failures.join(' ')).toMatch(/not a fault in the records/);
+
+    const unreadable = evaluateQualityGate(
+      analyseQuality(
+        batch(200).map((e) => ({
+          ...e,
+          ...noCoords,
+          sourceMetadata: { _geometry: { origin: 'NONE', reason: 'SOURCE_COORDINATES_UNUSABLE' } },
+        })),
+        [],
+        KNOWN_CODES,
+        TODAY,
+      ),
+      200,
+      0,
+    );
+    expect(unreadable.mapReadiness).toBe('GEOGRAPHY_UNREADABLE');
+    expect(unreadable.failures.join(' ')).toMatch(/Fix the adapter/);
+  });
+
+  it('does not pass the gate merely because the absence is explainable', () => {
+    // Honest reporting is not the same as an acceptable outcome. A dataset with
+    // no geography still cannot be presented as a map.
+    const q = analyseQuality(
+      batch(500).map((e) => ({
+        ...e,
+        ...noCoords,
+        sourceMetadata: { _geometry: { origin: 'NONE', reason: 'SOURCE_PUBLISHES_NO_COORDINATES' } },
+      })),
+      [],
+      KNOWN_CODES,
+      TODAY,
+    );
+    expect(evaluateQualityGate(q, 500, 0).pass).toBe(false);
+  });
+
+  it('reports a fully positioned batch as complete and map-ready', () => {
+    const q = analyseQuality(batch(500), [], KNOWN_CODES, TODAY);
+    expect(q.location.geographyAvailability).toBe('COMPLETE');
+    expect(evaluateQualityGate(q, 500, 0).mapReadiness).toBe('READY');
+  });
+
+  it('reports a partly positioned batch as sparse, not as missing geography', () => {
+    const events = batch(200).map((e, i) => (i < 190 ? { ...e, ...noCoords } : e));
+    const q = analyseQuality(events, [], KNOWN_CODES, TODAY);
+    expect(q.location.geographyAvailability).toBe('PARTIAL');
+    expect(evaluateQualityGate(q, 200, 0).mapReadiness).toBe('SPARSE');
+  });
+});
+
 describe('quality gate', () => {
   it('passes a healthy batch', () => {
     const q = analyseQuality(batch(500), [], KNOWN_CODES, TODAY);

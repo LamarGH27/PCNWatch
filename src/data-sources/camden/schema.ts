@@ -69,24 +69,66 @@ export function readSocrataPoint(value: unknown): { longitude: number; latitude:
  * Order matters: the first alias present in a row wins.
  */
 export const FIELD_ALIASES = {
-  recordId: ['pcn_id', 'pcn_reference', 'reference', 'id', 'ticket_id', 'notice_number'],
+  // `socrata_id` is the stable per-row identifier in Camden's published dataset.
+  recordId: ['socrata_id', 'pcn_id', 'pcn_reference', 'reference', 'id', 'ticket_id', 'notice_number'],
   contraventionCode: ['contravention_code', 'contravention', 'code', 'cont_code'],
+  // Camden publishes the suffix in its own column rather than inside the code.
+  contraventionSuffix: ['contravention_code_suffix', 'contravention_suffix'],
+  contraventionDescription: ['contravention_code_description', 'contravention_description'],
+  // `contravention_date` is when the contravention happened. It is listed first
+  // because it is the only date on Camden's dataset that describes the event;
+  // see NEVER_EVENT_TIME below for why that distinction is enforced, not assumed.
   issuedTimestamp: [
+    'contravention_date',
     'issue_datetime',
     'date_time_issued',
     'issued_datetime',
     'observation_datetime',
     'datetime',
   ],
-  issuedDate: ['issue_date', 'date_issued', 'date', 'ticket_date', 'observation_date'],
-  issuedTime: ['issue_time', 'time_issued', 'time', 'observation_time'],
+  issuedDate: ['contravention_date', 'issue_date', 'date_issued', 'date', 'ticket_date', 'observation_date'],
+  issuedTime: ['contravention_time', 'issue_time', 'time_issued', 'time', 'observation_time'],
   street: ['street', 'street_name', 'location', 'road_name', 'street_location', 'place'],
-  locality: ['locality', 'area', 'ward', 'ward_name'],
+  locality: ['controlled_parking_zone_area', 'locality', 'area', 'ward', 'ward_name'],
   postcode: ['postcode', 'post_code', 'postcode_district'],
-  longitude: ['longitude', 'lon', 'lng', 'x', 'easting_wgs84'],
-  latitude: ['latitude', 'lat', 'y', 'northing_wgs84'],
+  longitude: ['longitude', 'lon', 'lng', 'x'],
+  latitude: ['latitude', 'lat', 'y'],
   enforcementType: ['ticket_type', 'type', 'enforcement_type', 'pcn_type'],
 } as const satisfies Record<string, readonly string[]>;
+
+/**
+ * Columns that must NEVER be read as the time the contravention happened,
+ * however plausible their name looks to a future maintainer.
+ *
+ * `last_uploaded` is when Camden last refreshed the row in its open-data
+ * platform. Treating it as the event time would silently restate the entire
+ * dataset as having happened on a handful of publication dates, which would
+ * destroy every temporal figure the product makes — trends, busiest hours,
+ * recency weighting and the period windows the Ticket Activity Score is
+ * computed over — while looking perfectly healthy in the ingestion report.
+ *
+ * This is enforced in `resolveField` rather than left to the alias lists, so
+ * adding such a column to a date alias by mistake cannot take effect.
+ */
+export const NEVER_EVENT_TIME: readonly string[] = [
+  'last_uploaded',
+  'last_updated',
+  'uploaded_at',
+  'published_at',
+  'extracted_at',
+  'ingested_at',
+  'row_updated',
+  ':updated_at',
+  ':created_at',
+];
+
+/** Logical fields that describe when the contravention occurred. */
+const EVENT_TIME_FIELDS: readonly string[] = ['issuedTimestamp', 'issuedDate', 'issuedTime'];
+
+export function isForbiddenEventTimeColumn(column: string): boolean {
+  const normalised = column.toLowerCase().trim();
+  return NEVER_EVENT_TIME.some((f) => normalised === f || normalised.endsWith(f));
+}
 
 export type LogicalField = keyof typeof FIELD_ALIASES;
 
@@ -98,22 +140,68 @@ export type LogicalField = keyof typeof FIELD_ALIASES;
  * reviewable act.
  */
 export const RETAINABLE_METADATA_FIELDS: readonly string[] = [
+  // Contravention detail — lets a location page explain a code we hold no
+  // reference record for, and lets us check our records against the publisher's.
   'contravention_code',
+  'contravention_code_description',
+  'contravention_code_suffix',
   'contravention',
   'code',
   'cont_code',
+
+  // Enforcement class and channel. Retained because conflating a moving-traffic
+  // contravention with a parking one would misdescribe what is being measured.
   'ticket_type',
+  'ticket_description',
+  'ticket_issued_via_cctv_camera',
   'type',
   'enforcement_type',
   'pcn_type',
-  'locality',
-  'area',
-  'ward',
-  'ward_name',
+
+  // Location context. The zone is the only areal unit Camden publishes and is
+  // the most promising key for deriving geometry.
+  'controlled_parking_zone_area',
   'street',
   'street_name',
   'road_name',
   'place',
+  'locality',
+  'area',
+  'ward',
+  'ward_name',
+
+  // Camden's own statement about how precisely this row is located. Retained
+  // because any geometry we later derive must be labelled no more precisely
+  // than the source claims.
+  'spatial_accuracy',
+
+  // Charge band, which is how we could one day check a demanded amount against
+  // what the authority says applies.
+  'charging_band_description',
+
+  // Publication timestamp. Retained for provenance only — never as event time.
+  'last_uploaded',
+];
+
+/**
+ * Deliberately NOT retained.
+ *
+ * `status_of_case`, `formal_representation`, `has_appeal`,
+ * `penalty_charge_notice_cancelled`, `penalty_charge_notice_written_off`,
+ * `vehicle_removed` and `vehicle_category` describe the outcome and subject of
+ * an individual penalty. PCNWatch's public tables measure where enforcement
+ * happened, not what became of any particular notice, and outcome fields narrow
+ * a record towards a specific vehicle and person. They are dropped at ingestion
+ * rather than stored and filtered later.
+ */
+export const DELIBERATELY_DROPPED_FIELDS: readonly string[] = [
+  'status_of_case',
+  'formal_representation',
+  'has_appeal',
+  'penalty_charge_notice_cancelled',
+  'penalty_charge_notice_written_off',
+  'vehicle_removed',
+  'vehicle_category',
 ];
 
 /** Fields kept on an ingestion_errors excerpt so a human can debug a rejection. */
@@ -136,7 +224,10 @@ export const ERROR_EXCERPT_FIELDS: readonly string[] = [
  * "[object Object]", which would sail through as a street name.
  */
 export function resolveField(row: RawRow, field: LogicalField): { key: string; value: unknown } | null {
+  const isEventTime = EVENT_TIME_FIELDS.includes(field);
   for (const alias of FIELD_ALIASES[field]) {
+    // A publication timestamp is never the event time, whatever the alias list says.
+    if (isEventTime && isForbiddenEventTimeColumn(alias)) continue;
     const value = row[alias];
     if (value === undefined || value === null) continue;
     if (typeof value === 'object') continue;

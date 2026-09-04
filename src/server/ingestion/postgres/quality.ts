@@ -31,6 +31,14 @@ export interface QualityReport {
     /** Street values that look like a placeholder rather than a real place. */
     readonly vagueLocations: number;
     readonly vagueExamples: readonly string[];
+    /**
+     * Whether the *source* publishes coordinates at all, as opposed to
+     * publishing them badly. Camden's PCN dataset publishes none, which is a
+     * property of the dataset and not a defect in the records.
+     */
+    readonly geographyAvailability: GeographyAvailability;
+    /** Reasons records carry no geometry, counted. */
+    readonly noGeometryReasons: Readonly<Record<string, number>>;
   };
 
   readonly temporal: {
@@ -70,6 +78,41 @@ export interface QualityReport {
   readonly warnings: readonly string[];
 }
 
+/**
+ * Where geography stands for a batch.
+ *
+ * The distinction matters because the remedies are different and the honest
+ * statements to a user are different. A source that publishes no coordinates
+ * needs a street-reference dataset; a source whose coordinates we failed to read
+ * needs an adapter fix. Reporting both as "only 0% geolocated" would hide which.
+ */
+export type GeographyAvailability =
+  /** No accepted record's source row carried any coordinate column. */
+  | 'SOURCE_PUBLISHES_NONE'
+  /** Coordinate columns exist but no record yielded a usable position. */
+  | 'PUBLISHED_BUT_UNUSABLE'
+  /** Some records positioned, some not. */
+  | 'PARTIAL'
+  /** Every accepted record carries a position. */
+  | 'COMPLETE';
+
+/**
+ * Reads the geometry provenance the adapter stamped on each record. Absence of
+ * the stamp is treated as unknown rather than assumed to be either case.
+ */
+function readGeometryProvenance(event: NormalisedPcnEvent): {
+  origin: string | null;
+  reason: string | null;
+} {
+  const raw = event.sourceMetadata['_geometry'];
+  if (typeof raw !== 'object' || raw === null) return { origin: null, reason: null };
+  const record = raw as Record<string, unknown>;
+  return {
+    origin: typeof record['origin'] === 'string' ? record['origin'] : null,
+    reason: typeof record['reason'] === 'string' ? record['reason'] : null,
+  };
+}
+
 /** Street values that carry no locational meaning. */
 const VAGUE_PATTERNS: readonly RegExp[] = [
   /^\s*$/,
@@ -106,11 +149,39 @@ export function analyseQuality(
       e.latitude! > CAMDEN_BBOX.maxLat,
   ).length;
 
+  const noGeometryReasons: Record<string, number> = {};
+  let sourcePublishedCoordinateColumn = false;
+  for (const e of events) {
+    const { origin, reason } = readGeometryProvenance(e);
+    if (origin === 'SOURCE_PUBLISHED') sourcePublishedCoordinateColumn = true;
+    if (reason) {
+      noGeometryReasons[reason] = (noGeometryReasons[reason] ?? 0) + 1;
+      if (reason === 'SOURCE_COORDINATES_UNUSABLE') sourcePublishedCoordinateColumn = true;
+    }
+  }
+
+  const geographyAvailability: GeographyAvailability =
+    events.length > 0 && located.length === events.length
+      ? 'COMPLETE'
+      : located.length > 0
+        ? 'PARTIAL'
+        : sourcePublishedCoordinateColumn
+          ? 'PUBLISHED_BUT_UNUSABLE'
+          : 'SOURCE_PUBLISHES_NONE';
+
   const vague = events.filter((e) => VAGUE_PATTERNS.some((p) => p.test(e.streetName)));
   const percentageGeolocated =
     events.length === 0 ? 0 : Math.round((located.length / events.length) * 1000) / 10;
 
-  if (percentageGeolocated < 50 && events.length > 0) {
+  if (events.length > 0 && geographyAvailability === 'SOURCE_PUBLISHES_NONE') {
+    warnings.push(
+      'This source publishes no coordinates for any record. The records are not defective — the dataset simply does not contain geography. Positions would have to come from a separate street-reference dataset, and none is loaded, so nothing can be placed on the map.',
+    );
+  } else if (events.length > 0 && geographyAvailability === 'PUBLISHED_BUT_UNUSABLE') {
+    warnings.push(
+      'This source publishes coordinate columns but no accepted record yielded a usable position. That points at an adapter or source-format problem, not at missing data.',
+    );
+  } else if (percentageGeolocated < 50 && events.length > 0) {
     warnings.push(
       `Only ${percentageGeolocated}% of accepted records carry usable coordinates. Map coverage will be sparse and many locations will be refused a score.`,
     );
@@ -196,6 +267,8 @@ export function analyseQuality(
       outsideBounds,
       vagueLocations: vague.length,
       vagueExamples: [...new Set(vague.map((e) => e.streetName))].slice(0, 5),
+      geographyAvailability,
+      noGeometryReasons,
     },
     temporal: {
       earliestDate: earliest,
@@ -239,7 +312,22 @@ export interface QualityGate {
   readonly pass: boolean;
   readonly failures: readonly string[];
   readonly cautions: readonly string[];
+  /**
+   * Why the map cannot be presented, when it cannot. Separate from `pass` so a
+   * caller can say the accurate thing: a dataset with no geography is not a
+   * dataset with broken geography, even though neither can be mapped.
+   */
+  readonly mapReadiness: MapReadiness;
 }
+
+export type MapReadiness =
+  | 'READY'
+  /** Enough records, but too few positioned to draw a map worth showing. */
+  | 'SPARSE'
+  /** The source publishes no coordinates. Needs a street reference, not a fix. */
+  | 'NO_SOURCE_GEOGRAPHY'
+  /** Coordinates are published but unreadable. Needs an adapter fix. */
+  | 'GEOGRAPHY_UNREADABLE';
 
 export const QUALITY_THRESHOLDS = {
   /** Below this share of geolocated records the map is not worth presenting. */
@@ -271,10 +359,33 @@ export function evaluateQualityGate(
     );
   }
 
+  let mapReadiness: MapReadiness = 'READY';
   if (quality.location.percentageGeolocated < QUALITY_THRESHOLDS.minPercentageGeolocated) {
-    failures.push(
-      `Only ${quality.location.percentageGeolocated}% of accepted records are geolocated, below the ${QUALITY_THRESHOLDS.minPercentageGeolocated}% needed for a usable map.`,
-    );
+    switch (quality.location.geographyAvailability) {
+      case 'SOURCE_PUBLISHES_NONE':
+        mapReadiness = 'NO_SOURCE_GEOGRAPHY';
+        failures.push(
+          'The map cannot be built: this source publishes no coordinates for any record. ' +
+            'This is a property of the dataset, not a fault in the records or the adapter — ' +
+            'the street names, dates and contravention codes are intact and worth storing. ' +
+            'Positions require a separate street-reference dataset (see docs/geography.md); ' +
+            'until one is loaded, no notice may be drawn on a map.',
+        );
+        break;
+      case 'PUBLISHED_BUT_UNUSABLE':
+        mapReadiness = 'GEOGRAPHY_UNREADABLE';
+        failures.push(
+          'The map cannot be built: this source publishes coordinate columns but not one ' +
+            'accepted record yielded a usable position. Fix the adapter or investigate the ' +
+            'source format before ingesting further.',
+        );
+        break;
+      default:
+        mapReadiness = 'SPARSE';
+        failures.push(
+          `Only ${quality.location.percentageGeolocated}% of accepted records are geolocated, below the ${QUALITY_THRESHOLDS.minPercentageGeolocated}% needed for a usable map.`,
+        );
+    }
   }
 
   if (quality.location.outsideBounds > 0) {
@@ -295,5 +406,5 @@ export function evaluateQualityGate(
     );
   }
 
-  return { pass: failures.length === 0, failures, cautions };
+  return { pass: failures.length === 0, failures, cautions, mapReadiness };
 }

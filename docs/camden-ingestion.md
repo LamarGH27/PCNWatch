@@ -68,7 +68,7 @@ It exits non-zero if the adapter cannot read the dataset. The two likely causes:
 | Probe says | Fix |
 | --- | --- |
 | `✗ REQUIRED` next to `recordId` or `street` | Add the real column name to `FIELD_ALIASES` in `src/data-sources/camden/schema.ts`, then re-probe. |
-| Rows normalise but none are geolocated | Check the probe's coordinate line. If the dataset has a point column under an unexpected name, add it to `POINT_FIELD_CANDIDATES`. |
+| Rows normalise but none are geolocated | Read the probe's verdict. It distinguishes a dataset that publishes **no** coordinates (dataset `4k7m-4gkk` is one — see [docs/geography.md](./geography.md)) from one whose coordinates we failed to read. Only the second is an adapter fix: add the point column to `POINT_FIELD_CANDIDATES`. |
 
 Once it reports `✓`:
 
@@ -109,6 +109,13 @@ Ticket Activity Scores for all three periods, and prints a full report.
 The quality gate failing with exit 1 is not a bug: the data is real and stored,
 and it is not good enough to present as enforcement intelligence. The report says
 which threshold failed.
+
+The report also prints a **map readiness** line, which is not the same question as
+the gate. `NO_SOURCE_GEOGRAPHY` means the dataset publishes no coordinates at
+all — the records are intact and worth storing, and positions would have to come
+from a separate street-reference dataset ([docs/geography.md](./geography.md)).
+`GEOGRAPHY_UNREADABLE` means coordinates are published and we could not read
+them, which *is* an adapter fix. No position is ever invented to fill the gap.
 
 ### Useful flags
 

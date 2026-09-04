@@ -1,0 +1,71 @@
+[
+  {
+    "socrata_id": "row-000001",
+    "contravention_code": "12",
+    "contravention_code_description": "Parked in a residents' or shared use parking place without a valid permit",
+    "contravention_code_suffix": "a",
+    "contravention_date": "2026-01-05T09:14:00.000",
+    "controlled_parking_zone_area": "CA-A",
+    "street": "EVERSHOLT STREET",
+    "ticket_type": "PCN",
+    "ticket_description": "Parking contravention",
+    "ticket_issued_via_cctv_camera": "No",
+    "status_of_case": "Closed - Paid",
+    "charging_band_description": "Higher Level",
+    "formal_representation": "No",
+    "has_appeal": "No",
+    "penalty_charge_notice_cancelled": "No",
+    "penalty_charge_notice_written_off": "No",
+    "vehicle_category": "Car",
+    "vehicle_removed": "No",
+    "spatial_accuracy": "Street",
+    "last_uploaded": "2026-09-01T02:00:00.000"
+  },
+  {
+    "socrata_id": "row-000002",
+    "contravention_code": "34",
+    "contravention_code_description": "Being in a bus lane",
+    "contravention_code_suffix": "",
+    "contravention_date": "2026-01-06T14:35:00.000",
+    "controlled_parking_zone_area": "CA-B",
+    "street": "CAMDEN HIGH ST",
+    "ticket_type": "MTC",
+    "ticket_description": "Moving traffic contravention",
+    "ticket_issued_via_cctv_camera": "Yes",
+    "status_of_case": "Open",
+    "charging_band_description": "Higher Level",
+    "spatial_accuracy": "Street",
+    "last_uploaded": "2026-09-01T02:00:00.000"
+  },
+  {
+    "socrata_id": "row-000003",
+    "contravention_code": "01",
+    "contravention_code_description": "Parked in a restricted street during prescribed hours",
+    "contravention_date": "2026-01-07",
+    "street": "KENTISH TOWN ROAD",
+    "ticket_type": "PCN",
+    "ticket_issued_via_cctv_camera": "No",
+    "spatial_accuracy": "Street",
+    "last_uploaded": "2026-09-01T02:00:00.000"
+  },
+  {
+    "socrata_id": "row-000004",
+    "contravention_code": "52",
+    "contravention_code_description": "Failing to comply with a prohibited turn",
+    "contravention_date": "2026-01-08T11:00:00.000",
+    "street": "EUSTON ROAD",
+    "ticket_type": "SOMETHING_NEW",
+    "ticket_description": "An enforcement class we have not seen before",
+    "spatial_accuracy": "Street",
+    "last_uploaded": "2026-09-01T02:00:00.000"
+  },
+  {
+    "socrata_id": "row-000005",
+    "contravention_code": "01",
+    "contravention_date": "2026-01-09T08:20:00.000",
+    "street": "PRINCE OF WALES ROAD",
+    "ticket_type": "PCN",
+    "spatial_accuracy": "Street",
+    "last_uploaded": "2026-09-01T02:00:00.000"
+  }
+]

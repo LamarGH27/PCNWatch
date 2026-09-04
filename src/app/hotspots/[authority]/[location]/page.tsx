@@ -8,6 +8,7 @@ import { SCORE_DISCLAIMER } from '@/core/scoring/config';
 import {
   Card,
   CoverageNotice,
+  MeasurementBasis,
   DataPoint,
   ScoreBadge,
   ScoreExplanation,
@@ -104,6 +105,9 @@ export default async function LocationPage({ params }: PageProps) {
           <p style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: 15.5 }}>
             Penalty charge notice activity recorded in the published dataset for this location.
           </p>
+          <div style={{ marginTop: 10 }}>
+            <MeasurementBasis />
+          </div>
         </div>
         <div>
           {detail.score !== null && detail.classification !== null ? (

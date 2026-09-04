@@ -16,7 +16,15 @@ import {
   parsePostcodeDistrict,
   parseSourceTimestamp,
 } from '@/data-sources/shared/normalise';
-import { CAMDEN_BBOX } from '@/data-sources/camden/schema';
+import {
+  CAMDEN_BBOX,
+  DELIBERATELY_DROPPED_FIELDS,
+  isForbiddenEventTimeColumn,
+} from '@/data-sources/camden/schema';
+import {
+  classifyEnforcement,
+  describeEnforcementMix,
+} from '@/data-sources/camden/enforcement-class';
 import type { NormalisedPcnEvent } from '@/data-sources/shared/types';
 
 const FIXTURE_ROWS = JSON.parse(
@@ -498,5 +506,217 @@ describe('Socrata source shapes', () => {
     if (result.ok) return;
     expect(result.error.sourceRecordId).toBe('CA1');
     expect((result.error.rawExcerpt as Record<string, unknown>)._sourceRecordId).toBe('CA1');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Live Camden schema (dataset 4k7m-4gkk)                              */
+/*                                                                     */
+/* Fixture matching the columns the live probe actually returned. The   */
+/* first probe accepted 0/50 rows because none of these column names    */
+/* were in the alias lists.                                             */
+/* ------------------------------------------------------------------ */
+
+const LIVE_ROWS = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../fixtures/camden/live-schema-rows.json', import.meta.url)), 'utf8'),
+) as Record<string, unknown>[];
+
+describe('live Camden schema', () => {
+  it('accepts every row of the live-shaped sample', () => {
+    const results = LIVE_ROWS.map((row, i) => normaliseCamdenRow(row, i));
+    const rejected = results.filter((r) => !r.ok);
+    expect(rejected).toHaveLength(0);
+  });
+
+  it('uses socrata_id as the canonical record identifier', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.sourceRecordId).toBe('row-000001');
+    const resolved = (result.event.sourceMetadata as { _resolvedFields?: { recordId?: string } })
+      ._resolvedFields;
+    expect(resolved?.recordId).toBe('socrata_id');
+  });
+
+  it('uses contravention_date as the event timestamp', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.issuedDate).toBe('2026-01-05');
+    expect(result.event.issuedHour).toBe(9);
+    const resolved = (result.event.sourceMetadata as { _resolvedFields?: { date?: string } })
+      ._resolvedFields;
+    expect(resolved?.date).toBe('contravention_date');
+  });
+
+  it('handles a date-only contravention_date without inventing a time', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[2], 2);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.issuedDate).toBe('2026-01-07');
+    expect(result.event.issuedHour).toBeNull();
+    expect(result.event.issuedAt).toBeNull();
+  });
+
+  it('NEVER treats last_uploaded as the contravention date', () => {
+    // Camden refreshes every row on the same publication date. Reading it as the
+    // event time would restate the whole dataset as happening on a few days and
+    // destroy every trend, busiest-hour and period figure — while still looking
+    // healthy in the ingestion report.
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.issuedDate).not.toBe('2026-09-01');
+  });
+
+  it('refuses a publication timestamp even when it is the only date present', () => {
+    const result = normaliseCamdenRow(
+      { socrata_id: 'x', street: 'Eversholt Street', last_uploaded: '2026-09-01T02:00:00.000' },
+      0,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // Rejected for having no event date, rather than silently dated to publication.
+    expect(result.error.errorCode).toBe('MISSING_OR_INVALID_DATE');
+  });
+
+  it('rejects a publication-shaped column added to a date alias by mistake', () => {
+    expect(isForbiddenEventTimeColumn('last_uploaded')).toBe(true);
+    expect(isForbiddenEventTimeColumn('last_updated')).toBe(true);
+    expect(isForbiddenEventTimeColumn(':updated_at')).toBe(true);
+    expect(isForbiddenEventTimeColumn('contravention_date')).toBe(false);
+  });
+
+  it('takes the contravention suffix from its own column', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.contraventionCode).toBe('12');
+    expect((result.event.sourceMetadata as { _contraventionSuffix?: string })._contraventionSuffix).toBe('a');
+  });
+
+  it('keeps the publisher’s own contravention description', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(JSON.stringify(result.event.sourceMetadata)).toContain('residents');
+  });
+
+  it('records the controlled parking zone as the locality', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.locality).toBe('CA-A');
+  });
+
+  it('never fabricates coordinates for a dataset that has none', () => {
+    for (const [i, row] of LIVE_ROWS.entries()) {
+      const result = normaliseCamdenRow(row, i);
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(result.event.longitude).toBeNull();
+      expect(result.event.latitude).toBeNull();
+      expect(result.warnings).toContain('COORDINATES_ABSENT');
+    }
+  });
+
+  it('caps confidence so an unlocated record cannot be scored', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Below the scoring engine's minimum data confidence, so the location is
+    // refused a score rather than ranked on a position we do not have.
+    expect(result.event.dataConfidence).toBeLessThan(0.4);
+  });
+
+  it('drops outcome and vehicle fields rather than storing them', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const serialised = JSON.stringify(result.event);
+    for (const dropped of DELIBERATELY_DROPPED_FIELDS) {
+      expect(serialised).not.toContain(dropped);
+    }
+    expect(serialised).not.toContain('Closed - Paid');
+  });
+
+  it('retains the publisher’s spatial accuracy claim', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect((result.event.sourceMetadata as { spatial_accuracy?: string }).spatial_accuracy).toBe('Street');
+  });
+});
+
+describe('enforcement classification', () => {
+  it('does NOT classify MTC as parking', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[1], 1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.enforcementType).toBe('MOVING_TRAFFIC');
+    expect(result.event.enforcementType).not.toBe('PARKING');
+  });
+
+  it('classifies a parking PCN as parking', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.enforcementType).toBe('PARKING');
+  });
+
+  it('marks an unrecognised ticket type UNKNOWN rather than guessing', () => {
+    const result = normaliseCamdenRow(LIVE_ROWS[3], 3);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.enforcementType).toBe('UNKNOWN');
+    expect(result.warnings).toContain('ENFORCEMENT_TYPE_UNRECOGNISED');
+  });
+
+  it('records the CCTV enforcement channel', () => {
+    const cctv = normaliseCamdenRow(LIVE_ROWS[1], 1);
+    const street = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(cctv.ok && (cctv.event.sourceMetadata as { _viaCctv?: boolean })._viaCctv).toBe(true);
+    expect(street.ok && (street.event.sourceMetadata as { _viaCctv?: boolean })._viaCctv).toBe(false);
+  });
+
+  it('classifies exactly, so a code is not matched by a stray substring', () => {
+    expect(classifyEnforcement('MTC').enforcementClass).toBe('MOVING_TRAFFIC');
+    expect(classifyEnforcement('BL').enforcementClass).toBe('BUS_LANE');
+    expect(classifyEnforcement('PCN').enforcementClass).toBe('PARKING');
+    expect(classifyEnforcement('').enforcementClass).toBe('UNKNOWN');
+    expect(classifyEnforcement(null).enforcementClass).toBe('UNKNOWN');
+  });
+
+  it('prefers bus lane over moving traffic when both words appear', () => {
+    expect(classifyEnforcement('X', 'Bus lane moving traffic camera').enforcementClass).toBe('BUS_LANE');
+  });
+
+  it('describes a mixed set without calling it parking', () => {
+    const mixed = describeEnforcementMix({ PARKING: 10, MOVING_TRAFFIC: 5 });
+    expect(mixed).toContain('mix');
+    expect(mixed).not.toMatch(/^Parking penalty/);
+
+    const mtcOnly = describeEnforcementMix({ MOVING_TRAFFIC: 5 });
+    expect(mtcOnly).toContain('not parking');
+  });
+});
+
+describe('legacy fixture formats still supported', () => {
+  it('continues to accept the original pcn_id / issue_datetime shape', () => {
+    const result = normaliseCamdenRow(FIXTURE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.sourceRecordId).toBe('CA00000001');
+    expect(result.event.issuedDate).toBe('2026-01-05');
+  });
+
+  it('deduplication stays deterministic across both shapes', () => {
+    const a = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    const b = normaliseCamdenRow(LIVE_ROWS[0], 99);
+    expect(a.ok && b.ok && a.event.rowHash === b.event.rowHash).toBe(true);
+
+    // A different row must hash differently.
+    const c = normaliseCamdenRow(LIVE_ROWS[1], 1);
+    expect(a.ok && c.ok && a.event.rowHash !== c.event.rowHash).toBe(true);
   });
 });

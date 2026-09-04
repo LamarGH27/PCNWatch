@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { COVERAGE_SCOPE } from '@/core/coverage/coverage';
 import { getCoverage } from '@/server/repositories/enforcement';
-import { CoverageNotice } from '@/components/primitives';
+import { CoverageNotice, MeasurementBasis } from '@/components/primitives';
 import { MapExplorer } from './MapExplorer';
 
 export const metadata: Metadata = {
@@ -56,6 +56,9 @@ export default async function MapPage() {
           </div>
           <div style={{ flex: '1 1 320px', maxWidth: 520 }}>
             <CoverageNotice coverage={coverage} />
+            <div style={{ marginTop: 12 }}>
+              <MeasurementBasis />
+            </div>
           </div>
         </div>
       </div>
