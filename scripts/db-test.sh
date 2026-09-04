@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DB="${FINERADAR_TEST_DB:-fineradar_test}"
+DB="${PCNWATCH_TEST_DB:-pcnwatch_test}"
 PSQL=(psql -v ON_ERROR_STOP=1 -q)
 
 echo "→ recreating database ${DB}"

@@ -1,4 +1,4 @@
--- FineRadar schema — 0002: provenance and reference data.
+-- PCNWatch schema — 0002: provenance and reference data.
 --
 -- Provenance is first-class. Any row that traces to an external dataset points at
 -- a data_sources row and a source_versions row, so every displayed statistic can
@@ -18,7 +18,7 @@ create table data_sources (
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
-comment on table data_sources is 'External datasets FineRadar ingests. attribution_text is rendered wherever the data appears.';
+comment on table data_sources is 'External datasets PCNWatch ingests. attribution_text is rendered wherever the data appears.';
 
 create table source_versions (
   id                    uuid primary key default gen_random_uuid(),

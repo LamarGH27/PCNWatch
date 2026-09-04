@@ -7,7 +7,7 @@ import { Card } from '@/components/primitives';
 export const metadata: Metadata = {
   title: 'London boroughs',
   description:
-    'London local authorities that issue penalty charge notices, with challenge and payment information and FineRadar enforcement map coverage for each.',
+    'London local authorities that issue penalty charge notices, with challenge and payment information and PCNWatch enforcement map coverage for each.',
   alternates: { canonical: '/boroughs' },
 };
 

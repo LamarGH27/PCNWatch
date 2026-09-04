@@ -85,7 +85,7 @@ function localAuthorityNoticeType(haystack: string): NoticeType {
 }
 
 export const PRIVATE_PARKING_MESSAGE =
-  'This version of FineRadar currently focuses on local-authority PCNs. Private parking charges follow a different process.';
+  'This version of PCNWatch currently focuses on local-authority PCNs. Private parking charges follow a different process.';
 
 export function classifyNotice(text: string): NoticeClassification {
   const haystack = normalise(text);

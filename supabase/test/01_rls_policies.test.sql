@@ -40,7 +40,7 @@ insert into authorities (id, slug, name, map_coverage_status)
 values ('33333333-3333-3333-3333-333333333333', 'camden', 'London Borough of Camden', 'LIVE');
 
 insert into products (id, sku, name, price_pence, entitlements)
-values ('44444444-4444-4444-4444-444444444444', 'FINE_RADAR_DEFENCE', 'Defence Pack', 599,
+values ('44444444-4444-4444-4444-444444444444', 'PCNWATCH_DEFENCE', 'Defence Pack', 599,
         array['DETAILED_ASSESSMENT','DRAFT','EXPORT']);
 
 -- User A's case, created as the service role (as the application server would).

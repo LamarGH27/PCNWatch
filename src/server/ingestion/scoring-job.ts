@@ -58,7 +58,7 @@ export async function runScoringJob(
     );
   }
 
-  const { data: rows, error } = await supabase.rpc('fineradar_scoring_inputs', {
+  const { data: rows, error } = await supabase.rpc('pcnwatch_scoring_inputs', {
     p_authority_slug: authoritySlug,
   });
   if (error) throw error;

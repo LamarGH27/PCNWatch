@@ -196,7 +196,7 @@ export default async function AssessmentPage({ params }: { params: Promise<{ id:
       <div style={{ marginTop: 32 }}>
         <Disclaimer>
           This assessment describes how well your case is evidenced against the grounds you are
-          relying on. It is not a prediction of the outcome. FineRadar provides information and
+          relying on. It is not a prediction of the outcome. PCNWatch provides information and
           document-preparation tools. It does not provide legal advice and does not guarantee that a
           challenge will succeed.
         </Disclaimer>

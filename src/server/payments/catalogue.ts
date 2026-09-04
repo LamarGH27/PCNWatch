@@ -9,9 +9,9 @@
  */
 
 export type ProductSku =
-  | 'FINE_RADAR_DEFENCE'
-  | 'FINE_RADAR_REJECTION_REVIEW'
-  | 'FINE_RADAR_APPEAL_PACK';
+  | 'PCNWATCH_DEFENCE'
+  | 'PCNWATCH_REJECTION_REVIEW'
+  | 'PCNWATCH_APPEAL_PACK';
 
 export type Entitlement =
   | 'DETAILED_ASSESSMENT'
@@ -37,7 +37,7 @@ export interface Product {
 
 export const PRODUCTS: readonly Product[] = [
   {
-    sku: 'FINE_RADAR_DEFENCE',
+    sku: 'PCNWATCH_DEFENCE',
     name: 'Defence Pack',
     description:
       'The full analysis of your notice, with an editable challenge you can send yourself.',
@@ -53,7 +53,7 @@ export const PRODUCTS: readonly Product[] = [
     stripePriceEnvKey: 'STRIPE_PRICE_DEFENCE',
   },
   {
-    sku: 'FINE_RADAR_REJECTION_REVIEW',
+    sku: 'PCNWATCH_REJECTION_REVIEW',
     name: 'Rejection Review',
     description:
       'For when the authority has rejected your representations and you need to know what it actually addressed.',
@@ -69,7 +69,7 @@ export const PRODUCTS: readonly Product[] = [
     stripePriceEnvKey: 'STRIPE_PRICE_REJECTION_REVIEW',
   },
   {
-    sku: 'FINE_RADAR_APPEAL_PACK',
+    sku: 'PCNWATCH_APPEAL_PACK',
     name: 'Appeal Pack',
     description: 'Everything above, prepared for an appeal to the independent adjudicator.',
     pricePence: 999,
@@ -86,7 +86,7 @@ export const PRODUCTS: readonly Product[] = [
       'Everything in the Defence Pack and Rejection Review',
       'Appeal submission document',
       'Indexed evidence bundle',
-      'You submit the appeal yourself — FineRadar never submits on your behalf',
+      'You submit the appeal yourself — PCNWatch never submits on your behalf',
     ],
     stripePriceEnvKey: 'STRIPE_PRICE_APPEAL_PACK',
   },

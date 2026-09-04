@@ -1,8 +1,8 @@
 {
-  "name": "fineradar",
+  "name": "pcnwatch",
   "version": "0.1.0",
   "private": true,
-  "description": "FineRadar — UK PCN enforcement intelligence and challenge preparation.",
+  "description": "PCNWatch — UK PCN enforcement intelligence and challenge preparation.",
   "engines": {
     "node": ">=20.11"
   },

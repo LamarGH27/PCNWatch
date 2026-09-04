@@ -67,5 +67,5 @@ export const CLASSIFICATION_BANDS = [
  * tooltip; do not paraphrase it into anything resembling a probability.
  */
 export const SCORE_DISCLAIMER =
-  'The Ticket Activity Score compares historical PCN enforcement activity within available FineRadar data. ' +
+  'The Ticket Activity Score compares historical PCN enforcement activity within available PCNWatch data. ' +
   'It does not predict whether you will receive a ticket and does not determine whether parking is permitted.';

@@ -1,4 +1,4 @@
--- FineRadar schema — 0008: server-side aggregation.
+-- PCNWatch schema — 0008: server-side aggregation.
 --
 -- The browser must never receive hundreds of thousands of PCN rows. These
 -- functions do the aggregation in the database and return bounded, already
@@ -12,7 +12,7 @@
 -- Called by the ingestion job, never by a request. Idempotent.
 -- ---------------------------------------------------------------------------
 
-create or replace function fineradar_rebuild_aggregates(p_authority_id uuid)
+create or replace function pcnwatch_rebuild_aggregates(p_authority_id uuid)
 returns integer
 language plpgsql
 security definer
@@ -98,7 +98,7 @@ begin
 end;
 $$;
 
-comment on function fineradar_rebuild_aggregates is
+comment on function pcnwatch_rebuild_aggregates is
   'Rebuilds every aggregate bucket for one authority from pcn_events. Run after ingestion, before scoring.';
 
 -- ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ comment on function fineradar_rebuild_aggregates is
 -- Returned to the scoring job, not to the browser.
 -- ---------------------------------------------------------------------------
 
-create or replace function fineradar_scoring_inputs(p_authority_slug text)
+create or replace function pcnwatch_scoring_inputs(p_authority_slug text)
 returns table (
   location_id uuid,
   monthly_counts jsonb,
@@ -151,7 +151,7 @@ $$;
 -- Hotspot ranking.
 -- ---------------------------------------------------------------------------
 
-create or replace function fineradar_hotspots(
+create or replace function pcnwatch_hotspots(
   p_authority_slug text,
   p_period_key text default '12M',
   p_contravention_code text default null,
@@ -263,7 +263,7 @@ $$;
 -- Location detail.
 -- ---------------------------------------------------------------------------
 
-create or replace function fineradar_location_detail(
+create or replace function pcnwatch_location_detail(
   p_authority_slug text,
   p_location_slug text
 )
@@ -389,7 +389,7 @@ $$;
 -- individual locations; further out it gets cells.
 -- ---------------------------------------------------------------------------
 
-create or replace function fineradar_map_cells(
+create or replace function pcnwatch_map_cells(
   p_authority_slug text,
   p_min_lon double precision,
   p_min_lat double precision,
@@ -487,12 +487,12 @@ as $$
   limit 2000;
 $$;
 
-comment on function fineradar_map_cells is
+comment on function pcnwatch_map_cells is
   'Spatially binned enforcement counts for a viewport. Returns at most 2000 cells so the browser never receives raw event rows.';
 
-grant execute on function fineradar_hotspots(text, text, text, integer, integer) to anon, authenticated;
-grant execute on function fineradar_location_detail(text, text) to anon, authenticated;
-grant execute on function fineradar_map_cells(text, double precision, double precision, double precision, double precision, integer, text) to anon, authenticated;
+grant execute on function pcnwatch_hotspots(text, text, text, integer, integer) to anon, authenticated;
+grant execute on function pcnwatch_location_detail(text, text) to anon, authenticated;
+grant execute on function pcnwatch_map_cells(text, double precision, double precision, double precision, double precision, integer, text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Rate limit counter.
@@ -501,7 +501,7 @@ grant execute on function fineradar_map_cells(text, double precision, double pre
 -- count and both be allowed through.
 -- ---------------------------------------------------------------------------
 
-create or replace function fineradar_bump_rate_limit(p_key text, p_window_start timestamptz)
+create or replace function pcnwatch_bump_rate_limit(p_key text, p_window_start timestamptz)
 returns integer
 language plpgsql
 security definer

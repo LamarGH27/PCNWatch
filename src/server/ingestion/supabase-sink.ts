@@ -274,7 +274,7 @@ export async function runIngestionJob(
       .eq('id', ingestionRunId);
 
     if (result.status !== 'FAILED') {
-      await supabase.rpc('fineradar_rebuild_aggregates', { p_authority_id: authorityId });
+      await supabase.rpc('pcnwatch_rebuild_aggregates', { p_authority_id: authorityId });
       logInfo('ingestion', 'Aggregates rebuilt', { authoritySlug });
     }
 

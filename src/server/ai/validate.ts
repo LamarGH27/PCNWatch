@@ -118,7 +118,7 @@ export function validateAiResponse<K extends AiJobType>(
 
     for (const phrase of FORBIDDEN_DRAFT_PHRASES) {
       if (phrase.pattern.test(draft.body)) {
-        errors.push(`The draft contains ${phrase.description}, which FineRadar must never produce.`);
+        errors.push(`The draft contains ${phrase.description}, which PCNWatch must never produce.`);
       }
     }
   }

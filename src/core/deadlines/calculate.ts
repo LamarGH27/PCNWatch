@@ -133,7 +133,7 @@ export function calculateDeadline(
       deadlineType,
       calculated: false,
       reason: 'NO_APPROVED_RULE',
-      message: 'No approved rule exists for this deadline, so FineRadar will not estimate it.',
+      message: 'No approved rule exists for this deadline, so PCNWatch will not estimate it.',
     };
   }
 

@@ -1,4 +1,4 @@
--- FineRadar schema — 0007: explicit table privileges.
+-- PCNWatch schema — 0007: explicit table privileges.
 --
 -- Supabase's default privileges grant ALL on public tables to anon and
 -- authenticated, leaving RLS as the only thing standing between an anonymous

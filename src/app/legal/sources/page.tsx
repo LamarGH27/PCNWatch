@@ -8,7 +8,7 @@ import { Card } from '@/components/primitives';
 export const metadata: Metadata = {
   title: 'Data sources',
   description:
-    'The datasets and reference material FineRadar relies on, with licences, attribution and review status.',
+    'The datasets and reference material PCNWatch relies on, with licences, attribution and review status.',
   alternates: { canonical: '/legal/sources' },
 };
 
@@ -20,7 +20,7 @@ export default function SourcesPage() {
     <div className="fr-container" style={{ paddingBlock: 40, maxWidth: 800 }}>
       <h1 style={{ fontSize: 'clamp(26px, 4vw, 36px)', fontWeight: 630 }}>Data sources</h1>
       <p style={{ marginTop: 12, fontSize: 16, color: 'var(--text-muted)', maxWidth: 640 }}>
-        Every figure and every legal statement in FineRadar traces to something on this page.
+        Every figure and every legal statement in PCNWatch traces to something on this page.
       </p>
 
       <section style={{ marginTop: 34 }}>
@@ -68,7 +68,7 @@ export default function SourcesPage() {
       <section style={{ marginTop: 34 }}>
         <h2 style={{ fontSize: 20, fontWeight: 620, marginBottom: 8 }}>Reference material</h2>
         <p style={{ margin: '0 0 14px', fontSize: 14.5, color: 'var(--text-muted)', maxWidth: 640 }}>
-          FineRadar holds {references.length} approved reference records, of which {reviewed}{' '}
+          PCNWatch holds {references.length} approved reference records, of which {reviewed}{' '}
           {reviewed === 1 ? 'has' : 'have'} been reviewed by a qualified person. A record awaiting
           review is still shown to you — it may be exactly what you need — but it is marked as such
           and is not published for search engines. Generative output may only cite a record that
@@ -113,7 +113,7 @@ export default function SourcesPage() {
       </section>
 
       <p style={{ marginTop: 30, fontSize: 14 }}>
-        <Link href="/legal/scope">What FineRadar does and does not do →</Link>
+        <Link href="/legal/scope">What PCNWatch does and does not do →</Link>
       </p>
     </div>
   );

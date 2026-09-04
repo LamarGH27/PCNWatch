@@ -6,12 +6,12 @@ import { SCORE_DISCLAIMER } from '@/core/scoring/config';
 import { Card, Disclaimer, Section, formatPence } from '@/components/primitives';
 
 export const metadata: Metadata = {
-  title: 'FineRadar — know before the ticket',
+  title: 'PCNWatch — know before the ticket',
   description:
     'Explore where parking and traffic penalties are actually being issued. Already received a PCN? Decode it, organise your evidence and build your challenge.',
   alternates: { canonical: '/' },
   openGraph: {
-    title: 'FineRadar — know before the ticket',
+    title: 'PCNWatch — know before the ticket',
     description:
       'Enforcement intelligence for UK drivers. See where PCNs are actually issued, and what to do if you get one.',
     url: '/',
@@ -132,7 +132,7 @@ function EnforcementIntelligence() {
             presented in a form a driver can use.
           </p>
           <p>
-            FineRadar reads published PCN data, normalises it, and shows you where activity has
+            PCNWatch reads published PCN data, normalises it, and shows you where activity has
             actually happened, when, and for which contraventions.
           </p>
         </>
@@ -194,7 +194,7 @@ function HowItWorks() {
   ];
 
   return (
-    <Section eyebrow="How FineRadar works" title="Four steps, in the order that actually helps.">
+    <Section eyebrow="How PCNWatch works" title="Four steps, in the order that actually helps.">
       <ol
         style={{
           listStyle: 'none',
@@ -305,7 +305,7 @@ function PcnAnalysis() {
     <Section
       eyebrow="Already have a PCN"
       title="Decode the notice, then decide."
-      intro="A penalty charge notice is a dense document with several dates on it, only some of which matter to you. FineRadar reads it, tells you which stage you are at, and calculates the deadlines that follow."
+      intro="A penalty charge notice is a dense document with several dates on it, only some of which matter to you. PCNWatch reads it, tells you which stage you are at, and calculates the deadlines that follow."
     >
       <div
         style={{
@@ -465,8 +465,8 @@ function Faqs() {
       a: 'Because that is where we currently hold enough published enforcement data to describe activity honestly. Claiming London-wide coverage we cannot support would make every other number on the site untrustworthy. Other boroughs are added as data becomes available.',
     },
     {
-      q: 'Is FineRadar a law firm?',
-      a: 'No. FineRadar provides information and document-preparation tools. It does not provide legal advice and does not guarantee that a challenge will succeed. You submit your own challenge and your own appeal.',
+      q: 'Is PCNWatch a law firm?',
+      a: 'No. PCNWatch provides information and document-preparation tools. It does not provide legal advice and does not guarantee that a challenge will succeed. You submit your own challenge and your own appeal.',
     },
     {
       q: 'Do you use AI, and where?',

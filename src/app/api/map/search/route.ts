@@ -9,7 +9,7 @@ import { rateLimit } from '@/server/rate-limit';
 /**
  * Location search within a covered authority.
  *
- * Searches only locations FineRadar already holds. It is deliberately not a
+ * Searches only locations PCNWatch already holds. It is deliberately not a
  * general geocoder: returning a result for a street we have no data about would
  * imply coverage we do not have.
  */

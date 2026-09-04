@@ -5,7 +5,7 @@ import { AnalyseFlow } from './AnalyseFlow';
 export const metadata: Metadata = {
   title: 'Analyse your PCN',
   description:
-    'Upload your penalty charge notice. FineRadar reads it, asks you to check what it read, and works out your deadlines from rules rather than guesses.',
+    'Upload your penalty charge notice. PCNWatch reads it, asks you to check what it read, and works out your deadlines from rules rather than guesses.',
   alternates: { canonical: '/analyse' },
   robots: { index: true, follow: true },
 };

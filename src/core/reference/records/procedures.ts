@@ -138,7 +138,7 @@ export const PROCEDURE_RECORDS: readonly ReferenceRecord[] = [
       nextStageIfNoAction: null,
       relevantDeadlineTypes: ['TRIBUNAL_APPEAL_DEADLINE'],
     },
-    'An independent adjudicator will consider your appeal. FineRadar does not submit appeals for you.',
+    'An independent adjudicator will consider your appeal. PCNWatch does not submit appeals for you.',
   ),
 ];
 
@@ -163,8 +163,8 @@ export const TRIBUNAL_RECORDS: readonly ReferenceRecord[] = [
     content: {
       appealRoute: 'Environment and Traffic Adjudicators',
       submissionMethod: 'Directly by the appellant, online or by post',
-      fineRadarSubmits: false,
-      note: 'FineRadar prepares documents. You submit your own appeal.',
+      pcnWatchSubmits: false,
+      note: 'PCNWatch prepares documents. You submit your own appeal.',
     },
   },
 ];
@@ -184,20 +184,20 @@ export const PRIVATE_PARKING_RECORDS: readonly ReferenceRecord[] = [
     authorityId: null,
     noticeType: 'PRIVATE_PARKING_CHARGE',
     proceduralStage: null,
-    sourceName: 'FineRadar product scope',
+    sourceName: 'PCNWatch product scope',
     sourceLocation: '/legal/scope',
     effectiveFrom: '2026-01-01',
     effectiveTo: null,
     reviewedAt: '2026-01-01',
     reviewStatus: 'REVIEWED',
     summary:
-      'This version of FineRadar currently focuses on local-authority PCNs. Private parking charges follow a different process.',
+      'This version of PCNWatch currently focuses on local-authority PCNs. Private parking charges follow a different process.',
     content: {
       userMessage:
-        'This version of FineRadar currently focuses on local-authority PCNs. Private parking charges follow a different process.',
+        'This version of PCNWatch currently focuses on local-authority PCNs. Private parking charges follow a different process.',
       whyDifferent:
         'A private parking charge is a claim by a landowner or operator under contract law, not a penalty issued under the Traffic Management Act. The appeal routes, deadlines and statutory grounds are different.',
-      whatWeDo: 'FineRadar will identify the notice type and stop, rather than applying council rules to it.',
+      whatWeDo: 'PCNWatch will identify the notice type and stop, rather than applying council rules to it.',
     },
   },
 ];

@@ -1,4 +1,4 @@
-# FineRadar — architecture assessment
+# PCNWatch — architecture assessment
 
 ## 1. Starting point
 

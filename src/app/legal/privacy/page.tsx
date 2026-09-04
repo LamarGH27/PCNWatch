@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 export const metadata: Metadata = {
   title: 'Privacy',
   description:
-    'What personal data FineRadar holds, why, for how long, and how to delete it.',
+    'What personal data PCNWatch holds, why, for how long, and how to delete it.',
   alternates: { canonical: '/legal/privacy' },
 };
 

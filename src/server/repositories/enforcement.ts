@@ -212,7 +212,7 @@ export async function getHotspots(query: HotspotQuery): Promise<QueryResult<Hots
   try {
     // A database function does the aggregation so the browser never sees raw rows
     // and the ranking happens where the data is.
-    const { data, error } = await supabase.rpc('fineradar_hotspots', {
+    const { data, error } = await supabase.rpc('pcnwatch_hotspots', {
       p_authority_slug: query.authoritySlug,
       p_period_key: query.periodKey,
       p_contravention_code: query.contraventionCode ?? null,
@@ -235,7 +235,7 @@ export async function getLocation(
   if (!supabase) return unavailable('enforcement.getLocation', new Error('SUPABASE_NOT_CONFIGURED'));
 
   try {
-    const { data, error } = await supabase.rpc('fineradar_location_detail', {
+    const { data, error } = await supabase.rpc('pcnwatch_location_detail', {
       p_authority_slug: authoritySlug,
       p_location_slug: locationSlug,
     });

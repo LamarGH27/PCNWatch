@@ -1,4 +1,4 @@
-# FineRadar
+# PCNWatch
 
 **See where tickets happen. Understand why. Fight yours.**
 
@@ -6,7 +6,7 @@ A UK driver tool combining historical PCN enforcement intelligence with PCN
 document analysis, deadline tracking, evidence management and evidence-based
 challenge drafting.
 
-FineRadar provides information and document-preparation tools. It does not
+PCNWatch provides information and document-preparation tools. It does not
 provide legal advice and does not guarantee that a challenge will succeed.
 
 ---

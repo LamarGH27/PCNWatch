@@ -302,7 +302,7 @@ export function Disclaimer({ children }: { children?: ReactNode }) {
       }}
     >
       {children ??
-        'FineRadar provides information and document-preparation tools. It does not provide legal advice and does not guarantee that a challenge will succeed.'}
+        'PCNWatch provides information and document-preparation tools. It does not provide legal advice and does not guarantee that a challenge will succeed.'}
     </p>
   );
 }

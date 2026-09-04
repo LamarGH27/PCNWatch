@@ -4,9 +4,9 @@ import { COVERAGE_SCOPE } from '@/core/coverage/coverage';
 import { SCORE_DISCLAIMER } from '@/core/scoring/config';
 
 export const metadata: Metadata = {
-  title: 'What FineRadar does and does not do',
+  title: 'What PCNWatch does and does not do',
   description:
-    'FineRadar is an information and document-preparation product, not a law firm. What it covers, what it will not claim, and where its limits are.',
+    'PCNWatch is an information and document-preparation product, not a law firm. What it covers, what it will not claim, and where its limits are.',
   alternates: { canonical: '/legal/scope' },
 };
 
@@ -14,18 +14,18 @@ export default function ScopePage() {
   return (
     <div className="fr-container" style={{ paddingBlock: 40, maxWidth: 740 }}>
       <h1 style={{ fontSize: 'clamp(26px, 4vw, 36px)', fontWeight: 630 }}>
-        What FineRadar does and does not do
+        What PCNWatch does and does not do
       </h1>
 
       <Block title="This is not legal advice">
-        FineRadar provides information and document-preparation tools. It does not provide legal
+        PCNWatch provides information and document-preparation tools. It does not provide legal
         advice and does not guarantee that a challenge will succeed. It is not a law firm and no
         solicitor–client relationship is created by using it. If your case matters enough to need
         advice, get advice.
       </Block>
 
       <Block title="You submit your own challenge">
-        We prepare documents. You review them, edit them, and send them yourself. FineRadar never
+        We prepare documents. You review them, edit them, and send them yourself. PCNWatch never
         submits a challenge, a representation or an appeal on your behalf, and never contacts an
         authority or a tribunal for you.
       </Block>

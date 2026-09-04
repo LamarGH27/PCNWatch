@@ -7,15 +7,15 @@ import './globals.css';
 export const metadata: Metadata = {
   metadataBase: new URL(publicEnv.NEXT_PUBLIC_SITE_URL),
   title: {
-    default: 'FineRadar — see where tickets happen',
-    template: '%s · FineRadar',
+    default: 'PCNWatch — see where tickets happen',
+    template: '%s · PCNWatch',
   },
   description:
     'Explore where parking and traffic penalties are actually being issued in London. Already received a PCN? Decode it, organise your evidence and build your challenge.',
-  applicationName: 'FineRadar',
+  applicationName: 'PCNWatch',
   openGraph: {
     type: 'website',
-    siteName: 'FineRadar',
+    siteName: 'PCNWatch',
     locale: 'en_GB',
   },
   robots: { index: true, follow: true },
@@ -50,7 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="fr-container fr-header-inner">
             <Link href="/" className="fr-brand">
               <RadarMark />
-              <span>FineRadar</span>
+              <span>PCNWatch</span>
             </Link>
 
             {/* Secondary navigation. A scrollable strip on narrow screens rather
@@ -124,7 +124,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </li>
                   <li style={{ marginBottom: 7 }}>
                     <Link href="/legal/scope" style={{ color: 'var(--text-muted)' }}>
-                      What FineRadar does and does not do
+                      What PCNWatch does and does not do
                     </Link>
                   </li>
                   <li style={{ marginBottom: 7 }}>
@@ -146,7 +146,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 maxWidth: 720,
               }}
             >
-              FineRadar provides information and document-preparation tools. It does not provide
+              PCNWatch provides information and document-preparation tools. It does not provide
               legal advice and does not guarantee that a challenge will succeed. Enforcement
               activity shows where penalties have historically been issued; it does not tell you
               whether parking is permitted at any location.

@@ -63,7 +63,7 @@ export async function rateLimit(
     const supabase = createSupabaseServiceClient();
     if (!supabase) return memoryLimit(bucketKey, windowStart, options.limit, retryAfterSeconds);
 
-    const { data, error } = await supabase.rpc('fineradar_bump_rate_limit', {
+    const { data, error } = await supabase.rpc('pcnwatch_bump_rate_limit', {
       p_key: bucketKey,
       p_window_start: new Date(windowStart).toISOString(),
     });

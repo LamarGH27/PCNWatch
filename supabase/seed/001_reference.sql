@@ -58,15 +58,15 @@ on conflict (slug) do update set
 -- product; a mismatch between the two is caught by the webhook's amount check.
 insert into products (sku, name, description, price_pence, currency, entitlements, active)
 values
-  ('FINE_RADAR_DEFENCE', 'Defence Pack',
+  ('PCNWATCH_DEFENCE', 'Defence Pack',
    'The full analysis of your notice, with an editable challenge you can send yourself.',
    599, 'GBP',
    array['DETAILED_ASSESSMENT','EVIDENCE_GAP_ANALYSIS','CHALLENGE_DRAFT','EXPORT_PDF'], true),
-  ('FINE_RADAR_REJECTION_REVIEW', 'Rejection Review',
+  ('PCNWATCH_REJECTION_REVIEW', 'Rejection Review',
    'For when the authority has rejected your representations and you need to know what it actually addressed.',
    499, 'GBP',
    array['REJECTION_COMPARISON','EXPORT_PDF'], true),
-  ('FINE_RADAR_APPEAL_PACK', 'Appeal Pack',
+  ('PCNWATCH_APPEAL_PACK', 'Appeal Pack',
    'Everything above, prepared for an appeal to the independent adjudicator.',
    999, 'GBP',
    array['DETAILED_ASSESSMENT','EVIDENCE_GAP_ANALYSIS','CHALLENGE_DRAFT','REJECTION_COMPARISON','APPEAL_BUNDLE','EXPORT_PDF'], true)

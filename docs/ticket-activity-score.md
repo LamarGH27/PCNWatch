@@ -1,13 +1,13 @@
 # Ticket Activity Score
 
 A 0–100 measure of **relative historic enforcement intensity within the data
-FineRadar holds**. It is not a probability, a likelihood, a chance of a fine, or
+PCNWatch holds**. It is not a probability, a likelihood, a chance of a fine, or
 anything equivalent, and the product must never describe it as one.
 
 The approved wording, rendered verbatim wherever a score appears:
 
 > The Ticket Activity Score compares historical PCN enforcement activity within
-> available FineRadar data. It does not predict whether you will receive a ticket
+> available PCNWatch data. It does not predict whether you will receive a ticket
 > and does not determine whether parking is permitted.
 
 Implementation: `src/core/scoring/`. Weights and thresholds:

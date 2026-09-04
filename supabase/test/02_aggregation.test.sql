@@ -87,7 +87,7 @@ from generate_series(1, 5) i;
 -- 1. Rebuilding aggregates reproduces the event counts exactly.
 -- ---------------------------------------------------------------------------
 
-select fineradar_rebuild_aggregates('bbbbbbbb-0000-0000-0000-000000000001');
+select pcnwatch_rebuild_aggregates('bbbbbbbb-0000-0000-0000-000000000001');
 
 do $$
 declare
@@ -118,7 +118,7 @@ declare
   second_count integer;
 begin
   select count(*) into first_count from pcn_activity_aggregates;
-  perform fineradar_rebuild_aggregates('bbbbbbbb-0000-0000-0000-000000000001');
+  perform pcnwatch_rebuild_aggregates('bbbbbbbb-0000-0000-0000-000000000001');
   select count(*) into second_count from pcn_activity_aggregates;
   assert first_count = second_count,
     format('Rebuild is not idempotent: %s then %s rows', first_count, second_count);
@@ -134,7 +134,7 @@ declare
   top record;
   row_count integer;
 begin
-  select * into top from fineradar_hotspots('camden', '12M') limit 1;
+  select * into top from pcnwatch_hotspots('camden', '12M') limit 1;
   assert top.slug = 'eversholt-street',
     format('Expected Eversholt Street to rank first, got %s', top.slug);
   assert top.total_pcns = 30, format('Expected 30 PCNs, got %s', top.total_pcns);
@@ -146,7 +146,7 @@ begin
   -- A location with no score yet reports no score, never a placeholder number.
   assert top.score is null, 'A location with no computed score must report null';
 
-  select count(*) into row_count from fineradar_hotspots('camden', '12M');
+  select count(*) into row_count from pcnwatch_hotspots('camden', '12M');
   assert row_count = 3, format('Expected 3 locations with activity, got %s', row_count);
 end;
 $$;
@@ -159,7 +159,7 @@ do $$
 declare
   top record;
 begin
-  select * into top from fineradar_hotspots('camden', '12M', '21') limit 1;
+  select * into top from pcnwatch_hotspots('camden', '12M', '21') limit 1;
   assert top.slug = 'camden-high-street',
     format('Filtering to code 21 should surface Camden High Street, got %s', top.slug);
   assert top.total_pcns = 10, format('Expected 10 PCNs for code 21, got %s', top.total_pcns);
@@ -174,7 +174,7 @@ do $$
 declare
   row_count integer;
 begin
-  select count(*) into row_count from fineradar_hotspots('islington', '12M');
+  select count(*) into row_count from pcnwatch_hotspots('islington', '12M');
   assert row_count = 0, format('An uncovered authority must return no rows, got %s', row_count);
 end;
 $$;
@@ -189,7 +189,7 @@ declare
   cells integer;
 begin
   select count(*), coalesce(sum(pcn_count), 0) into cells, total
-  from fineradar_map_cells('camden', -0.25, 51.49, -0.07, 51.61, 16, '12M');
+  from pcnwatch_map_cells('camden', -0.25, 51.49, -0.07, 51.61, 16, '12M');
 
   -- 40 events across the two located streets. The 5 ungeocoded events are absent.
   assert total = 40,
@@ -208,9 +208,9 @@ declare
   near_cells integer;
 begin
   select count(*) into far_cells
-  from fineradar_map_cells('camden', -0.25, 51.49, -0.07, 51.61, 11, '12M');
+  from pcnwatch_map_cells('camden', -0.25, 51.49, -0.07, 51.61, 11, '12M');
   select count(*) into near_cells
-  from fineradar_map_cells('camden', -0.25, 51.49, -0.07, 51.61, 16, '12M');
+  from pcnwatch_map_cells('camden', -0.25, 51.49, -0.07, 51.61, 16, '12M');
   assert far_cells <= near_cells,
     format('Zooming out should not increase the cell count (%s vs %s)', far_cells, near_cells);
 end;
@@ -225,7 +225,7 @@ declare
   cells integer;
 begin
   select count(*) into cells
-  from fineradar_map_cells('camden', -0.02, 51.50, 0.02, 51.52, 14, '12M');
+  from pcnwatch_map_cells('camden', -0.02, 51.50, 0.02, 51.52, 14, '12M');
   assert cells = 0, format('A viewport outside the data must return no cells, got %s', cells);
 end;
 $$;
@@ -238,7 +238,7 @@ do $$
 declare
   detail record;
 begin
-  select * into detail from fineradar_location_detail('camden', 'eversholt-street');
+  select * into detail from pcnwatch_location_detail('camden', 'eversholt-street');
   assert detail.total_pcns = 30, format('Expected 30 PCNs, got %s', detail.total_pcns);
   assert detail.source_name = 'Camden PCNs', 'Source attribution must be returned with the figures';
   assert detail.source_attribution is not null, 'Attribution text is required';
@@ -257,7 +257,7 @@ do $$
 declare
   detail record;
 begin
-  select * into detail from fineradar_location_detail('camden', 'unknown-place');
+  select * into detail from pcnwatch_location_detail('camden', 'unknown-place');
   assert detail.total_pcns = 5, format('Expected 5 PCNs, got %s', detail.total_pcns);
   assert detail.longitude is null, 'A location with no geometry must not report coordinates';
   assert detail.hour_profile = '{}'::jsonb, 'No hours were recorded, so the profile must be empty';
@@ -272,7 +272,7 @@ do $$
 declare
   row_count integer;
 begin
-  select count(*) into row_count from fineradar_location_detail('camden', 'does-not-exist');
+  select count(*) into row_count from pcnwatch_location_detail('camden', 'does-not-exist');
   assert row_count = 0, 'An unknown location must return no rows';
 end;
 $$;
@@ -286,10 +286,10 @@ declare
   row_count integer;
 begin
   set local role anon;
-  select count(*) into row_count from fineradar_hotspots('camden', '12M');
+  select count(*) into row_count from pcnwatch_hotspots('camden', '12M');
   assert row_count = 3, 'Anonymous visitors must be able to read public hotspots';
   select count(*) into row_count
-  from fineradar_map_cells('camden', -0.25, 51.49, -0.07, 51.61, 14, '12M');
+  from pcnwatch_map_cells('camden', -0.25, 51.49, -0.07, 51.61, 14, '12M');
   assert row_count > 0, 'Anonymous visitors must be able to read the map';
   reset role;
 end;

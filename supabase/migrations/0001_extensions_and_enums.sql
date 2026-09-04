@@ -1,4 +1,4 @@
--- FineRadar schema — 0001: extensions, enums, shared helpers.
+-- PCNWatch schema — 0001: extensions, enums, shared helpers.
 --
 -- Conventions used throughout:
 --   * Every table has created_at/updated_at (touch_updated_at trigger).

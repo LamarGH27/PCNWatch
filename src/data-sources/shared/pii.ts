@@ -3,7 +3,7 @@
  *
  * Open datasets occasionally leak fields they should not contain — a vehicle
  * registration in a free-text column, a permit holder's name, an officer's badge
- * number. FineRadar's enforcement tables are public, so anything that reaches them
+ * number. PCNWatch's enforcement tables are public, so anything that reaches them
  * is effectively published.
  *
  * The rule enforced here is allow-list, not deny-list: a source field is copied

@@ -91,7 +91,7 @@ export async function GET(request: Request) {
     const supabase = createSupabaseServiceClient();
     if (!supabase) throw new Error('SUPABASE_CLIENT_UNAVAILABLE');
 
-    const { data, error } = await supabase.rpc('fineradar_map_cells', {
+    const { data, error } = await supabase.rpc('pcnwatch_map_cells', {
       p_authority_slug: query.authority,
       p_min_lon: query.minLon,
       p_min_lat: query.minLat,

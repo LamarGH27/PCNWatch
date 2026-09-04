@@ -218,7 +218,7 @@ function nextAction(
     return {
       headline: 'This is a private parking charge.',
       detail:
-        'This version of FineRadar currently focuses on local-authority PCNs. Private parking charges follow a different process.',
+        'This version of PCNWatch currently focuses on local-authority PCNs. Private parking charges follow a different process.',
       urgency: 'NONE',
       deadline: null,
       daysRemaining: null,

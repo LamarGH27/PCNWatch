@@ -77,7 +77,7 @@ export default async function ResponsePage({ params }: { params: Promise<{ id: s
           address. We record the appeal deadline and explain the next procedural option.
         </p>
         <p style={{ margin: '12px 0 0', fontSize: 14, color: 'var(--text-muted)' }}>
-          We do not predict what an adjudicator would decide, and FineRadar never submits an appeal
+          We do not predict what an adjudicator would decide, and PCNWatch never submits an appeal
           for you.
         </p>
       </Card>

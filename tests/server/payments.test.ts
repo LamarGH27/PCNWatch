@@ -29,7 +29,7 @@ function completedSession(overrides: Record<string, unknown> = {}) {
         metadata: {
           user_id: '11111111-1111-1111-1111-111111111111',
           case_id: '55555555-5555-5555-5555-555555555555',
-          product_sku: 'FINE_RADAR_DEFENCE',
+          product_sku: 'PCNWATCH_DEFENCE',
         },
         ...overrides,
       },
@@ -39,9 +39,9 @@ function completedSession(overrides: Record<string, unknown> = {}) {
 
 describe('catalogue', () => {
   it('prices the MVP products as specified', () => {
-    expect(getProduct('FINE_RADAR_DEFENCE')?.pricePence).toBe(599);
-    expect(getProduct('FINE_RADAR_REJECTION_REVIEW')?.pricePence).toBe(499);
-    expect(getProduct('FINE_RADAR_APPEAL_PACK')?.pricePence).toBe(999);
+    expect(getProduct('PCNWATCH_DEFENCE')?.pricePence).toBe(599);
+    expect(getProduct('PCNWATCH_REJECTION_REVIEW')?.pricePence).toBe(499);
+    expect(getProduct('PCNWATCH_APPEAL_PACK')?.pricePence).toBe(999);
   });
 
   it('keeps prices in one place, expressed in pence as integers', () => {
@@ -53,7 +53,7 @@ describe('catalogue', () => {
   });
 
   it('resolves entitlements from purchased SKUs', () => {
-    const granted = entitlementsFor(['FINE_RADAR_DEFENCE']);
+    const granted = entitlementsFor(['PCNWATCH_DEFENCE']);
     expect(granted.has('CHALLENGE_DRAFT')).toBe(true);
     expect(granted.has('EXPORT_PDF')).toBe(true);
     expect(granted.has('APPEAL_BUNDLE')).toBe(false);
@@ -114,7 +114,7 @@ describe('event interpretation', () => {
     const result = interpretCheckoutEvent(completedSession());
     expect(result.kind).toBe('COMPLETED');
     if (result.kind !== 'COMPLETED') return;
-    expect(result.checkout.productSku).toBe('FINE_RADAR_DEFENCE');
+    expect(result.checkout.productSku).toBe('PCNWATCH_DEFENCE');
     expect(result.checkout.amountPence).toBe(599);
   });
 
@@ -140,7 +140,7 @@ describe('event interpretation', () => {
   it('rejects a session naming a product that does not exist', () => {
     const result = interpretCheckoutEvent(
       completedSession({
-        metadata: { user_id: 'u', product_sku: 'FINE_RADAR_FREE_MONEY' },
+        metadata: { user_id: 'u', product_sku: 'PCNWATCH_FREE_MONEY' },
       }),
     );
     expect(result.kind).toBe('INVALID');
@@ -148,7 +148,7 @@ describe('event interpretation', () => {
 
   it('rejects a session with no user in its metadata', () => {
     const result = interpretCheckoutEvent(
-      completedSession({ metadata: { product_sku: 'FINE_RADAR_DEFENCE' } }),
+      completedSession({ metadata: { product_sku: 'PCNWATCH_DEFENCE' } }),
     );
     expect(result.kind).toBe('INVALID');
   });

@@ -1,4 +1,4 @@
--- FineRadar schema — 0005: products, payments, AI logs, audit.
+-- PCNWatch schema — 0005: products, payments, AI logs, audit.
 
 create table products (
   id                uuid primary key default gen_random_uuid(),

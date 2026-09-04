@@ -1,4 +1,4 @@
--- FineRadar schema — 0004: user data (private, RLS-protected in 0006).
+-- PCNWatch schema — 0004: user data (private, RLS-protected in 0006).
 --
 -- Data minimisation: we never require a home address. Name and address columns
 -- exist only because a formal representation may need them, and they are

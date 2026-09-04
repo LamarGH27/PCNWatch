@@ -35,7 +35,7 @@ export default async function DraftPage({ params }: { params: Promise<{ id: stri
     ? await requireEntitlement(userId, id, 'CHALLENGE_DRAFT')
     : { granted: false, entitlement: 'CHALLENGE_DRAFT' as const, reason: 'Not signed in.' };
 
-  const product = getProduct('FINE_RADAR_DEFENCE');
+  const product = getProduct('PCNWATCH_DEFENCE');
 
   return (
     <div className="fr-container" style={{ paddingBlock: 28, maxWidth: 800 }}>
@@ -101,7 +101,7 @@ export default async function DraftPage({ params }: { params: Promise<{ id: stri
             </ul>
 
             {featureFlags.payments ? (
-              <form action={`/api/checkout?case=${id}&sku=FINE_RADAR_DEFENCE`} method="post">
+              <form action={`/api/checkout?case=${id}&sku=PCNWATCH_DEFENCE`} method="post">
                 <button
                   type="submit"
                   className="fr-touch"

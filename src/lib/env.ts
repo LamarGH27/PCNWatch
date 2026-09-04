@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Environment contract for FineRadar.
+ * Environment contract for PCNWatch.
  *
  * Design rules:
  *  - Nothing here throws at module load in the browser. Only `NEXT_PUBLIC_*` values

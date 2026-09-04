@@ -1,4 +1,4 @@
--- FineRadar schema — 0003: enforcement intelligence (public, aggregate-only).
+-- PCNWatch schema — 0003: enforcement intelligence (public, aggregate-only).
 --
 -- IMPORTANT: nothing in this file may contain personal data. Source datasets can
 -- accidentally include a vehicle registration; the ingestion adapter strips those

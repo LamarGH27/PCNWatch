@@ -1,4 +1,4 @@
--- FineRadar schema — 0006: row level security.
+-- PCNWatch schema — 0006: row level security.
 --
 -- Policy model:
 --   * Public enforcement aggregates are readable by anyone, including anonymous.
