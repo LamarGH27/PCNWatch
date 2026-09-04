@@ -17,7 +17,8 @@ provide legal advice and does not guarantee that a challenge will succeed.
 | --- | --- |
 | Build | Passing |
 | Lint | Clean |
-| Unit tests | 199 passing |
+| Unit tests | 228 passing |
+| Browser tests | 57 passing (Playwright, desktop + mobile) |
 | Database tests | 22 assertions against real PostgreSQL 16 + PostGIS 3.4 |
 | Enforcement map coverage | **Camden only** — and only once data has been ingested |
 | Live Camden ingestion | **Not yet run.** Pipeline verified against fixtures and a local HTTP server |
@@ -47,6 +48,7 @@ unavailable rather than showing placeholders.
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run lint` | ESLint |
 | `npm test` | Vitest |
+| `npm run test:e2e` | Playwright critical flows against a production build |
 | `npm run db:test` | Rebuild the database from migrations and run the SQL suites |
 | `npm run verify` | typecheck + lint + test + build |
 | `npm run ingest:camden -- --dry-run` | Validate the Camden source without writing |

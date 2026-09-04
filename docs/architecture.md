@@ -189,10 +189,17 @@ few lines.
 
 ## 10. Honest status
 
-**Verified working:** build, lint, 199 unit tests, 22 SQL assertions against real
-PostgreSQL + PostGIS, ingestion pipeline end to end over HTTP against a fixture
-server (12 fetched, 4 rejected with distinct reasons, 7 accepted after
-deduplication, 5 geolocated).
+**Verified working:** build, lint, 228 unit tests, 57 Playwright tests across
+desktop and mobile, 22 SQL assertions against real PostgreSQL + PostGIS, and the
+ingestion pipeline end to end over HTTP against a fixture server (12 fetched,
+4 rejected with distinct reasons, 7 accepted after deduplication, 5 geolocated).
+
+The browser suite runs against a build with no credentials on purpose: the
+behaviours most worth proving there are the honesty ones, and a configured
+environment would hide them. It has already earned its place by catching two real
+mobile layout bugs — a header that overflowed a 412px viewport and intercepted
+clicks on the primary CTA, and a 267px horizontal overflow on /hotspots caused by
+grid items defaulting to `min-width: auto`.
 
 **Built but not run against the real thing:** Camden ingestion against Camden
 (host blocked), anything requiring Supabase, Anthropic or Stripe credentials.
