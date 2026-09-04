@@ -1,0 +1,113 @@
+[
+  {
+    "pcn_id": "CA00000001",
+    "contravention_code": "01",
+    "issue_datetime": "2026-01-05T09:14:00",
+    "street": "Eversholt Street",
+    "locality": "Somers Town",
+    "postcode": "NW1 1DN",
+    "longitude": "-0.1338",
+    "latitude": "51.5305",
+    "ticket_type": "Parking"
+  },
+  {
+    "pcn_id": "CA00000002",
+    "contravention_code": "12",
+    "issue_date": "06/01/2026",
+    "issue_time": "14:35",
+    "street": "Camden High St",
+    "locality": "Camden Town",
+    "postcode": "NW1 7JE",
+    "longitude": "-0.1426",
+    "latitude": "51.5390",
+    "ticket_type": "Parking"
+  },
+  {
+    "pcn_id": "CA00000003",
+    "contravention_code": "21",
+    "issue_date": "2026-01-07",
+    "street": "Kentish Town Road",
+    "longitude": "",
+    "latitude": "",
+    "ticket_type": "Parking"
+  },
+  {
+    "pcn_id": "CA00000004",
+    "contravention_code": "not-a-code",
+    "issue_datetime": "2026-01-08T11:00:00",
+    "street": "Prince of Wales Road",
+    "longitude": "-0.1500",
+    "latitude": "51.5450"
+  },
+  {
+    "pcn_id": "CA00000005",
+    "contravention_code": "46",
+    "issue_datetime": "2026-01-09T08:20:00",
+    "street": "Euston Road",
+    "longitude": "51.5300",
+    "latitude": "-0.1300",
+    "ticket_type": "Bus Lane"
+  },
+  {
+    "pcn_id": "CA00000006",
+    "contravention_code": "01",
+    "issue_date": "31/02/2026",
+    "street": "Chalk Farm Road",
+    "longitude": "-0.1470",
+    "latitude": "51.5430"
+  },
+  {
+    "pcn_id": "CA00000007",
+    "contravention_code": "24",
+    "issue_date": "2026-01-10",
+    "street": "   ",
+    "longitude": "-0.1400",
+    "latitude": "51.5400"
+  },
+  {
+    "contravention_code": "30",
+    "issue_date": "2026-01-11",
+    "street": "Haverstock Hill",
+    "longitude": "-0.1550",
+    "latitude": "51.5480"
+  },
+  {
+    "pcn_id": "CA00000009",
+    "contravention_code": "12",
+    "issue_datetime": "2099-01-01T10:00:00",
+    "street": "Malden Road",
+    "longitude": "-0.1520",
+    "latitude": "51.5460"
+  },
+  {
+    "pcn_id": "CA00000010",
+    "contravention_code": "01",
+    "issue_datetime": "2026-01-12T16:45:00",
+    "street": "Eversholt Street",
+    "locality": "Somers Town",
+    "longitude": "0",
+    "latitude": "0",
+    "vehicle_registration": "AB12 CDE",
+    "keeper_name": "A Person",
+    "notes": "Vehicle AB12 CDE observed at location"
+  },
+  {
+    "pcn_id": "CA00000001",
+    "contravention_code": "01",
+    "issue_datetime": "2026-01-05T09:14:00",
+    "street": "Eversholt Street",
+    "locality": "Somers Town",
+    "longitude": "-0.1338",
+    "latitude": "51.5305",
+    "ticket_type": "Parking"
+  },
+  {
+    "pcn_id": "CA00000012",
+    "contravention_code": "40",
+    "issue_datetime": "2026-01-13T12:05:00",
+    "street": "Rosslyn Hill",
+    "longitude": "-0.1730",
+    "latitude": "51.5560",
+    "ticket_type": "Parking"
+  }
+]
