@@ -115,7 +115,7 @@ function Filters({ period, code }: { period: Period; code?: string }) {
   };
 
   return (
-    <div style={{ marginTop: 24, display: 'grid', gap: 14 }}>
+    <div className="fr-stack" style={{ marginTop: 24, gap: 14 }}>
       <div>
         <div className="fr-eyebrow" style={{ marginBottom: 7 }}>
           Period
@@ -144,7 +144,7 @@ function Filters({ period, code }: { period: Period; code?: string }) {
         </div>
       </div>
 
-      <div>
+      <div style={{ minWidth: 0 }}>
         <div className="fr-eyebrow" style={{ marginBottom: 7 }}>
           Contravention
         </div>

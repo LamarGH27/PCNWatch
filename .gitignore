@@ -14,3 +14,4 @@ next-env.d.ts
 /blob-report/
 /.vercel
 /tmp/
+diag.mjs

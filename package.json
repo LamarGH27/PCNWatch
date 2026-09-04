@@ -2,7 +2,7 @@
   "name": "fineradar",
   "version": "0.1.0",
   "private": true,
-  "description": "FineRadar \u2014 UK PCN enforcement intelligence and challenge preparation.",
+  "description": "FineRadar — UK PCN enforcement intelligence and challenge preparation.",
   "engines": {
     "node": ">=20.11"
   },
@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.7",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.1.13",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.0",

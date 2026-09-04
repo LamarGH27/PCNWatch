@@ -46,79 +46,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to content
         </a>
 
-        <header
-          style={{
-            borderBottom: '1px solid var(--border)',
-            background: 'var(--surface)',
-            position: 'sticky',
-            top: 0,
-            zIndex: 40,
-          }}
-        >
-          <div
-            className="fr-container"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 16,
-              height: 60,
-            }}
-          >
-            <Link
-              href="/"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 9,
-                textDecoration: 'none',
-                color: 'var(--text)',
-              }}
-            >
+        <header className="fr-header">
+          <div className="fr-container fr-header-inner">
+            <Link href="/" className="fr-brand">
               <RadarMark />
-              <span style={{ fontWeight: 650, fontSize: 17, letterSpacing: '-0.02em' }}>
-                FineRadar
-              </span>
+              <span>FineRadar</span>
             </Link>
 
-            <nav aria-label="Primary" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {/* Secondary navigation. A scrollable strip on narrow screens rather
+                than a hamburger menu: the map is the hero product and hiding it
+                behind a menu would bury it. */}
+            <nav aria-label="Primary" className="fr-nav">
               {NAV.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="fr-touch"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    padding: '0 11px',
-                    fontSize: 14,
-                    color: 'var(--text-muted)',
-                    textDecoration: 'none',
-                    borderRadius: 'var(--radius-sm)',
-                  }}
-                >
+                <Link key={item.href} href={item.href} className="fr-touch fr-nav-link">
                   {item.label}
                 </Link>
               ))}
-              <Link
-                href="/analyse"
-                className="fr-touch"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  marginLeft: 6,
-                  padding: '0 14px',
-                  fontSize: 14,
-                  fontWeight: 550,
-                  background: 'var(--color-ink-900)',
-                  color: 'var(--color-ink-50)',
-                  borderRadius: 'var(--radius-md)',
-                  textDecoration: 'none',
-                }}
-              >
-                Analyse my PCN
-              </Link>
             </nav>
+
+            {/* The primary action stays beside the brand at every width. On a
+                phone this is what someone standing by their car needs first. */}
+            <Link href="/analyse" className="fr-touch fr-cta">
+              Analyse my PCN
+            </Link>
           </div>
         </header>
 

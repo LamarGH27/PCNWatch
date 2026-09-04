@@ -183,10 +183,22 @@ p {
   min-width: 44px;
 }
 
-/* Wide content scrolls inside itself; the page body never scrolls sideways. */
+/* Wide content scrolls inside itself; the page body never scrolls sideways.
+   `min-width: 0` matters: a grid or flex child defaults to `min-width: auto`,
+   which lets its content stretch the parent and defeats the scroll box entirely.
+   Pair it with `.fr-stack` on the containing grid. */
 .fr-scroll-x {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* A vertical stack whose children may not stretch the container. Use wherever a
+   child might contain something wider than the viewport. */
+.fr-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .fr-skip-link {
@@ -225,5 +237,100 @@ p {
     border-radius: var(--radius-lg) !important;
     border: 1px solid var(--border) !important;
     box-shadow: 0 4px 18px rgb(0 0 0 / 0.12) !important;
+  }
+}
+
+/* --- Header ---------------------------------------------------------------
+   On a phone: brand and the primary action on one line, with the navigation
+   wrapping to a scrollable strip below. From 720px everything sits on one line.
+   A hamburger menu was rejected — the map is the hero product and hiding it
+   behind a menu would bury it. */
+
+.fr-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.fr-header-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-block: 8px;
+}
+
+.fr-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-decoration: none;
+  color: var(--text);
+  font-weight: 650;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+  margin-right: auto;
+}
+
+.fr-cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 550;
+  background: var(--color-ink-900);
+  color: var(--color-ink-50);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.fr-nav {
+  /* Full width below the brand row on a phone; inline from 720px. */
+  order: 3;
+  flex: 1 0 100%;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  margin-inline: -4px;
+}
+
+.fr-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.fr-nav-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 14px;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+@media (min-width: 720px) {
+  .fr-header-inner {
+    flex-wrap: nowrap;
+    padding-block: 0;
+    min-height: 60px;
+  }
+
+  .fr-nav {
+    order: 0;
+    flex: 0 1 auto;
+    border-top: none;
+    padding-top: 0;
+    margin-inline: 0;
+    overflow-x: visible;
   }
 }
