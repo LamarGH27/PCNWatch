@@ -10,13 +10,59 @@ import { z } from 'zod';
  * produces a loud validation failure instead of a silent field of nulls.
  */
 
-/** Raw row: an object of scalar values. Anything else is rejected outright. */
-export const rawRowSchema = z.record(
-  z.string(),
-  z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
-);
+/**
+ * A Socrata "point" / "location" column, which arrives as a nested object rather
+ * than a scalar. This is the shape most likely to differ between a hand-written
+ * fixture and the live dataset, so it is modelled explicitly rather than being
+ * treated as an unexpected value.
+ *
+ * Socrata emits two variants:
+ *   - legacy `location`: { latitude: "51.53", longitude: "-0.13", human_address }
+ *   - GeoJSON `point`:   { type: "Point", coordinates: [lon, lat] }
+ */
+const latLonPointSchema = z
+  .object({
+    latitude: z.union([z.string(), z.number()]),
+    longitude: z.union([z.string(), z.number()]),
+  })
+  .loose();
+
+const geoJsonPointSchema = z
+  .object({
+    type: z.literal('Point'),
+    coordinates: z.tuple([z.number(), z.number()]),
+  })
+  .loose();
+
+/**
+ * Raw row.
+ *
+ * Values may be scalars or nested objects. A nested value never rejects the row —
+ * an unrecognised one is simply not usable as a field, and the PII guard drops it
+ * from retained metadata because its shape cannot be reviewed. Rejecting the whole
+ * row would mean one new column on the source discards the entire dataset.
+ */
+export const rawRowSchema = z.record(z.string(), z.unknown());
 
 export type RawRow = z.infer<typeof rawRowSchema>;
+
+/** Extracts coordinates from a Socrata point/location column, if that is what it is. */
+export function readSocrataPoint(value: unknown): { longitude: number; latitude: number } | null {
+  const geoJson = geoJsonPointSchema.safeParse(value);
+  if (geoJson.success) {
+    const [longitude, latitude] = geoJson.data.coordinates;
+    return { longitude, latitude };
+  }
+
+  const latLon = latLonPointSchema.safeParse(value);
+  if (latLon.success) {
+    const longitude = Number(latLon.data.longitude);
+    const latitude = Number(latLon.data.latitude);
+    if (Number.isFinite(longitude) && Number.isFinite(latitude)) return { longitude, latitude };
+  }
+
+  return null;
+}
 
 /**
  * Logical fields and the source column names that may supply them.
@@ -83,12 +129,48 @@ export const ERROR_EXCERPT_FIELDS: readonly string[] = [
   ]),
 ];
 
+/**
+ * Resolves a logical field to the first alias present as a usable *scalar*.
+ *
+ * Nested values are skipped rather than stringified: `String({})` yields
+ * "[object Object]", which would sail through as a street name.
+ */
 export function resolveField(row: RawRow, field: LogicalField): { key: string; value: unknown } | null {
   for (const alias of FIELD_ALIASES[field]) {
     const value = row[alias];
-    if (value !== undefined && value !== null && String(value).trim() !== '') {
-      return { key: alias, value };
-    }
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'object') continue;
+    if (String(value).trim() === '') continue;
+    return { key: alias, value };
+  }
+  return null;
+}
+
+/** Column names that may carry a Socrata point/location object. */
+export const POINT_FIELD_CANDIDATES: readonly string[] = [
+  'location',
+  'point',
+  'geocoded_column',
+  'the_geom',
+  'coordinates',
+  'geo_point',
+  'geom',
+];
+
+/** Finds coordinates in whichever column carries them, if any. */
+export function resolvePoint(
+  row: RawRow,
+): { key: string; longitude: number; latitude: number } | null {
+  for (const key of POINT_FIELD_CANDIDATES) {
+    const point = readSocrataPoint(row[key]);
+    if (point) return { key, ...point };
+  }
+  // Fall back to scanning every column, so a differently named point column still
+  // works rather than silently costing us every coordinate in the dataset.
+  for (const [key, value] of Object.entries(row)) {
+    if (typeof value !== 'object' || value === null) continue;
+    const point = readSocrataPoint(value);
+    if (point) return { key, ...point };
   }
   return null;
 }

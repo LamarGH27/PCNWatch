@@ -374,3 +374,129 @@ describe('unconfigured source', () => {
     await expect(adapter.fetch({})).rejects.toMatchObject({ code: 'MALFORMED_PAYLOAD' });
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Live-source shapes                                                  */
+/*                                                                     */
+/* Regression cover for the shapes a real Socrata dataset can return    */
+/* that a hand-written fixture would not. The nested point column is    */
+/* the highest-risk difference: before this was handled, every row of   */
+/* such a dataset was rejected and the whole run failed.                */
+/* ------------------------------------------------------------------ */
+
+describe('Socrata source shapes', () => {
+  const base = {
+    pcn_id: 'CA00099001',
+    contravention_code: '01',
+    issue_datetime: '2026-01-05T09:14:00',
+    street: 'Eversholt Street',
+  };
+
+  it('reads coordinates from a legacy nested location object', () => {
+    const result = normaliseCamdenRow(
+      { ...base, location: { latitude: '51.5305', longitude: '-0.1338', human_address: '{}' } },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeCloseTo(-0.1338);
+    expect(result.event.latitude).toBeCloseTo(51.5305);
+  });
+
+  it('reads coordinates from a GeoJSON point column', () => {
+    const result = normaliseCamdenRow(
+      { ...base, point: { type: 'Point', coordinates: [-0.1426, 51.539] } },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeCloseTo(-0.1426);
+    expect(result.event.latitude).toBeCloseTo(51.539);
+  });
+
+  it('finds a point column under an unexpected name', () => {
+    const result = normaliseCamdenRow(
+      { ...base, some_new_geo_column: { latitude: 51.5305, longitude: -0.1338 } },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeCloseTo(-0.1338);
+  });
+
+  it('prefers explicit scalar columns over a nested point', () => {
+    const result = normaliseCamdenRow(
+      {
+        ...base,
+        longitude: '-0.1500',
+        latitude: '51.5450',
+        location: { latitude: '51.5305', longitude: '-0.1338' },
+      },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeCloseTo(-0.15);
+  });
+
+  it('still rejects a nested point outside the Camden bounding box', () => {
+    const result = normaliseCamdenRow(
+      { ...base, location: { latitude: '53.4808', longitude: '-2.2426' } },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeNull();
+    expect(result.warnings).toContain('COORDINATES_OUT_OF_RANGE');
+  });
+
+  it('keeps a row that gains an unrecognised nested column', () => {
+    // One new column on the source must not discard the entire dataset.
+    const result = normaliseCamdenRow(
+      { ...base, longitude: '-0.1338', latitude: '51.5305', extra: { nested: { deeply: true } } },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeCloseTo(-0.1338);
+    // And the unreviewable nested value is not retained.
+    expect(JSON.stringify(result.event.sourceMetadata)).not.toContain('deeply');
+  });
+
+  it('never stringifies a nested object into a street name', () => {
+    const result = normaliseCamdenRow(
+      { pcn_id: 'CA1', issue_datetime: '2026-01-05T09:14:00', street: { unexpected: true } },
+      0,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorCode).toBe('MISSING_STREET');
+    expect(JSON.stringify(result.error)).not.toContain('[object Object]');
+  });
+
+  it('records which column supplied the coordinates, for traceability', () => {
+    const result = normaliseCamdenRow(
+      { ...base, location: { latitude: '51.5305', longitude: '-0.1338' } },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const resolved = (result.event.sourceMetadata as { _resolvedFields?: { coordinates?: string } })
+      ._resolvedFields;
+    expect(resolved?.coordinates).toBe('location');
+  });
+
+  it('keeps the source record id readable in a rejection excerpt', () => {
+    // A PCN reference is shaped like a dateless registration, so the scrubber
+    // redacts it. Without this the one field that makes a rejection debuggable
+    // is lost, for no privacy gain.
+    const result = normaliseCamdenRow(
+      { pcn_id: 'CA1', street: 'Eversholt Street', issue_date: 'not-a-date' },
+      0,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.sourceRecordId).toBe('CA1');
+    expect((result.error.rawExcerpt as Record<string, unknown>)._sourceRecordId).toBe('CA1');
+  });
+});

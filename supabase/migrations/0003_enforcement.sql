@@ -121,16 +121,20 @@ create table pcn_activity_aggregates (
   constraint aggregate_bucket_kind
     check (bucket_kind in ('MONTH', 'HOUR', 'DOW', 'MONTH_CODE'))
 );
+-- NULLS NOT DISTINCT rather than coalesce() sentinels: an index over expressions
+-- cannot be targeted by `on conflict (columns)`, which makes the table
+-- effectively un-upsertable from either a direct client or PostgREST. Treating
+-- NULLs as equal expresses the same uniqueness and keeps the index targetable.
 create unique index pcn_activity_aggregates_key_idx on pcn_activity_aggregates (
   authority_id,
-  coalesce(parking_location_id, '00000000-0000-0000-0000-000000000000'::uuid),
-  coalesce(road_segment_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  parking_location_id,
+  road_segment_id,
   bucket_kind,
   period_start,
-  coalesce(contravention_code, ''),
-  coalesce(hour_of_day, -1),
-  coalesce(day_of_week, -1)
-);
+  contravention_code,
+  hour_of_day,
+  day_of_week
+) nulls not distinct;
 create index pcn_activity_aggregates_lookup_idx on pcn_activity_aggregates (authority_id, bucket_kind, period_start desc);
 
 create table pcn_activity_scores (
@@ -163,11 +167,11 @@ create table pcn_activity_scores (
     check (parking_location_id is not null or road_segment_id is not null)
 );
 create unique index pcn_activity_scores_key_idx on pcn_activity_scores (
-  coalesce(parking_location_id, '00000000-0000-0000-0000-000000000000'::uuid),
-  coalesce(road_segment_id, '00000000-0000-0000-0000-000000000000'::uuid),
+  parking_location_id,
+  road_segment_id,
   period_key,
   as_of_date
-);
+) nulls not distinct;
 create index pcn_activity_scores_rank_idx on pcn_activity_scores (authority_id, period_key, score desc nulls last);
 
 -- ---------------------------------------------------------------------------

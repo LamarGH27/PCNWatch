@@ -22,6 +22,7 @@ import {
   RETAINABLE_METADATA_FIELDS,
   rawRowSchema,
   resolveField,
+  resolvePoint,
   type RawRow,
 } from './schema';
 
@@ -176,7 +177,7 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
 export function normaliseCamdenRow(row: unknown, rowNumber: number): NormalisationResult {
   const parsed = rawRowSchema.safeParse(row);
   if (!parsed.success) {
-    return failure(rowNumber, null, 'ROW_NOT_AN_OBJECT', 'Row is not a flat object of scalar values.', row);
+    return failure(rowNumber, null, 'ROW_NOT_AN_OBJECT', 'Row is not a JSON object.', row);
   }
   const raw: RawRow = parsed.data;
   const warnings: string[] = [];
@@ -277,17 +278,29 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
     );
   }
 
+  // Coordinates may arrive either as two scalar columns or as a single nested
+  // Socrata point/location object. Both are supported; scalars win when present
+  // because they are the more explicit signal.
   const lonField = resolveField(raw, 'longitude');
   const latField = resolveField(raw, 'latitude');
-  const coordinates =
-    lonField && latField ? parseCoordinates(lonField.value, latField.value, CAMDEN_BBOX) : null;
+  const nestedPoint = resolvePoint(raw);
 
-  if (lonField && latField && !coordinates) {
-    // Present but unusable. Recorded as a warning, and the row is kept without
-    // geometry rather than being given a fabricated position.
-    warnings.push('COORDINATES_OUT_OF_RANGE');
+  let coordinates: { longitude: number; latitude: number } | null = null;
+  let coordinateSource: string | null = null;
+
+  if (lonField && latField) {
+    coordinates = parseCoordinates(lonField.value, latField.value, CAMDEN_BBOX);
+    coordinateSource = coordinates ? `${lonField.key}/${latField.key}` : null;
+    if (!coordinates) warnings.push('COORDINATES_OUT_OF_RANGE');
   }
-  if (!lonField || !latField) warnings.push('COORDINATES_ABSENT');
+
+  if (!coordinates && nestedPoint) {
+    coordinates = parseCoordinates(nestedPoint.longitude, nestedPoint.latitude, CAMDEN_BBOX);
+    coordinateSource = coordinates ? nestedPoint.key : null;
+    if (!coordinates) warnings.push('COORDINATES_OUT_OF_RANGE');
+  }
+
+  if (!lonField && !latField && !nestedPoint) warnings.push('COORDINATES_ABSENT');
 
   /* -- Contravention ------------------------------------------------------ */
 
@@ -343,6 +356,7 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
           street: streetField.key,
           date: timestampField?.key ?? dateField?.key ?? null,
           contravention: codeField?.key ?? null,
+          coordinates: coordinateSource,
         },
         _droppedFieldCount: sanitised.droppedFields.length,
       },
@@ -396,14 +410,16 @@ function failure(
   errorMessage: string,
   raw: unknown,
 ): NormalisationResult {
+  const excerpt = sanitiseErrorExcerpt(raw, ERROR_EXCERPT_FIELDS);
+
+  // A PCN reference is shaped like an old dateless registration ("CA1"), so the
+  // registration scrubber redacts it. That costs us the one field that makes a
+  // rejection debuggable, for no privacy gain: a notice reference is not a
+  // vehicle registration, and it is already stored unredacted in its own column.
+  if (excerpt && sourceRecordId) excerpt._sourceRecordId = sourceRecordId;
+
   return {
     ok: false,
-    error: {
-      rowNumber,
-      sourceRecordId,
-      errorCode,
-      errorMessage,
-      rawExcerpt: sanitiseErrorExcerpt(raw, ERROR_EXCERPT_FIELDS),
-    },
+    error: { rowNumber, sourceRecordId, errorCode, errorMessage, rawExcerpt: excerpt },
   };
 }

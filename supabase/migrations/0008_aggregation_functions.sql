@@ -106,7 +106,14 @@ comment on function pcnwatch_rebuild_aggregates is
 -- Returned to the scoring job, not to the browser.
 -- ---------------------------------------------------------------------------
 
-create or replace function pcnwatch_scoring_inputs(p_authority_slug text)
+-- Dropped and recreated rather than replaced: adding a parameter changes the
+-- signature, which would otherwise create an overload instead of updating it.
+drop function if exists pcnwatch_scoring_inputs(text);
+
+create or replace function pcnwatch_scoring_inputs(
+  p_authority_slug text,
+  p_from_date date default null
+)
 returns table (
   location_id uuid,
   monthly_counts jsonb,
@@ -129,7 +136,12 @@ as $$
       select jsonb_agg(jsonb_build_object('periodStart', a.period_start, 'count', a.pcn_count)
              order by a.period_start)
       from pcn_activity_aggregates a
-      where a.parking_location_id = l.id and a.bucket_kind = 'MONTH'
+      where a.parking_location_id = l.id
+        and a.bucket_kind = 'MONTH'
+        -- Restrict to the scoring period. Without this every period key produces
+        -- an identical score, so the UI's time filter would change the counts a
+        -- user sees without changing the ranking those counts are ordered by.
+        and (p_from_date is null or a.period_start >= p_from_date)
     ), '[]'::jsonb),
     coalesce((
       select jsonb_object_agg(a.hour_of_day::text, a.pcn_count)
@@ -490,6 +502,7 @@ $$;
 comment on function pcnwatch_map_cells is
   'Spatially binned enforcement counts for a viewport. Returns at most 2000 cells so the browser never receives raw event rows.';
 
+grant execute on function pcnwatch_scoring_inputs(text, date) to service_role;
 grant execute on function pcnwatch_hotspots(text, text, text, integer, integer) to anon, authenticated;
 grant execute on function pcnwatch_location_detail(text, text) to anon, authenticated;
 grant execute on function pcnwatch_map_cells(text, double precision, double precision, double precision, double precision, integer, text) to anon, authenticated;

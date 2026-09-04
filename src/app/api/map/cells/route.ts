@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createSupabaseServiceClient } from '@/lib/supabase/server';
-import { isConfigured } from '@/lib/env';
 import { logError, toUserFacingError } from '@/lib/errors';
+import { callFunction } from '@/server/db/reader';
 import { getCoverage } from '@/server/repositories/enforcement';
 import { rateLimit } from '@/server/rate-limit';
 
@@ -87,22 +86,25 @@ export async function GET(request: Request) {
       });
     }
 
-    if (!isConfigured('supabase')) throw new Error('SUPABASE_NOT_CONFIGURED');
-    const supabase = createSupabaseServiceClient();
-    if (!supabase) throw new Error('SUPABASE_CLIENT_UNAVAILABLE');
+    const result = await callFunction<Record<string, unknown>>(
+      'pcnwatch_map_cells',
+      {
+        p_authority_slug: query.authority,
+        p_min_lon: query.minLon,
+        p_min_lat: query.minLat,
+        p_max_lon: query.maxLon,
+        p_max_lat: query.maxLat,
+        p_zoom: query.zoom,
+        p_period_key: query.period,
+      },
+      [
+        'p_authority_slug', 'p_min_lon', 'p_min_lat', 'p_max_lon',
+        'p_max_lat', 'p_zoom', 'p_period_key',
+      ],
+    );
+    if (!result.ok) throw new Error(result.reason);
 
-    const { data, error } = await supabase.rpc('pcnwatch_map_cells', {
-      p_authority_slug: query.authority,
-      p_min_lon: query.minLon,
-      p_min_lat: query.minLat,
-      p_max_lon: query.maxLon,
-      p_max_lat: query.maxLat,
-      p_zoom: query.zoom,
-      p_period_key: query.period,
-    });
-    if (error) throw error;
-
-    const cells = (data ?? []).map((row: Record<string, unknown>) => ({
+    const cells = result.rows.map((row) => ({
       cellKey: String(row.cell_key),
       longitude: Number(row.longitude),
       latitude: Number(row.latitude),

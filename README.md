@@ -17,11 +17,11 @@ provide legal advice and does not guarantee that a challenge will succeed.
 | --- | --- |
 | Build | Passing |
 | Lint | Clean |
-| Unit tests | 228 passing |
+| Unit tests | 255 passing |
 | Browser tests | 57 passing (Playwright, desktop + mobile) |
-| Database tests | 22 assertions against real PostgreSQL 16 + PostGIS 3.4 |
+| Database tests | 3 suites against real PostgreSQL 16 + PostGIS 3.4 |
 | Enforcement map coverage | **Camden only** — and only once data has been ingested |
-| Live Camden ingestion | **Not yet run.** Pipeline verified against fixtures and a local HTTP server |
+| Live Camden ingestion | **Not yet run** — egress to Camden's host is blocked in the build environment. Pipeline proven end to end against real PostgreSQL + PostGIS, including aggregates, scoring and the map. See [`docs/camden-ingestion.md`](docs/camden-ingestion.md) |
 | Legal review of encoded rules | **Outstanding.** All rules marked `PENDING_LEGAL_REVIEW` |
 
 Read [`docs/architecture.md`](docs/architecture.md) for the full assessment,
@@ -51,8 +51,11 @@ unavailable rather than showing placeholders.
 | `npm run test:e2e` | Playwright critical flows against a production build |
 | `npm run db:test` | Rebuild the database from migrations and run the SQL suites |
 | `npm run verify` | typecheck + lint + test + build |
+| `npm run db:setup` | Create a local PostGIS database with migrations and seed applied |
+| `npm run camden:probe` | Inspect the live Camden dataset's real schema before ingesting |
 | `npm run ingest:camden -- --dry-run` | Validate the Camden source without writing |
-| `npm run ingest:camden` | Ingest, rebuild aggregates, recompute scores |
+| `npm run ingest:camden` | Ingest, rebuild aggregates, recompute scores, print a full report |
+| `npm run camden:trace` | Prove displayed figures trace back to source rows |
 
 ## Database
 
@@ -92,3 +95,4 @@ See [`docs/architecture.md`](docs/architecture.md#3-shape-of-the-codebase).
 
 - [`docs/architecture.md`](docs/architecture.md) — assessment, schema, credentials, assumptions, honest status
 - [`docs/ticket-activity-score.md`](docs/ticket-activity-score.md) — the scoring model, why the proposed weighting was changed
+- [`docs/camden-ingestion.md`](docs/camden-ingestion.md) — the runbook for getting real Camden data in

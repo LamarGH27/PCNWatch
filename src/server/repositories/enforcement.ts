@@ -1,7 +1,7 @@
 import { assessCoverage, isAuthorityInMapScope, type CoverageResult } from '@/core/coverage/coverage';
-import { createSupabaseServiceClient } from '@/lib/supabase/server';
-import { isConfigured } from '@/lib/env';
 import { logError } from '@/lib/errors';
+import { callFunction, hasReadBackend, queryRows } from '@/server/db/reader';
+import { getAuthorityRecord } from './authorities-data';
 import type { ScoreClassification } from '@/core/scoring/types';
 
 /**
@@ -45,154 +45,111 @@ export interface HotspotRow {
   readonly longitude: number | null;
   readonly latitude: number | null;
 }
-
-/** Discriminated result so a failure can never be mistaken for "no data". */
+/**
+ * Discriminated so a failure can never be mistaken for an empty result set.
+ * "We could not look" and "we looked and found nothing" render differently and
+ * must stay structurally distinct.
+ */
 export type QueryResult<T> =
   | { readonly ok: true; readonly data: T }
   | { readonly ok: false; readonly unavailable: true; readonly correlationId: string };
 
-function unavailable(scope: string, error: unknown): QueryResult<never> {
-  return { ok: false, unavailable: true, correlationId: logError(scope, error) };
-}
-
-/**
- * Supabase client, or null when Supabase is not configured.
- *
- * The public read paths use the service client because enforcement aggregates are
- * public data with public-read policies; using it here avoids a session round-trip
- * on anonymous page loads. It never touches user-owned tables.
- */
-function publicClient() {
-  if (!isConfigured('supabase')) return null;
-  try {
-    return createSupabaseServiceClient();
-  } catch (error) {
-    logError('enforcement.client', error);
-    return null;
-  }
-}
-
 export async function getAuthorities(): Promise<QueryResult<AuthoritySummary[]>> {
-  const supabase = publicClient();
-  if (!supabase) return unavailable('enforcement.getAuthorities', new Error('SUPABASE_NOT_CONFIGURED'));
-
-  try {
-    const { data, error } = await supabase
-      .from('authorities')
-      .select(
-        'slug, name, website_url, challenge_info_url, payment_info_url, tribunal_route, penalty_bands, map_coverage_status, coverage_notes, reviewed_at',
-      )
-      .order('name');
-    if (error) throw error;
-
-    return {
-      ok: true,
-      data: (data ?? []).map((row) => ({
-        slug: String(row.slug),
-        name: String(row.name),
-        websiteUrl: row.website_url ?? null,
-        challengeInfoUrl: row.challenge_info_url ?? null,
-        paymentInfoUrl: row.payment_info_url ?? null,
-        tribunalRoute: row.tribunal_route ?? null,
-        penaltyBands: (row.penalty_bands ?? {}) as AuthoritySummary['penaltyBands'],
-        mapCoverageStatus: row.map_coverage_status as AuthoritySummary['mapCoverageStatus'],
-        coverageNotes: String(row.coverage_notes ?? ''),
-        reviewedAt: row.reviewed_at ?? null,
-      })),
-    };
-  } catch (error) {
-    return unavailable('enforcement.getAuthorities', error);
+  const result = await queryRows<Record<string, unknown>>(
+    `select slug, name, website_url, challenge_info_url, payment_info_url, tribunal_route,
+            penalty_bands, map_coverage_status, coverage_notes, reviewed_at
+     from authorities order by name`,
+  );
+  if (!result.ok) {
+    return { ok: false, unavailable: true, correlationId: result.correlationId };
   }
+  return {
+    ok: true,
+    data: result.rows.map((row) => ({
+      slug: String(row.slug),
+      name: String(row.name),
+      websiteUrl: (row.website_url as string | null) ?? null,
+      challengeInfoUrl: (row.challenge_info_url as string | null) ?? null,
+      paymentInfoUrl: (row.payment_info_url as string | null) ?? null,
+      tribunalRoute: (row.tribunal_route as string | null) ?? null,
+      penaltyBands: (row.penalty_bands ?? {}) as AuthoritySummary['penaltyBands'],
+      mapCoverageStatus: row.map_coverage_status as AuthoritySummary['mapCoverageStatus'],
+      coverageNotes: String(row.coverage_notes ?? ''),
+      reviewedAt: (row.reviewed_at as string | null) ?? null,
+    })),
+  };
 }
 
-/**
- * Coverage for an authority, derived from what is actually stored.
- *
- * This is the function every map surface calls before rendering a figure.
- */
 export async function getCoverage(authoritySlug: string): Promise<CoverageResult> {
-  const supabase = publicClient();
   const configuredLive = isAuthorityInMapScope(authoritySlug);
-  const fallbackName = titleCase(authoritySlug);
+  const fallbackName = getAuthorityRecord(authoritySlug)?.name ?? titleCase(authoritySlug);
 
-  if (!supabase) {
+  if (!hasReadBackend()) {
+    // Not configured is a deployment problem, not an absence of enforcement.
     return assessCoverage(authoritySlug, fallbackName, {
       configuredLive,
       eventCount: 0,
       lastSuccessfulIngestionAt: null,
-      // Not configured is a deployment problem, not an absence of enforcement.
       sourceUnavailable: true,
       isDemoData: false,
     });
   }
 
-  try {
-    const { data: authority, error: authorityError } = await supabase
-      .from('authorities')
-      .select('id, name, map_coverage_status')
-      .eq('slug', authoritySlug)
-      .maybeSingle();
-    if (authorityError) throw authorityError;
+  const result = await queryRows<{
+    name: string;
+    map_coverage_status: string;
+    event_count: string;
+    last_ingested_at: string | null;
+    is_demo: boolean | null;
+  }>(
+    `select
+       a.name,
+       a.map_coverage_status,
+       (select count(*) from pcn_events e where e.authority_id = a.id)::text as event_count,
+       run.finished_at as last_ingested_at,
+       (run.report ->> 'demo')::boolean as is_demo
+     from authorities a
+     left join lateral (
+       select r.finished_at, r.report
+       from ingestion_runs r
+       where r.status in ('SUCCEEDED', 'PARTIAL')
+         and r.report ->> 'authorityId' = a.id::text
+       order by r.finished_at desc nulls last
+       limit 1
+     ) run on true
+     where a.slug = $1`,
+    [authoritySlug],
+  );
 
-    if (!authority) {
-      return assessCoverage(authoritySlug, fallbackName, {
-        configuredLive: false,
-        eventCount: 0,
-        lastSuccessfulIngestionAt: null,
-        sourceUnavailable: false,
-        isDemoData: false,
-      });
-    }
+  if (!result.ok) {
+    logError('enforcement.getCoverage', new Error(result.reason), { authoritySlug });
+    return assessCoverage(authoritySlug, fallbackName, {
+      configuredLive,
+      eventCount: 0,
+      lastSuccessfulIngestionAt: null,
+      sourceUnavailable: true,
+      isDemoData: false,
+    });
+  }
 
-    const [{ count, error: countError }, lastRun] = await Promise.all([
-      supabase
-        .from('pcn_events')
-        .select('id', { count: 'exact', head: true })
-        .eq('authority_id', authority.id),
-      lastSuccessfulIngestion(supabase, authority.id as string),
-    ]);
-    if (countError) throw countError;
-
-    return assessCoverage(authoritySlug, String(authority.name), {
-      configuredLive: configuredLive && authority.map_coverage_status === 'LIVE',
-      eventCount: count ?? 0,
-      lastSuccessfulIngestionAt: lastRun.finishedAt,
+  const row = result.rows[0];
+  if (!row) {
+    return assessCoverage(authoritySlug, fallbackName, {
+      configuredLive: false,
+      eventCount: 0,
+      lastSuccessfulIngestionAt: null,
       sourceUnavailable: false,
-      isDemoData: lastRun.isDemo,
-    });
-  } catch (error) {
-    logError('enforcement.getCoverage', error, { authoritySlug });
-    return assessCoverage(authoritySlug, fallbackName, {
-      configuredLive,
-      eventCount: 0,
-      lastSuccessfulIngestionAt: null,
-      sourceUnavailable: true,
       isDemoData: false,
     });
   }
-}
 
-type SupabaseLike = NonNullable<ReturnType<typeof createSupabaseServiceClient>>;
-
-async function lastSuccessfulIngestion(
-  supabase: SupabaseLike,
-  authorityId: string,
-): Promise<{ finishedAt: string | null; isDemo: boolean }> {
-  const { data } = await supabase
-    .from('ingestion_runs')
-    .select('finished_at, report, data_sources!inner(slug)')
-    .in('status', ['SUCCEEDED', 'PARTIAL'])
-    .order('finished_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!data) return { finishedAt: null, isDemo: false };
-  const report = (data.report ?? {}) as { demo?: boolean; authorityId?: string };
-  // A run is only relevant to this authority when it says so.
-  if (report.authorityId && report.authorityId !== authorityId) {
-    return { finishedAt: null, isDemo: false };
-  }
-  return { finishedAt: data.finished_at ?? null, isDemo: report.demo === true };
+  return assessCoverage(authoritySlug, String(row.name), {
+    configuredLive: configuredLive && row.map_coverage_status === 'LIVE',
+    eventCount: Number(row.event_count ?? 0),
+    lastSuccessfulIngestionAt: row.last_ingested_at,
+    sourceUnavailable: false,
+    isDemoData: row.is_demo === true,
+  });
 }
 
 export interface HotspotQuery {
@@ -204,48 +161,41 @@ export interface HotspotQuery {
 }
 
 export async function getHotspots(query: HotspotQuery): Promise<QueryResult<HotspotRow[]>> {
-  const supabase = publicClient();
-  if (!supabase) return unavailable('enforcement.getHotspots', new Error('SUPABASE_NOT_CONFIGURED'));
-
   const limit = Math.min(query.limit ?? 50, 200);
 
-  try {
-    // A database function does the aggregation so the browser never sees raw rows
-    // and the ranking happens where the data is.
-    const { data, error } = await supabase.rpc('pcnwatch_hotspots', {
+  const result = await callFunction<Row>(
+    'pcnwatch_hotspots',
+    {
       p_authority_slug: query.authoritySlug,
       p_period_key: query.periodKey,
       p_contravention_code: query.contraventionCode ?? null,
       p_limit: limit,
       p_offset: query.offset ?? 0,
-    });
-    if (error) throw error;
+    },
+    ['p_authority_slug', 'p_period_key', 'p_contravention_code', 'p_limit', 'p_offset'],
+  );
 
-    return { ok: true, data: (data ?? []).map(toHotspotRow) };
-  } catch (error) {
-    return unavailable('enforcement.getHotspots', error);
+  if (!result.ok) {
+    return { ok: false, unavailable: true, correlationId: result.correlationId };
   }
+  return { ok: true, data: result.rows.map(toHotspotRow) };
 }
 
 export async function getLocation(
   authoritySlug: string,
   locationSlug: string,
 ): Promise<QueryResult<LocationDetail | null>> {
-  const supabase = publicClient();
-  if (!supabase) return unavailable('enforcement.getLocation', new Error('SUPABASE_NOT_CONFIGURED'));
+  const result = await callFunction<Row>(
+    'pcnwatch_location_detail',
+    { p_authority_slug: authoritySlug, p_location_slug: locationSlug },
+    ['p_authority_slug', 'p_location_slug'],
+  );
 
-  try {
-    const { data, error } = await supabase.rpc('pcnwatch_location_detail', {
-      p_authority_slug: authoritySlug,
-      p_location_slug: locationSlug,
-    });
-    if (error) throw error;
-    const row = Array.isArray(data) ? data[0] : data;
-    if (!row) return { ok: true, data: null };
-    return { ok: true, data: toLocationDetail(row) };
-  } catch (error) {
-    return unavailable('enforcement.getLocation', error);
+  if (!result.ok) {
+    return { ok: false, unavailable: true, correlationId: result.correlationId };
   }
+  const row = result.rows[0];
+  return { ok: true, data: row ? toLocationDetail(row) : null };
 }
 
 export interface LocationDetail extends HotspotRow {

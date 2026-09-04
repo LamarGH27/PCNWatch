@@ -2,7 +2,7 @@
   "name": "pcnwatch",
   "version": "0.1.0",
   "private": true,
-  "description": "PCNWatch — UK PCN enforcement intelligence and challenge preparation.",
+  "description": "PCNWatch \u2014 UK PCN enforcement intelligence and challenge preparation.",
   "engines": {
     "node": ">=20.11"
   },
@@ -17,13 +17,17 @@
     "test:e2e": "playwright test",
     "ingest:camden": "tsx scripts/ingest-camden.ts",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
-    "db:test": "scripts/db-test.sh"
+    "db:test": "scripts/db-test.sh",
+    "camden:probe": "tsx scripts/camden-probe.ts",
+    "camden:trace": "tsx scripts/camden-trace.ts",
+    "db:setup": "scripts/db-setup.sh"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.58.0",
     "maplibre-gl": "^5.9.0",
     "next": "15.5.25",
+    "pg": "^8.23.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "zod": "^4.1.11"
@@ -33,6 +37,7 @@
     "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.1.13",
     "@types/node": "^22.14.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",

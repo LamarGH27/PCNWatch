@@ -171,7 +171,7 @@ export default async function LocationPage({ params }: PageProps) {
         ) : (
           <Card padded={false}>
             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-              {detail.contraventionBreakdown.slice(0, 6).map((entry, i) => {
+              {detail.contraventionBreakdown.slice(0, 6).map((entry: { code: string; count: number }, i: number) => {
                 const record = getContravention(entry.code);
                 const share = detail.totalPcns > 0 ? entry.count / detail.totalPcns : 0;
                 return (
