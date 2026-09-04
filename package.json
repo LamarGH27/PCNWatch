@@ -2,7 +2,7 @@
   "name": "fineradar",
   "version": "0.1.0",
   "private": true,
-  "description": "FineRadar — UK PCN enforcement intelligence and challenge preparation.",
+  "description": "FineRadar \u2014 UK PCN enforcement intelligence and challenge preparation.",
   "engines": {
     "node": ">=20.11"
   },
@@ -10,13 +10,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src tests",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "ingest:camden": "tsx scripts/ingest-camden.ts",
-    "verify": "npm run typecheck && npm run lint && npm run test"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "db:test": "scripts/db-test.sh"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",

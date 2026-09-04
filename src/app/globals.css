@@ -210,3 +210,20 @@ p {
   border-radius: var(--radius-md) !important;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.18) !important;
 }
+
+/* The selected-location panel is a bottom sheet on phones and a right-hand
+   sidebar from tablet up. One component, positioned by a media query, so the
+   content cannot drift between the two. */
+@media (min-width: 900px) {
+  .fr-map-panel {
+    left: auto !important;
+    right: 14px !important;
+    top: 70px !important;
+    bottom: 14px !important;
+    width: 372px;
+    max-height: none !important;
+    border-radius: var(--radius-lg) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: 0 4px 18px rgb(0 0 0 / 0.12) !important;
+  }
+}

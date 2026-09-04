@@ -493,3 +493,34 @@ comment on function fineradar_map_cells is
 grant execute on function fineradar_hotspots(text, text, text, integer, integer) to anon, authenticated;
 grant execute on function fineradar_location_detail(text, text) to anon, authenticated;
 grant execute on function fineradar_map_cells(text, double precision, double precision, double precision, double precision, integer, text) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Rate limit counter.
+--
+-- Atomic increment-and-return, so concurrent requests cannot both read a stale
+-- count and both be allowed through.
+-- ---------------------------------------------------------------------------
+
+create or replace function fineradar_bump_rate_limit(p_key text, p_window_start timestamptz)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_count integer;
+begin
+  insert into rate_limit_counters (key, window_start, count)
+  values (p_key, p_window_start, 1)
+  on conflict (key, window_start)
+  do update set count = rate_limit_counters.count + 1
+  returning count into new_count;
+
+  -- Opportunistic cleanup of windows older than a day.
+  if random() < 0.01 then
+    delete from rate_limit_counters where window_start < now() - interval '1 day';
+  end if;
+
+  return new_count;
+end;
+$$;
