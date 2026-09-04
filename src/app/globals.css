@@ -1,0 +1,212 @@
+@import 'tailwindcss';
+
+/*
+ * FineRadar design tokens.
+ *
+ * The visual language is a navigation instrument, not a SaaS dashboard: near-black
+ * ground, off-white paper, one accent, and status colour used sparingly enough that
+ * when something is red it means something. Severity on the map must be readable
+ * without turning the whole interface into an alarm.
+ */
+
+@theme {
+  /* Ink — near-black through to paper. */
+  --color-ink-950: #0b0d0f;
+  --color-ink-900: #131619;
+  --color-ink-800: #1c2024;
+  --color-ink-700: #2a2f35;
+  --color-ink-600: #3c434b;
+  --color-ink-500: #5a626c;
+  --color-ink-400: #838b95;
+  --color-ink-300: #adb4bd;
+  --color-ink-200: #d2d7dd;
+  --color-ink-100: #e7eaee;
+  --color-ink-50: #f4f5f7;
+  --color-paper: #fbfbf9;
+
+  /* Accent — a single instrument-panel cyan, used for wayfinding only. */
+  --color-signal-600: #0e6b7a;
+  --color-signal-500: #12879a;
+  --color-signal-400: #1ba8bd;
+  --color-signal-300: #6fcbd9;
+  --color-signal-100: #d6eff3;
+
+  /* Activity ramp — five steps matching the score classifications.
+     Deliberately sequential rather than a red alarm gradient. */
+  --color-activity-1: #4c9f8a;
+  --color-activity-2: #a8bf6a;
+  --color-activity-3: #e0b452;
+  --color-activity-4: #d9803f;
+  --color-activity-5: #b8443c;
+
+  /* Status — restrained, used for case state and deadlines. */
+  --color-ok: #2f7d5e;
+  --color-warn: #a8722a;
+  --color-urgent: #b8543c;
+  --color-critical: #9c2f28;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+}
+
+:root {
+  --surface: var(--color-paper);
+  --surface-raised: #ffffff;
+  --surface-sunken: var(--color-ink-50);
+  --border: var(--color-ink-200);
+  --border-strong: var(--color-ink-300);
+  --text: var(--color-ink-900);
+  --text-muted: var(--color-ink-500);
+  --text-faint: var(--color-ink-400);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --surface: var(--color-ink-950);
+    --surface-raised: var(--color-ink-900);
+    --surface-sunken: #07090a;
+    --border: var(--color-ink-800);
+    --border-strong: var(--color-ink-700);
+    --text: var(--color-ink-50);
+    --text-muted: var(--color-ink-400);
+    --text-faint: var(--color-ink-500);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --surface: var(--color-ink-950);
+  --surface-raised: var(--color-ink-900);
+  --surface-sunken: #07090a;
+  --border: var(--color-ink-800);
+  --border-strong: var(--color-ink-700);
+  --text: var(--color-ink-50);
+  --text-muted: var(--color-ink-400);
+  --text-faint: var(--color-ink-500);
+  color-scheme: dark;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  margin: 0;
+  /* Room for the mobile action bar. */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  margin: 0;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+/* Visible focus everywhere. Never removed. */
+:focus-visible {
+  outline: 2px solid var(--color-signal-500);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --- Component primitives ------------------------------------------------ */
+
+.fr-container {
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+  padding-inline: 20px;
+}
+
+@media (min-width: 768px) {
+  .fr-container {
+    padding-inline: 32px;
+  }
+}
+
+.fr-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.fr-panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* Tabular figures so numbers line up in tables and score readouts. */
+.fr-numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Minimum 44px touch targets on the surfaces used outdoors. */
+.fr-touch {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Wide content scrolls inside itself; the page body never scrolls sideways. */
+.fr-scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.fr-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 12px 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+}
+
+.fr-skip-link:focus {
+  left: 8px;
+  top: 8px;
+}
+
+/* MapLibre's stylesheet is imported by the map component; these override its
+   defaults so the controls match the rest of the interface. */
+.maplibregl-ctrl-group {
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18) !important;
+}
