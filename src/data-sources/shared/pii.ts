@@ -15,16 +15,63 @@
 /**
  * UK vehicle registration formats.
  *
- * Current style (AB12 CDE) plus the prefix (A123 BCD) and suffix (ABC 123D)
- * styles still on the road. Matching is deliberately broad: a false positive
- * redacts a value we did not need, which is the cheap direction to be wrong in.
+ * The first three are specific enough to be safe anywhere: each requires a
+ * letters-digits-letters structure that ordinary text does not produce by
+ * accident. A false positive here redacts a value we did not need, which is the
+ * cheap direction to be wrong in.
  */
-const VRM_PATTERNS: readonly RegExp[] = [
+const SPECIFIC_VRM_PATTERNS: readonly RegExp[] = [
   /\b[A-Z]{2}\d{2}\s?[A-Z]{3}\b/gi, // AB12 CDE
   /\b[A-Z]\d{1,3}\s?[A-Z]{3}\b/gi, // A123 BCD
   /\b[A-Z]{3}\s?\d{1,3}[A-Z]\b/gi, // ABC 123D
-  /\b[A-Z]{1,3}\s?\d{1,4}\b/gi, // Dateless / older formats
 ];
+
+/**
+ * Dateless and older formats: one to three letters followed by digits.
+ *
+ * This shape is genuinely ambiguous. "NW1" is a dateless registration and it is
+ * also a London postcode district; "A5" is a registration and it is also a road
+ * number. Shape alone cannot separate them, so the field decides — see
+ * `RedactionContext`.
+ */
+const DATELESS_VRM_PATTERN = /\b[A-Z]{1,3}\s?\d{1,4}\b/gi;
+
+/**
+ * How aggressively to read a value as a registration.
+ *
+ * `free-text` applies every pattern, including the ambiguous dateless one. It is
+ * the default, because an unrecognised column is exactly where a leak hides.
+ *
+ * `location` applies only the three specific formats. A location column is
+ * published to say *where*, and its postcode districts, road numbers and
+ * junction references are load-bearing — they are the tokens a street-reference
+ * lookup matches on, and redacting them destroys the geography while protecting
+ * nothing that the field-name allow-list has not already blocked. A genuine
+ * modern registration leaked into a street column is still removed.
+ */
+export type RedactionContext = 'free-text' | 'location';
+
+/** Field names whose content is locational, so the dateless pattern is skipped. */
+const LOCATION_FIELD_HINTS: readonly string[] = [
+  'street',
+  'road',
+  'location',
+  'place',
+  'locality',
+  'area',
+  'ward',
+  'zone',
+  'postcode',
+  'district',
+  'borough',
+];
+
+export function redactionContextFor(fieldName: string): RedactionContext {
+  const normalised = fieldName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  return LOCATION_FIELD_HINTS.some((hint) => normalised.includes(hint))
+    ? 'location'
+    : 'free-text';
+}
 
 /** Field names that must never be retained, whatever an adapter asks for. */
 const FORBIDDEN_FIELD_HINTS: readonly string[] = [
@@ -65,16 +112,30 @@ export function isForbiddenField(fieldName: string): boolean {
 }
 
 /** Replaces registration-shaped substrings in free text. */
-export function redactRegistrations(value: string): string {
+export function redactRegistrations(
+  value: string,
+  context: RedactionContext = 'free-text',
+): string {
+  const patterns =
+    context === 'location'
+      ? SPECIFIC_VRM_PATTERNS
+      : [...SPECIFIC_VRM_PATTERNS, DATELESS_VRM_PATTERN];
   let result = value;
-  for (const pattern of VRM_PATTERNS) {
+  for (const pattern of patterns) {
     result = result.replace(pattern, REDACTION_PLACEHOLDER);
   }
   return result;
 }
 
-export function containsRegistration(value: string): boolean {
-  return VRM_PATTERNS.some((pattern) => {
+export function containsRegistration(
+  value: string,
+  context: RedactionContext = 'free-text',
+): boolean {
+  const patterns =
+    context === 'location'
+      ? SPECIFIC_VRM_PATTERNS
+      : [...SPECIFIC_VRM_PATTERNS, DATELESS_VRM_PATTERN];
+  return patterns.some((pattern) => {
     pattern.lastIndex = 0;
     return pattern.test(value);
   });
@@ -116,7 +177,7 @@ export function sanitiseSourceMetadata(
       continue;
     }
     if (typeof value === 'string') {
-      const cleaned = redactRegistrations(value);
+      const cleaned = redactRegistrations(value, redactionContextFor(key));
       if (cleaned !== value) redactedFields.push(key);
       metadata[key] = cleaned;
       continue;
@@ -154,7 +215,7 @@ export function sanitiseErrorExcerpt(
       continue;
     }
     if (typeof value === 'string') {
-      excerpt[key] = redactRegistrations(value).slice(0, 200);
+      excerpt[key] = redactRegistrations(value, redactionContextFor(key)).slice(0, 200);
     } else if (value === null || typeof value === 'number' || typeof value === 'boolean') {
       excerpt[key] = value;
     }

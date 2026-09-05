@@ -8,7 +8,15 @@ import {
   scoreConfidence,
 } from '@/data-sources/camden/adapter';
 import { runIngestion, type IngestionSink } from '@/data-sources/shared/pipeline';
-import { containsRegistration, sanitiseSourceMetadata } from '@/data-sources/shared/pii';
+import {
+  REDACTION_PLACEHOLDER,
+  containsRegistration,
+  isForbiddenField,
+  redactRegistrations,
+  redactionContextFor,
+  sanitiseSourceMetadata,
+} from '@/data-sources/shared/pii';
+import { precisionCeilingFrom, publisherClaimsPrecision } from '@/core/geography/types';
 import {
   normaliseStreetName,
   parseContraventionCode,
@@ -532,7 +540,7 @@ describe('live Camden schema', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.event.sourceRecordId).toBe('row-000001');
+    expect(result.event.sourceRecordId).toBe('1102');
     const resolved = (result.event.sourceMetadata as { _resolvedFields?: { recordId?: string } })
       ._resolvedFields;
     expect(resolved?.recordId).toBe('socrata_id');
@@ -542,7 +550,7 @@ describe('live Camden schema', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.event.issuedDate).toBe('2026-01-05');
+    expect(result.event.issuedDate).toBe('2025-10-05');
     expect(result.event.issuedHour).toBe(9);
     const resolved = (result.event.sourceMetadata as { _resolvedFields?: { date?: string } })
       ._resolvedFields;
@@ -553,7 +561,7 @@ describe('live Camden schema', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[2], 2);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.event.issuedDate).toBe('2026-01-07');
+    expect(result.event.issuedDate).toBe('2025-07-14');
     expect(result.event.issuedHour).toBeNull();
     expect(result.event.issuedAt).toBeNull();
   });
@@ -566,7 +574,7 @@ describe('live Camden schema', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.event.issuedDate).not.toBe('2026-09-01');
+    expect(result.event.issuedDate).not.toBe('2026-08-30');
   });
 
   it('refuses a publication timestamp even when it is the only date present', () => {
@@ -588,25 +596,38 @@ describe('live Camden schema', () => {
   });
 
   it('takes the contravention suffix from its own column', () => {
+    // The live source inlines the suffix in the code as well ("29J") and repeats
+    // it in its own column ("J"). Both must reduce to the same numeric code and
+    // the same suffix, whichever the row happens to carry.
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.event.contraventionCode).toBe('12');
-    expect((result.event.sourceMetadata as { _contraventionSuffix?: string })._contraventionSuffix).toBe('a');
+    expect(result.event.contraventionCode).toBe('29');
+    expect((result.event.sourceMetadata as { _contraventionSuffix?: string })._contraventionSuffix).toBe('j');
+
+    // Row 1 carries the same code with no suffix column at all.
+    const noSuffixColumn = normaliseCamdenRow(LIVE_ROWS[1], 1);
+    expect(noSuffixColumn.ok).toBe(true);
+    if (!noSuffixColumn.ok) return;
+    expect(noSuffixColumn.event.contraventionCode).toBe('29');
+    expect(
+      (noSuffixColumn.event.sourceMetadata as { _contraventionSuffix?: string | null })
+        ._contraventionSuffix,
+    ).toBeNull();
   });
 
   it('keeps the publisher’s own contravention description', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(JSON.stringify(result.event.sourceMetadata)).toContain('residents');
+    expect(JSON.stringify(result.event.sourceMetadata)).toContain('prohibited turn');
   });
 
   it('records the controlled parking zone as the locality', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.event.locality).toBe('CA-A');
+    expect(result.event.locality).toBe('CA-E');
   });
 
   it('never fabricates coordinates for a dataset that has none', () => {
@@ -637,20 +658,114 @@ describe('live Camden schema', () => {
     for (const dropped of DELIBERATELY_DROPPED_FIELDS) {
       expect(serialised).not.toContain(dropped);
     }
-    expect(serialised).not.toContain('Closed - Paid');
+    expect(serialised).not.toContain('Paid/Closed');
   });
 
-  it('retains the publisher’s spatial accuracy claim', () => {
+  it('retains the publisher’s spatial accuracy verbatim, and reads it as no claim', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect((result.event.sourceMetadata as { spatial_accuracy?: string }).spatial_accuracy).toBe('Street');
+    // Camden publishes "Unknown". Stored verbatim for traceability...
+    expect((result.event.sourceMetadata as { spatial_accuracy?: string }).spatial_accuracy).toBe(
+      'Unknown',
+    );
+    expect(
+      (result.event.sourceMetadata as { _publisherSpatialAccuracy?: string })
+        ._publisherSpatialAccuracy,
+    ).toBe('Unknown');
+    // ...but never read as a precision claim, which would be worse than having
+    // no field at all: it would let a caller believe a claim exists.
+    expect(publisherClaimsPrecision('Unknown')).toBe(false);
+    expect(precisionCeilingFrom('Unknown')).toBeNull();
+    expect(publisherClaimsPrecision('Street')).toBe(true);
+    expect(precisionCeilingFrom('Street')).toBe('STREET');
+  });
+
+  it('keeps postcode districts and road numbers in a street value', () => {
+    // The dateless-registration pattern matches "NW1" and "A5" exactly as it
+    // matches an old plate. In a street column those tokens are the ones a
+    // street-reference lookup matches on, so redacting them would destroy the
+    // geography while protecting nothing the field-name guard has not blocked.
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.streetName).toBe('MAPLE STREET NW1');
+    expect((result.event.sourceMetadata as { street?: string }).street).toBe('MAPLE STREET NW1');
+    expect(JSON.stringify(result.event)).not.toContain(REDACTION_PLACEHOLDER);
+  });
+
+  it('still removes a real registration leaked into a street value', () => {
+    const result = normaliseCamdenRow(
+      { ...LIVE_ROWS[0], street: 'MAPLE STREET AB12 CDE' },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect((result.event.sourceMetadata as { street?: string }).street).toContain(
+      REDACTION_PLACEHOLDER,
+    );
+  });
+});
+
+describe('registration redaction does not eat geography', () => {
+  // Found in the live probe: every street sample rendered as
+  // "MAPLE STREET [redacted]". The dateless-registration pattern
+  // /\b[A-Z]{1,3}\s?\d{1,4}\b/ matches "NW1" and "A5" exactly as it matches an
+  // old plate, and those tokens are what a street-reference lookup keys on.
+  const LOCATIONAL = ['MAPLE STREET NW1', 'HAMPSTEAD ROAD A5', 'CANAL STREET E14', 'JUDD STREET N/O 12'];
+
+  it('keeps postcode districts, road numbers and junction refs in location fields', () => {
+    for (const value of LOCATIONAL) {
+      expect(redactRegistrations(value, redactionContextFor('street'))).toBe(value);
+      expect(redactRegistrations(value, redactionContextFor('controlled_parking_zone_area'))).toBe(value);
+    }
+  });
+
+  it('still removes registrations of every specific format from a location field', () => {
+    for (const plate of ['AB12 CDE', 'AB12CDE', 'A123 BCD', 'ABC 123D']) {
+      const value = `MAPLE STREET ${plate}`;
+      expect(redactRegistrations(value, redactionContextFor('street'))).toContain(REDACTION_PLACEHOLDER);
+      expect(redactRegistrations(value, redactionContextFor('street'))).not.toContain(plate);
+    }
+  });
+
+  it('keeps the ambiguous pattern everywhere else, where a leak actually hides', () => {
+    // Outside a location field the registration reading is the one that matters,
+    // so the broad pattern stays. Narrowing it is a decision about one column
+    // type, not a general relaxation.
+    expect(redactRegistrations('seen NW1 again', redactionContextFor('notes'))).toContain(
+      REDACTION_PLACEHOLDER,
+    );
+    expect(redactionContextFor('ticket_description')).toBe('free-text');
+    expect(redactionContextFor('charging_band_description')).toBe('free-text');
+    expect(redactionContextFor('street')).toBe('location');
+    expect(redactionContextFor('controlled_parking_zone_area')).toBe('location');
+  });
+
+  it('leaves the field-name guard untouched', () => {
+    // The narrowing must not open a hole: columns named for a registration, a
+    // keeper or an officer are still refused outright, whatever they contain.
+    for (const field of [
+      'country_vehicle_registered_to',
+      'civil_enforcement_officer_error',
+      'vrm',
+      'keeper_name',
+    ]) {
+      expect(isForbiddenField(field)).toBe(true);
+    }
+    const sanitised = sanitiseSourceMetadata(
+      { street: 'MAPLE STREET NW1', country_vehicle_registered_to: 'United Kingdom' },
+      ['street', 'country_vehicle_registered_to'],
+    );
+    expect(sanitised.metadata['street']).toBe('MAPLE STREET NW1');
+    expect(sanitised.metadata).not.toHaveProperty('country_vehicle_registered_to');
+    expect(sanitised.forbiddenFields).toContain('country_vehicle_registered_to');
   });
 });
 
 describe('enforcement classification', () => {
   it('does NOT classify MTC as parking', () => {
-    const result = normaliseCamdenRow(LIVE_ROWS[1], 1);
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.event.enforcementType).toBe('MOVING_TRAFFIC');
@@ -658,10 +773,26 @@ describe('enforcement classification', () => {
   });
 
   it('classifies a parking PCN as parking', () => {
-    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    const result = normaliseCamdenRow(LIVE_ROWS[2], 2);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.event.enforcementType).toBe('PARKING');
+  });
+
+  it('leaves the live O/S TMA type unclassified rather than assuming parking', () => {
+    // 34 of the 50 live rows carry ticket_type "O/S TMA". It is plausibly
+    // on-street enforcement under the Traffic Management Act, but the source has
+    // not said so and the description does not resolve it. A plausible reading is
+    // not evidence: it stays UNKNOWN and is counted separately until the source
+    // tells us what it is.
+    const result = normaliseCamdenRow(LIVE_ROWS[1], 1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.enforcementType).toBe('UNKNOWN');
+    expect(result.event.enforcementType).not.toBe('PARKING');
+    expect(result.warnings).toContain('ENFORCEMENT_TYPE_UNRECOGNISED');
+    // The raw value survives so the question can be answered later.
+    expect(JSON.stringify(result.event.sourceMetadata)).toContain('O/S TMA');
   });
 
   it('marks an unrecognised ticket type UNKNOWN rather than guessing', () => {
@@ -673,8 +804,8 @@ describe('enforcement classification', () => {
   });
 
   it('records the CCTV enforcement channel', () => {
-    const cctv = normaliseCamdenRow(LIVE_ROWS[1], 1);
-    const street = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    const cctv = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    const street = normaliseCamdenRow(LIVE_ROWS[1], 1);
     expect(cctv.ok && (cctv.event.sourceMetadata as { _viaCctv?: boolean })._viaCctv).toBe(true);
     expect(street.ok && (street.event.sourceMetadata as { _viaCctv?: boolean })._viaCctv).toBe(false);
   });

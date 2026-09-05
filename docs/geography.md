@@ -1,9 +1,14 @@
 # Geography: where a PCN happened, and where we may draw it
 
 Camden's published PCN dataset (`4k7m-4gkk`) contains **no coordinates**. It
-contains a street name and a `spatial_accuracy` value of `Street`.
+contains a street name and a `spatial_accuracy` value of `Unknown` — the
+publisher makes no claim at all about how precisely a notice is located.
 
 Everything below follows from that one fact.
+
+`Unknown` is kept verbatim for traceability but is never read as a precision
+claim (`publisherClaimsPrecision`). Treating it as a weak claim would be worse
+than having no field: it would let a caller believe a claim exists.
 
 ---
 
@@ -79,8 +84,9 @@ geometry, released quarterly as a single download.
 - *Licence permits what we need.* OGL v3.0 allows storing and displaying the
   geometry with attribution. Most geocoding APIs forbid retaining results.
 - *Honest about precision.* A USRN geometry is a street, and we would record it
-  as `STREET` — matching Camden's own `spatial_accuracy: Street`. We would claim
-  no more precision than the publisher does.
+  as `STREET`. Note that this is a stronger claim than Camden itself makes — the
+  publisher says `Unknown` — so the claim would rest on the reference dataset,
+  which is exactly why its identifier and release must be recorded with it.
 
 **What it would take** (deliberately not built yet — the MVP does not require it,
 and building it before the ticket-type and schema fixes are confirmed against
@@ -112,9 +118,10 @@ plugs into already exists.
 
 - Never that a notice was issued *at a point* when the position came from a
   street reference. Street-level means the correct street, not a place on it.
-- Never a parking-only caption over a mixed dataset: Camden publishes moving
-  traffic contraventions (`ticket_type = MTC`) alongside parking. Surfaces that
-  show counts carry `MeasurementBasis`, which states that enforcement classes are
-  counted together.
+- Never a parking-only caption over a mixed dataset. In the live 50-row sample
+  there were **no parking rows at all**: 34 `O/S TMA` (unclassified by us) and 16
+  `MTC` (moving traffic, camera-issued). Surfaces that show counts carry
+  `MeasurementBasis`, which states that enforcement classes are counted together
+  and that notices the authority did not classify are included.
 - When nothing can be positioned, the map says the authority publishes no
   coordinates — not "no enforcement activity", and not a blank screen.

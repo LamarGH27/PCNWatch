@@ -188,11 +188,22 @@ export const RETAINABLE_METADATA_FIELDS: readonly string[] = [
  *
  * `status_of_case`, `formal_representation`, `has_appeal`,
  * `penalty_charge_notice_cancelled`, `penalty_charge_notice_written_off`,
- * `vehicle_removed` and `vehicle_category` describe the outcome and subject of
- * an individual penalty. PCNWatch's public tables measure where enforcement
+ * `vehicle_removed`, `vehicle_category`, `foreign_vehicle`, `cancellation_reason`
+ * and `cancellation_reason_description` describe the outcome and subject of an
+ * individual penalty. PCNWatch's public tables measure where enforcement
  * happened, not what became of any particular notice, and outcome fields narrow
  * a record towards a specific vehicle and person. They are dropped at ingestion
  * rather than stored and filtered later.
+ *
+ * `contravention_in_last_7_days` is dropped for a different reason: it is true
+ * relative to the moment the publisher generated the extract, so storing it
+ * would store an assertion that silently becomes false. We hold the
+ * contravention date and can derive recency correctly at read time.
+ *
+ * `civil_enforcement_officer_error` and `country_vehicle_registered_to` never
+ * reach this list — the field-name guard rejects them before the allow-list is
+ * consulted, the first as an officer identifier and the second as a vehicle
+ * registration attribute.
  */
 export const DELIBERATELY_DROPPED_FIELDS: readonly string[] = [
   'status_of_case',
@@ -202,6 +213,10 @@ export const DELIBERATELY_DROPPED_FIELDS: readonly string[] = [
   'penalty_charge_notice_written_off',
   'vehicle_removed',
   'vehicle_category',
+  'foreign_vehicle',
+  'cancellation_reason',
+  'cancellation_reason_description',
+  'contravention_in_last_7_days',
 ];
 
 /** Fields kept on an ingestion_errors excerpt so a human can debug a rejection. */

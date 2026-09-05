@@ -2,8 +2,9 @@
  * Geography: source location information versus derived geometry.
  *
  * Camden's published PCN dataset (`4k7m-4gkk`) carries **no coordinates at all**.
- * It carries a street name and a `spatial_accuracy` value of "Street". That is a
- * fact about the source, and the product must not paper over it.
+ * It carries a street name and a `spatial_accuracy` value of "Unknown" — that is,
+ * the publisher makes no claim about how precisely the notice is located. That is
+ * a fact about the source, and the product must not paper over it.
  *
  * Two things are therefore kept apart, permanently and in the type system:
  *
@@ -65,8 +66,40 @@ export interface SourceLocation {
   readonly streetNameNormalised: string;
   readonly locality: string | null;
   readonly postcodeDistrict: string | null;
-  /** The publisher's own precision claim, verbatim (Camden publishes "Street"). */
+  /**
+   * The publisher's own precision claim, verbatim. Camden publishes "Unknown",
+   * i.e. no claim at all — see `publisherClaimsPrecision`.
+   */
   readonly publisherSpatialAccuracy: string | null;
+}
+
+/**
+ * Values a publisher uses to say "we do not know how precise this is".
+ *
+ * Storing the string verbatim is right for traceability, but reading "Unknown"
+ * as a precision claim would be worse than having no field: it would let a
+ * caller believe a claim exists. This is the single place that distinction is
+ * made.
+ */
+const NON_CLAIMS: readonly string[] = ['unknown', 'unspecified', 'n/a', 'na', 'none', 'null', ''];
+
+export function publisherClaimsPrecision(value: string | null): boolean {
+  if (value === null) return false;
+  return !NON_CLAIMS.includes(value.trim().toLowerCase());
+}
+
+/**
+ * The strongest precision the publisher's own claim permits us to assert.
+ * `null` means the publisher claims nothing, so neither may we.
+ */
+export function precisionCeilingFrom(value: string | null): GeometryPrecision | null {
+  if (!publisherClaimsPrecision(value)) return null;
+  const v = value!.trim().toLowerCase();
+  if (v.includes('exact') || v.includes('point') || v.includes('property')) return 'POINT';
+  if (v.includes('street') || v.includes('road')) return 'STREET';
+  if (v.includes('zone') || v.includes('area') || v.includes('district')) return 'AREA';
+  // A claim we do not recognise is not a licence to assume it is a strong one.
+  return null;
 }
 
 /** Identity and version of a street-reference dataset. */

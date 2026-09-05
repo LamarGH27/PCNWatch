@@ -3,6 +3,7 @@ import {
   assertGeometryProvenance,
   hasGeometry,
   noGeometry,
+  publisherClaimsPrecision,
   sourcePublishedGeometry,
   streetReferenceGeometry,
   type SourceLocation,
@@ -143,7 +144,10 @@ describe('adapter geography', () => {
   it("preserves the publisher's own precision claim rather than asserting our own", () => {
     const result = normaliseCamdenRow(rows[0]!, 0);
     if (!result.ok) throw new Error('expected acceptance');
-    expect(result.event.sourceMetadata['_publisherSpatialAccuracy']).toBe('Street');
+    // Camden publishes "Unknown" — no claim at all. Kept verbatim, and read as
+    // the absence of a claim rather than as a weak one.
+    expect(result.event.sourceMetadata['_publisherSpatialAccuracy']).toBe('Unknown');
+    expect(publisherClaimsPrecision('Unknown')).toBe(false);
   });
 
   it('uses a configured street reference and records its version and timestamp', () => {

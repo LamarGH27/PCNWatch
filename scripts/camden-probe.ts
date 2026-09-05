@@ -15,9 +15,14 @@
  */
 
 import { FIELD_ALIASES, POINT_FIELD_CANDIDATES, readSocrataPoint } from '../src/data-sources/camden/schema';
-import { redactRegistrations, isForbiddenField } from '../src/data-sources/shared/pii';
+import {
+  redactRegistrations,
+  isForbiddenField,
+  redactionContextFor,
+} from '../src/data-sources/shared/pii';
 import { normaliseCamdenRow } from '../src/data-sources/camden/adapter';
 import { classifyEnforcement } from '../src/data-sources/camden/enforcement-class';
+import { publisherClaimsPrecision } from '../src/core/geography/types';
 import { execFileSync } from 'node:child_process';
 
 const SAMPLE_SIZE = 50;
@@ -159,14 +164,20 @@ async function main(): Promise<void> {
   // presented as a count needs to say which enforcement classes it covers.
   console.log('\nENFORCEMENT MIX (from the sample)');
   console.log('─'.repeat(100));
-  const ticketTypeCounts = countDistinct(payload, 'ticket_type');
-  if (ticketTypeCounts.size === 0) {
+  const pairs = countDistinctPairs(payload, 'ticket_type', 'ticket_description');
+  if (pairs.size === 0) {
     console.log('  (no ticket_type column in this dataset)');
   } else {
-    for (const [value, count] of sortedByCount(ticketTypeCounts)) {
-      const c = classifyEnforcement(value);
+    for (const [key, entry] of sortedPairs(pairs)) {
+      void key;
+      const c = classifyEnforcement(entry.type, entry.description, undefined);
       console.log(
-        `  ${value.padEnd(24)} ${String(count).padStart(4)}  → ${c.enforcementClass}${c.recognised ? '' : '  ✗ UNRECOGNISED — classify before ingesting'}`,
+        `  ${entry.type.padEnd(14)} ${String(entry.count).padStart(4)}  → ${c.enforcementClass}${
+          c.recognised ? '' : '  ✗ UNRECOGNISED — classify before ingesting'
+        }`,
+      );
+      console.log(
+        `    description: ${entry.description === null ? '(none)' : JSON.stringify(entry.description)}`,
       );
     }
   }
@@ -188,10 +199,17 @@ async function main(): Promise<void> {
     for (const [value, count] of sortedByCount(accuracyCounts)) {
       console.log(`  ${value.padEnd(24)} ${String(count).padStart(4)}`);
     }
-    console.log(
-      '  This is the publisher\'s own claim about how precisely a notice is located.',
-    );
-    console.log('  The product may not claim precision finer than this value.');
+    const claims = [...accuracyCounts.keys()].filter((v) => publisherClaimsPrecision(v));
+    if (claims.length === 0) {
+      console.log('');
+      console.log('  The publisher makes no precision claim for any row in this sample.');
+      console.log('  We therefore have a street name and no stated idea how precisely it');
+      console.log('  locates the notice. No precision may be claimed by the product either.');
+    } else {
+      console.log('');
+      console.log("  This is the publisher's own claim about how precisely a notice is located.");
+      console.log('  The product may not claim precision finer than this value.');
+    }
   }
 
   /* -- Dry normalisation --------------------------------------------------- */
@@ -308,6 +326,43 @@ function countDistinct(rows: readonly unknown[], column: string): Map<string, nu
   return counts;
 }
 
+/**
+ * Distinct (ticket_type, ticket_description) combinations.
+ *
+ * The description is what resolves an unrecognised code: a probe that shows the
+ * type alone leaves the only question worth asking unanswered.
+ */
+function countDistinctPairs(
+  rows: readonly unknown[],
+  typeColumn: string,
+  descriptionColumn: string,
+): Map<string, { type: string; description: string | null; count: number }> {
+  const out = new Map<string, { type: string; description: string | null; count: number }>();
+  for (const row of rows) {
+    if (typeof row !== 'object' || row === null) continue;
+    const record = row as Record<string, unknown>;
+    const rawType = record[typeColumn];
+    if (rawType === null || rawType === undefined || String(rawType).trim() === '') continue;
+    const type = String(rawType).trim();
+    const rawDescription = record[descriptionColumn];
+    const description =
+      rawDescription === null || rawDescription === undefined || String(rawDescription).trim() === ''
+        ? null
+        : String(rawDescription).trim();
+    const key = `${type}\u0000${description ?? ''}`;
+    const existing = out.get(key);
+    if (existing) existing.count += 1;
+    else out.set(key, { type, description, count: 1 });
+  }
+  return out;
+}
+
+function sortedPairs(
+  pairs: Map<string, { type: string; description: string | null; count: number }>,
+): [string, { type: string; description: string | null; count: number }][] {
+  return [...pairs.entries()].sort((a, b) => b[1].count - a[1].count || a[1].type.localeCompare(b[1].type));
+}
+
 function sortedByCount(counts: Map<string, number>): [string, number][] {
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
@@ -318,7 +373,10 @@ function safeSample(name: string, value: unknown): string {
   if (value !== null && typeof value === 'object') {
     return JSON.stringify(value).slice(0, 40);
   }
-  return redactRegistrations(String(value)).slice(0, 24);
+  // Location columns keep their postcode districts, road numbers and junction
+  // references: those are the tokens a street-reference lookup matches on, and
+  // a probe that hides them hides the evidence it exists to gather.
+  return redactRegistrations(String(value), redactionContextFor(name)).slice(0, 40);
 }
 
 main().catch((error) => {

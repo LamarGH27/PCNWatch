@@ -136,7 +136,8 @@ export function ScoreUnavailable({ reason }: { reason: string }) {
  */
 export const MEASUREMENT_BASIS =
   'These figures count penalty charge notices of every enforcement class the authority publishes — ' +
-  'parking, bus lane and moving traffic contraventions are counted together, not separated. ' +
+  'parking, bus lane and moving traffic contraventions are counted together, not separated, ' +
+  'along with notices whose enforcement class the authority did not state. ' +
   'They are not parking tickets alone.';
 
 export function MeasurementBasis({
