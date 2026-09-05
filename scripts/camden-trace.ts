@@ -16,6 +16,7 @@
  * Requires DATABASE_URL.
  */
 
+import './load-env';
 import { Pool } from 'pg';
 import { computeTicketActivityScores } from '../src/core/scoring/ticket-activity-score';
 import { classificationLabel } from '../src/core/scoring/ticket-activity-score';

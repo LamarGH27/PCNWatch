@@ -1,26 +1,32 @@
 # Real Camden ingestion — runbook
 
-Everything needed to get real Camden PCN data into PCNWatch and prove the map
-works against it. Three commands, in order.
+Everything needed to get real Camden PCN data into PCNWatch.
 
-> **Status.** The pipeline is complete and has been proven end to end against a
-> real PostgreSQL + PostGIS database. It has **not** been run against Camden's
-> live dataset, because the environment it was built in blocks egress to
-> `opendata.camden.gov.uk` at an organisation policy gateway. Steps 1–3 below are
-> the boundary: run them and the gate closes.
+The first two steps need no configuration at all. A database is only needed once
+you want to keep the data.
+
+**The map will be empty, and that is the source's doing, not a fault.** Camden
+publishes no coordinates. Street rankings, contravention breakdowns and time
+profiles all work; nothing can be drawn until a street-reference dataset is
+loaded. See [docs/geography.md](./geography.md).
+
+> **Status.** The adapter has been confirmed against Camden's live dataset:
+> 50/50 rows accepted, every enforcement class resolved, no coordinates
+> published. The full pipeline — fetch, validate, normalise, write, aggregate,
+> score, trace — has been proven end to end at 6,000 rows against a real
+> PostgreSQL + PostGIS database, with the live schema. What has not been run is a
+> full ingestion of the real dataset, because the environment it was built in
+> blocks egress to `opendata.camden.gov.uk` at an organisation policy gateway.
 
 ---
 
 ## Prerequisites
 
 - **Node 20.11+**
-- **PostgreSQL 15+ with PostGIS.** Postgres 15 is the minimum because the unique
-  indexes use `NULLS NOT DISTINCT`.
+- For writing: **PostgreSQL 15+ with PostGIS.** Postgres 15 is the minimum
+  because the unique indexes use `NULLS NOT DISTINCT`. A dry run needs no
+  database at all.
 - Network access to `opendata.camden.gov.uk`.
-
-A hosted Supabase project works too — use the connection string it gives you as
-`DATABASE_URL`. Supabase is not required: ingestion and the map both run against
-plain Postgres.
 
 ```bash
 npm install
@@ -28,16 +34,54 @@ npm install
 
 ---
 
-## 1. Create the database
+## 1. Look at the source — no setup needed
 
 ```bash
-export PGHOST=localhost PGPORT=5432 PGUSER=postgres
-npm run db:setup
-export DATABASE_URL="postgres://postgres@localhost:5432/pcnwatch"
+npm run camden:probe
 ```
 
-This drops and recreates a `pcnwatch` database, applies every migration in order,
-and seeds the authority directory, products and the Camden source record.
+The dataset endpoint defaults to Camden's published PCN dataset
+(`4k7m-4gkk`), which has been probed live and is what the adapter is written
+against. `--url` or `CAMDEN_PCN_DATASET_URL` points it somewhere else.
+
+The probe prints every column with its type, fill rate and a scrubbed sample;
+how the adapter's aliases map onto them; the enforcement classes present and the
+contravention descriptions behind each; the precision the publisher claims; and
+what happens when 50 rows are normalised. Its output is safe to paste into an
+issue — values are truncated and registration-shaped text is redacted, except in
+location columns, where postcode districts and road numbers are kept because
+they are the evidence the probe exists to gather.
+
+It exits non-zero if the adapter cannot read the dataset, and prints the alias
+list the running build actually compiled in so a stale checkout is visible
+rather than mistaken for a wrong alias.
+
+---
+
+## 2. Dry run — still no setup needed
+
+```bash
+npm run ingest:camden -- --dry-run --limit 5000
+```
+
+Fetches, validates, normalises and measures quality, and writes nothing.
+
+---
+
+## 3. A database, if you want to keep the data
+
+```bash
+docker run -d --name pcnwatch-db -p 5432:5432 \
+  -e POSTGRES_PASSWORD=postgres postgis/postgis:16-3.4
+export PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres
+npm run db:setup
+cp .env.example .env.local     # then check DATABASE_URL in it
+```
+
+`db:setup` drops and recreates a `pcnwatch` database, applies every migration in
+order, and seeds the authority directory, products and the Camden source record.
+Anything in `.env.local` is picked up automatically by these scripts; real
+environment variables always win over it.
 
 Against a hosted Supabase project, skip `db:setup` and instead apply
 `supabase/migrations/*.sql` then `supabase/seed/001_reference.sql` through the
@@ -46,48 +90,9 @@ the platform supplies what it stands in for.
 
 ---
 
-## 2. Find the dataset and confirm its schema
+## 4. Ingest
 
-Open <https://opendata.camden.gov.uk> and find the penalty charge notice dataset.
-Its API endpoint contains a four-by-four id, e.g. `abcd-1234`. Then:
-
-```bash
-npm run camden:probe -- --url "https://opendata.camden.gov.uk/resource/<id>.json"
-```
-
-This fetches 50 rows and prints every column with its type, fill rate and a
-scrubbed sample; how the adapter's alias lists map onto those columns; and what
-happens when the sample is normalised.
-
-**Run this before a full ingestion.** A fixture is a guess about production, and
-the probe is what turns the guess into evidence. Its output is safe to paste into
-an issue — values are truncated and registration-shaped text is redacted.
-
-It exits non-zero if the adapter cannot read the dataset. The two likely causes:
-
-| Probe says | Fix |
-| --- | --- |
-| `✗ REQUIRED` next to `recordId` or `street` | Add the real column name to `FIELD_ALIASES` in `src/data-sources/camden/schema.ts`, then re-probe. |
-| Rows normalise but none are geolocated | Read the probe's verdict. It distinguishes a dataset that publishes **no** coordinates (dataset `4k7m-4gkk` is one — see [docs/geography.md](./geography.md)) from one whose coordinates we failed to read. Only the second is an adapter fix: add the point column to `POINT_FIELD_CANDIDATES`. |
-
-Once it reports `✓`:
-
-```bash
-export CAMDEN_PCN_DATASET_URL="https://opendata.camden.gov.uk/resource/<id>.json"
-```
-
----
-
-## 3. Ingest
-
-Start bounded, to see the shape of the data before committing to a full run:
-
-```bash
-npm run ingest:camden -- --dry-run --limit 5000
-```
-
-A dry run fetches, validates, normalises and measures quality, and writes
-nothing. When the report looks right:
+When the dry-run report looks right:
 
 ```bash
 npm run ingest:camden
@@ -126,7 +131,7 @@ npm run ingest:camden -- --since 2025-01-01   # incremental refresh
 
 ---
 
-## 4. Prove the numbers trace to source
+## 5. Prove the numbers trace to source
 
 ```bash
 npm run camden:trace              # top 5 locations by activity
@@ -144,7 +149,7 @@ stale score is visible rather than trusted.
 
 ---
 
-## 5. See it
+## 6. See it
 
 ```bash
 npm run build && npm start

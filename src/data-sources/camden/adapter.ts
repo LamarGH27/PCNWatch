@@ -39,6 +39,34 @@ import {
 
 export const CAMDEN_AUTHORITY_SLUG = 'camden';
 
+/**
+ * Camden's published penalty charge notice dataset.
+ *
+ * Not a guess: this endpoint has been probed live and its schema is what the
+ * adapter is written against — 50/50 rows accepted, `socrata_id` as the record
+ * id, `contravention_date` as the event time, no coordinates. Making it the
+ * default removes a setup step that added nothing but a chance to get it wrong.
+ *
+ * `CAMDEN_PCN_DATASET_URL` still overrides it, which is how a different dataset
+ * or a local replay is pointed at.
+ */
+export const CAMDEN_DATASET_URL = 'https://opendata.camden.gov.uk/resource/4k7m-4gkk.json';
+
+/**
+ * The column an incremental refresh filters on.
+ *
+ * Must be a real column in the dataset and must be the event time, never the
+ * publication time — filtering on `last_uploaded` would return the whole dataset
+ * on every run, or nothing at all.
+ */
+export const INCREMENTAL_FILTER_COLUMN = 'contravention_date';
+
+/** The configured dataset endpoint: the environment's, or the verified default. */
+export function camdenDatasetUrl(): string {
+  const configured = process.env.CAMDEN_PCN_DATASET_URL?.trim();
+  return configured && configured !== '' ? configured : CAMDEN_DATASET_URL;
+}
+
 export const CAMDEN_SOURCE: SourceDescriptor = {
   slug: 'camden-pcn',
   name: 'Camden penalty charge notices',
@@ -59,7 +87,8 @@ export class CamdenFetchError extends Error {
       | 'NOT_CONFIGURED'
       | 'TRANSPORT_ERROR'
       | 'BAD_STATUS'
-      | 'MALFORMED_PAYLOAD',
+      | 'MALFORMED_PAYLOAD'
+      | 'PAGINATION_NOT_HONOURED',
     readonly detail?: unknown,
   ) {
     super(message);
@@ -102,6 +131,7 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
       const rows: unknown[] = [];
       const retrievedAt = new Date().toISOString();
       let offset = 0;
+      let previousPageFingerprint: string | null = null;
 
       for (let page = 0; page < maxPages; page += 1) {
         const url = new URL(datasetUrl);
@@ -109,7 +139,13 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
         url.searchParams.set('$offset', String(offset));
         // Stable ordering is required for correct pagination.
         if (!url.searchParams.has('$order')) url.searchParams.set('$order', ':id');
-        if (since) url.searchParams.set('$where', `issue_date >= '${since}'`);
+        // The filter column must be one the dataset actually has. `issue_date`
+        // was a guess and is not in Camden's schema — an incremental refresh
+        // would have been rejected by Socrata with a 400 on every run. The event
+        // time lives in `contravention_date`, confirmed live.
+        if (since) {
+          url.searchParams.set('$where', `${INCREMENTAL_FILTER_COLUMN} >= '${since}'`);
+        }
 
         let response: Response;
         try {
@@ -153,6 +189,20 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
             { received: typeof payload },
           );
         }
+
+        // An endpoint that ignores `$offset` returns the same page forever, and
+        // the loop would run to `maxPages` accumulating duplicates until it ran
+        // out of memory. Cheap to detect, and the alternative failure is ugly.
+        const pageFingerprint = contentHash(payload);
+        if (page > 0 && pageFingerprint === previousPageFingerprint) {
+          throw new CamdenFetchError(
+            `The dataset returned an identical page at offset ${offset}, which means it is ` +
+              'ignoring $offset. Pagination cannot proceed without duplicating rows.',
+            'PAGINATION_NOT_HONOURED',
+            { offset, page },
+          );
+        }
+        previousPageFingerprint = pageFingerprint;
 
         rows.push(...payload);
         if (payload.length < pageSize) break;

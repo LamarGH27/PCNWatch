@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   CamdenFetchError,
+  INCREMENTAL_FILTER_COLUMN,
   createCamdenAdapter,
   normaliseCamdenRow,
   scoreConfidence,
@@ -24,6 +25,7 @@ import {
   parseCoordinates,
   parsePostcodeDistrict,
   parseSourceTimestamp,
+  contentHash,
 } from '@/data-sources/shared/normalise';
 import {
   CAMDEN_BBOX,
@@ -778,6 +780,68 @@ describe('live Camden schema', () => {
     expect((result.event.sourceMetadata as { street?: string }).street).toContain(
       REDACTION_PLACEHOLDER,
     );
+  });
+});
+
+describe('fetching at realistic volume', () => {
+  // Every one of these was found by running the pipeline end to end against
+  // 6000 live-shaped rows rather than by reading the code.
+
+  it('hashes a payload too large to stringify in one go', () => {
+    // JSON.stringify on a large array throws RangeError: Invalid string length
+    // once the result passes V8's maximum string size, which a full borough
+    // dataset reaches. The hash is fed row by row instead.
+    const big = Array.from({ length: 50_000 }, (_, i) => ({
+      socrata_id: String(i),
+      street: 'MAPLE STREET W1',
+      padding: 'x'.repeat(200),
+    }));
+    const hash = contentHash(big);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    // Still a content hash: a changed row changes it.
+    const changed = [...big.slice(0, -1), { ...big[big.length - 1], street: 'GOWER STREET WC1' }];
+    expect(contentHash(changed)).not.toBe(hash);
+    // And a shorter payload does not collide with it.
+    expect(contentHash(big.slice(0, -1))).not.toBe(hash);
+  });
+
+  it('filters an incremental refresh on a column the dataset actually has', async () => {
+    // `issue_date` was a guess and is not in Camden's schema: every incremental
+    // refresh would have been rejected by Socrata with a 400.
+    const seen: string[] = [];
+    const adapter = createCamdenAdapter({
+      datasetUrl: 'https://opendata.camden.gov.uk/resource/4k7m-4gkk.json',
+      fetchImpl: async (url: Parameters<typeof fetch>[0]) => {
+        seen.push(String(url));
+        return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    await adapter.fetch({ since: '2026-01-01' });
+    const where = new URL(seen[0]!).searchParams.get('$where');
+    expect(where).toContain(INCREMENTAL_FILTER_COLUMN);
+    expect(where).toContain('contravention_date');
+    expect(where).not.toContain('issue_date');
+    // And never the publication timestamp, which would return everything or nothing.
+    expect(where).not.toContain('last_uploaded');
+  });
+
+  it('stops rather than looping when a source ignores $offset', async () => {
+    // An endpoint that returns the same page forever would otherwise be paged
+    // 200 times, accumulating duplicates until it ran out of memory.
+    const page = JSON.stringify(
+      Array.from({ length: 5000 }, (_, i) => ({ socrata_id: String(i), street: 'A STREET W1' })),
+    );
+    let calls = 0;
+    const adapter = createCamdenAdapter({
+      datasetUrl: 'https://opendata.camden.gov.uk/resource/4k7m-4gkk.json',
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response(page, { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    await expect(adapter.fetch({})).rejects.toThrow(/ignoring \$offset/);
+    // Caught on the second page, not the two-hundredth.
+    expect(calls).toBe(2);
   });
 });
 

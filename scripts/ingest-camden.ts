@@ -16,7 +16,13 @@
  *   2  not configured — nothing was attempted
  */
 
-import { createCamdenAdapter, CAMDEN_AUTHORITY_SLUG, CamdenFetchError } from '../src/data-sources/camden/adapter';
+import './load-env';
+import {
+  createCamdenAdapter,
+  CAMDEN_AUTHORITY_SLUG,
+  CamdenFetchError,
+  camdenDatasetUrl,
+} from '../src/data-sources/camden/adapter';
 import { runIngestion } from '../src/data-sources/shared/pipeline';
 import { runCamdenIngestionJob, type IngestionJobResult } from '../src/server/ingestion/postgres/run';
 import {
@@ -46,6 +52,14 @@ function parseArgs(argv: string[]): Args {
     else if (flag === '--limit') args.limit = Number(argv[++i]);
     else if (flag === '--since') args.since = argv[++i];
     else if (flag === '--source-override') args.sourceOverride = argv[++i];
+    else {
+      // Silently ignoring an unknown flag is how `--source` gets typed for
+      // `--source-override` and the run quietly hits the real dataset instead.
+      console.error(`\n✗ Unknown option: ${flag}\n`);
+      console.error('  Valid options: --dry-run, --limit <n>, --since <YYYY-MM-DD>,');
+      console.error('                 --source-override <url>\n');
+      process.exit(2);
+    }
   }
   return args;
 }
@@ -63,32 +77,25 @@ function isOfficialSource(url: string): boolean {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
-  const datasetUrl = args.sourceOverride ?? process.env.CAMDEN_PCN_DATASET_URL;
+  const datasetUrl = args.sourceOverride ?? camdenDatasetUrl();
   const databaseUrl = process.env.DATABASE_URL;
-
-  if (!datasetUrl) {
-    fail(
-      2,
-      'CAMDEN_PCN_DATASET_URL is not set.',
-      [
-        'Set it to the JSON endpoint of Camden’s published PCN dataset, for example:',
-        '  export CAMDEN_PCN_DATASET_URL="https://opendata.camden.gov.uk/resource/<dataset-id>.json"',
-        '',
-        'Run `npm run camden:probe` first to discover the dataset id and confirm its schema.',
-      ],
-    );
-  }
 
   if (!args.dryRun && !databaseUrl) {
     fail(
       2,
       'DATABASE_URL is not set.',
       [
-        'Set it to a PostgreSQL connection string for a database with PostGIS and the',
-        'PCNWatch migrations applied, for example:',
-        '  export DATABASE_URL="postgres://user:pass@localhost:5432/pcnwatch"',
+        'A dry run needs no database:',
+        '  npm run ingest:camden -- --dry-run --limit 5000',
         '',
-        'Or run with --dry-run to validate the source without writing anything.',
+        'To write, you need PostgreSQL 15+ with PostGIS. If you have Docker:',
+        '  docker run -d --name pcnwatch-db -p 5432:5432 \\',
+        '    -e POSTGRES_PASSWORD=postgres postgis/postgis:16-3.4',
+        '  export PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres',
+        '  npm run db:setup',
+        '  echo \'DATABASE_URL="postgres://postgres:postgres@localhost:5432/pcnwatch"\' >> .env.local',
+        '',
+        'Anything in .env.local is picked up automatically on the next run.',
       ],
     );
   }

@@ -14,13 +14,14 @@
  * into an issue: values are truncated and scrubbed of anything registration-shaped.
  */
 
+import './load-env';
 import { FIELD_ALIASES, POINT_FIELD_CANDIDATES, readSocrataPoint } from '../src/data-sources/camden/schema';
 import {
   redactRegistrations,
   isForbiddenField,
   redactionContextFor,
 } from '../src/data-sources/shared/pii';
-import { normaliseCamdenRow } from '../src/data-sources/camden/adapter';
+import { camdenDatasetUrl, normaliseCamdenRow } from '../src/data-sources/camden/adapter';
 import { classifyEnforcement } from '../src/data-sources/camden/enforcement-class';
 import { publisherClaimsPrecision } from '../src/core/geography/types';
 import { execFileSync } from 'node:child_process';
@@ -39,7 +40,7 @@ interface ColumnProfile {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const urlIndex = argv.indexOf('--url');
-  const datasetUrl = urlIndex >= 0 ? argv[urlIndex + 1] : process.env.CAMDEN_PCN_DATASET_URL;
+  const datasetUrl = urlIndex >= 0 ? argv[urlIndex + 1] : camdenDatasetUrl();
 
   if (!datasetUrl) {
     console.error(

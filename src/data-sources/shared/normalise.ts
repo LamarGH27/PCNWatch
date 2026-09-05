@@ -238,6 +238,24 @@ export function rowHash(parts: readonly (string | number | null)[]): string {
   return createHash('sha256').update(parts.map((p) => String(p ?? '')).join(' ')).digest('hex');
 }
 
+/**
+ * Content hash of a fetched payload, used to tell a genuine upstream change from
+ * a re-fetch of the same data.
+ *
+ * Hashed row by row rather than by stringifying the whole payload at once.
+ * `JSON.stringify` on a large array throws `RangeError: Invalid string length`
+ * once the result exceeds V8's maximum string size — which a full borough
+ * dataset reaches — and it did, on the first end-to-end run at realistic volume.
+ * Feeding the hash incrementally has no such ceiling and allocates one row at a
+ * time instead of the entire payload.
+ */
 export function contentHash(payload: unknown): string {
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  const hash = createHash('sha256');
+  if (Array.isArray(payload)) {
+    hash.update(`[${payload.length}]`);
+    for (const item of payload) hash.update(JSON.stringify(item) ?? 'undefined');
+  } else {
+    hash.update(JSON.stringify(payload) ?? 'undefined');
+  }
+  return hash.digest('hex');
 }
