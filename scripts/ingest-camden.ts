@@ -6,9 +6,11 @@
  *   npm run ingest:camden -- --limit 5000    # bounded first run
  *   npm run ingest:camden -- --since 2025-01-01
  *
- * Requires CAMDEN_PCN_DATASET_URL and DATABASE_URL. It refuses to run without
- * them rather than falling back to anything, and never substitutes fixture data
- * for the real source.
+ * Requires DATABASE_URL, and refuses to run without it rather than falling back
+ * to anything. The dataset endpoint defaults to Camden's published one, which
+ * has been probed live and is what the adapter is written against;
+ * CAMDEN_PCN_DATASET_URL overrides it. Fixture data is never substituted for the
+ * real source, and a run against a non-official host is recorded as demo.
  *
  * Exit codes:
  *   0  ingestion succeeded (possibly with rejected rows, which are reported)
