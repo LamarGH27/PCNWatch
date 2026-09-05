@@ -825,6 +825,85 @@ describe('fetching at realistic volume', () => {
     expect(where).not.toContain('last_uploaded');
   });
 
+  it('refuses a dataset larger than the page budget instead of truncating it', async () => {
+    // Found by running against a source with more rows than the budget allowed:
+    // the fetch stopped at the ceiling and the run reported SUCCEEDED, having
+    // silently stored a truncated copy and rebuilt every aggregate over it.
+    const full = (n: number) =>
+      JSON.stringify(
+        Array.from({ length: n }, (_, i) => ({
+          socrata_id: String(i),
+          street: 'A STREET W1',
+          contravention_date: '2025-06-01T09:00:00.000',
+        })),
+      );
+    let call = 0;
+    const adapter = createCamdenAdapter({
+      datasetUrl: 'https://opendata.camden.gov.uk/resource/4k7m-4gkk.json',
+      pageSize: 10,
+      maxPages: 3,
+      // Every page is full and distinct, so the source never signals an end.
+      fetchImpl: async () => {
+        call += 1;
+        const rows = JSON.parse(full(10)).map((r: Record<string, unknown>) => ({
+          ...r,
+          socrata_id: `${call}-${r['socrata_id']}`,
+        }));
+        return new Response(JSON.stringify(rows), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    await expect(adapter.fetch({})).rejects.toThrow(/truncated copy/);
+  });
+
+  it('does not refuse when the caller asked for a bounded slice', async () => {
+    // --limit is an explicit request for part of the dataset, so stopping at the
+    // budget is what was asked for, not a silent truncation.
+    let call = 0;
+    const adapter = createCamdenAdapter({
+      datasetUrl: 'https://opendata.camden.gov.uk/resource/4k7m-4gkk.json',
+      pageSize: 10,
+      maxPages: 3,
+      fetchImpl: async () => {
+        call += 1;
+        const rows = Array.from({ length: 10 }, (_, i) => ({
+          socrata_id: `${call}-${i}`,
+          street: 'A STREET W1',
+        }));
+        return new Response(JSON.stringify(rows), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    const result = await adapter.fetch({ limit: 10 });
+    expect(result.rows).toHaveLength(10);
+  });
+
+  it('accumulates a large page without overflowing the call stack', async () => {
+    // `rows.push(...payload)` passes every row as a separate argument. At the
+    // page size the adapter actually uses that overflows the stack.
+    const rows = Array.from({ length: 60_000 }, (_, i) => ({
+      socrata_id: String(i),
+      street: 'A STREET W1',
+      contravention_date: '2025-06-01T09:00:00.000',
+    }));
+    const adapter = createCamdenAdapter({
+      datasetUrl: 'https://opendata.camden.gov.uk/resource/4k7m-4gkk.json',
+      pageSize: 100_000,
+      maxPages: 2,
+      fetchImpl: async () =>
+        new Response(JSON.stringify(rows), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    const result = await adapter.fetch({});
+    expect(result.rows).toHaveLength(60_000);
+  });
+
   it('stops rather than looping when a source ignores $offset', async () => {
     // An endpoint that returns the same page forever would otherwise be paged
     // 200 times, accumulating duplicates until it ran out of memory.
@@ -834,6 +913,8 @@ describe('fetching at realistic volume', () => {
     let calls = 0;
     const adapter = createCamdenAdapter({
       datasetUrl: 'https://opendata.camden.gov.uk/resource/4k7m-4gkk.json',
+      // Pinned so the page looks full and the loop continues to a second page.
+      pageSize: 5000,
       fetchImpl: async () => {
         calls += 1;
         return new Response(page, { status: 200, headers: { 'content-type': 'application/json' } });

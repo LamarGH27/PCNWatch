@@ -98,6 +98,20 @@ the platform supplies what it stands in for.
 
 ## 4. Ingest
 
+**Camden's dataset is over a million rows.** The pipeline builds the whole set in
+memory before writing, so there is a deliberate ceiling — 40 pages of 50,000 —
+and a fetch that reaches it **refuses** rather than storing a truncated copy. If
+you hit `PAGE_BUDGET_EXHAUSTED`, bound the run by date rather than raising the
+ceiling on a small machine:
+
+```bash
+npm run ingest:camden -- --since 2024-01-01
+```
+
+Re-running with an earlier `--since` later is safe: records are matched on
+`(source_id, source_record_id)`, so a wider run fills in what a narrower one
+missed rather than duplicating it.
+
 When the dry-run report looks right:
 
 ```bash

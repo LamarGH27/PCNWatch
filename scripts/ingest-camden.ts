@@ -113,6 +113,11 @@ async function main(): Promise<void> {
 
   const adapter = createCamdenAdapter({
     datasetUrl,
+    onProgress: ({ page, rowsSoFar }) => {
+      // A fetch of a full borough takes minutes. Silence for that long is
+      // indistinguishable from a hang.
+      process.stdout.write(`\r  fetching… page ${page}, ${rowsSoFar.toLocaleString('en-GB')} rows`);
+    },
     appToken: process.env.CAMDEN_APP_TOKEN,
   });
 
@@ -367,6 +372,14 @@ function printReport(
   if (result.fatalError) {
     section('FATAL ERROR');
     console.log(`  ${result.fatalError}`);
+    // A bare "Maximum call stack size exceeded" says nothing about where it
+    // happened, and a long ingestion is an expensive thing to re-run blind.
+    if (result.fatalStack) {
+      console.log('');
+      for (const line of result.fatalStack.split('\n').slice(1, 12)) {
+        console.log(`  ${line.trim()}`);
+      }
+    }
   }
 }
 

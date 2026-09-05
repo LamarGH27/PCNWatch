@@ -97,6 +97,8 @@ export interface IngestionJobResult {
   readonly qualityGate: QualityGate | null;
   readonly scoreDistributions: readonly ScoreDistribution[];
   readonly fatalError: string | null;
+  /** Stack of the fatal error. A long run is expensive to repeat blind. */
+  readonly fatalStack?: string | null;
 }
 
 export async function runCamdenIngestionJob(
@@ -296,6 +298,7 @@ export async function runCamdenIngestionJob(
       qualityGate: null,
       scoreDistributions: [],
       fatalError: message,
+      fatalStack: error instanceof Error ? (error.stack ?? null) : null,
     };
   } finally {
     await pool.end();

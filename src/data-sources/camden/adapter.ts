@@ -88,7 +88,8 @@ export class CamdenFetchError extends Error {
       | 'TRANSPORT_ERROR'
       | 'BAD_STATUS'
       | 'MALFORMED_PAYLOAD'
-      | 'PAGINATION_NOT_HONOURED',
+      | 'PAGINATION_NOT_HONOURED'
+      | 'PAGE_BUDGET_EXHAUSTED',
     readonly detail?: unknown,
   ) {
     super(message);
@@ -106,11 +107,20 @@ export interface CamdenAdapterOptions {
   readonly pageSize?: number;
   /** Maximum pages to walk in one run, so a runaway source cannot spin forever. */
   readonly maxPages?: number;
+  /** Called between pages so a long fetch can report progress. */
+  readonly onProgress?: (progress: { page: number; rowsSoFar: number }) => void;
 }
 
 export function createCamdenAdapter(options: CamdenAdapterOptions = {}): IngestionAdapter {
-  const pageSize = options.pageSize ?? 5000;
-  const maxPages = options.maxPages ?? 200;
+  // Socrata serves up to 50,000 rows per request. Asking for 5,000 meant ten
+  // times the round trips — 405 seconds for one Camden fetch — and put the
+  // ceiling at 1,000,000 rows.
+  const pageSize = options.pageSize ?? 50_000;
+  // 40 x 50,000 = a two-million-row ceiling. Held deliberately low enough that
+  // the whole payload still fits in memory: the pipeline builds the full set
+  // before writing, so an unbounded ceiling trades a clear refusal for an
+  // out-of-memory kill halfway through.
+  const maxPages = options.maxPages ?? 40;
 
   return {
     descriptor: CAMDEN_SOURCE,
@@ -132,6 +142,7 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
       const retrievedAt = new Date().toISOString();
       let offset = 0;
       let previousPageFingerprint: string | null = null;
+      let exhaustedPageBudget = true;
 
       for (let page = 0; page < maxPages; page += 1) {
         const url = new URL(datasetUrl);
@@ -171,6 +182,10 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
           );
         }
 
+        if (options.onProgress && page > 0) {
+          options.onProgress({ page, rowsSoFar: rows.length });
+        }
+
         let payload: unknown;
         try {
           payload = await response.json();
@@ -204,10 +219,34 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
         }
         previousPageFingerprint = pageFingerprint;
 
-        rows.push(...payload);
-        if (payload.length < pageSize) break;
-        if (limit !== undefined && rows.length >= limit) break;
+        // `push(...payload)` passes every row as a separate argument, which
+        // overflows the call stack on a large page. A loop has no such ceiling.
+        for (const row of payload) rows.push(row);
+
+        if (payload.length < pageSize) {
+          exhaustedPageBudget = false;
+          break;
+        }
+        if (limit !== undefined && rows.length >= limit) {
+          exhaustedPageBudget = false;
+          break;
+        }
         offset += payload.length;
+      }
+
+      // Running out of pages is not the same as reaching the end of the data.
+      // Left undetected, a dataset larger than the page budget is ingested
+      // truncated, aggregates are rebuilt over the part we happened to get, and
+      // the site reports the result as current. Refuse instead.
+      if (exhaustedPageBudget && limit === undefined) {
+        throw new CamdenFetchError(
+          `Fetched ${rows.length} rows across ${maxPages} pages without reaching the end of the ` +
+            'dataset, so this is a truncated copy of it. Ingesting it would rebuild every ' +
+            'aggregate over the part that happened to arrive and present the result as current. ' +
+            'Narrow the run with --since, or raise maxPages if the machine has the memory for it.',
+          'PAGE_BUDGET_EXHAUSTED',
+          { rows: rows.length, maxPages, pageSize },
+        );
       }
 
       const finalRows = limit === undefined ? rows : rows.slice(0, limit);
