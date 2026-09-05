@@ -17,6 +17,7 @@ import {
   sanitiseSourceMetadata,
 } from '@/data-sources/shared/pii';
 import { precisionCeilingFrom, publisherClaimsPrecision } from '@/core/geography/types';
+import { DEFAULT_SCORING_CONFIG } from '@/core/scoring/config';
 import {
   normaliseStreetName,
   parseContraventionCode,
@@ -171,8 +172,8 @@ describe('Camden row normalisation', () => {
     expect(result.event.longitude).toBeNull();
     expect(result.event.latitude).toBeNull();
     expect(result.warnings).toContain('COORDINATES_ABSENT');
-    // Confidence is capped so the scoring layer will refuse to rank it.
-    expect(result.event.dataConfidence).toBeLessThan(0.4);
+    // The absence is recorded with its reason rather than papered over.
+    expect(result.event.sourceMetadata['_geometry']).toMatchObject({ precision: 'NONE' });
   });
 
   it('keeps a row with an unparseable contravention code but records the code as null', () => {
@@ -227,13 +228,54 @@ describe('Camden row normalisation', () => {
     }
   });
 
-  it('caps confidence for rows that cannot be placed on a map', () => {
-    expect(
-      scoreConfidence({ hasCoordinates: false, hasContravention: true, hasTime: true, hasLocality: true }),
-    ).toBeLessThan(0.4);
-    expect(
-      scoreConfidence({ hasCoordinates: true, hasContravention: true, hasTime: true, hasLocality: true }),
-    ).toBeGreaterThan(0.9);
+  it('measures how well a row is specified, not whether it can be mapped', () => {
+    // A row with an exact time, a contravention code, a zone and a district is
+    // well specified whether or not the source published a coordinate. Treating
+    // it as too poor to rank because it cannot be plotted asks the wrong
+    // question of a ranking of streets by recorded activity.
+    const wellSpecifiedNoCoords = scoreConfidence({
+      hasCoordinates: false,
+      hasContravention: true,
+      hasTime: true,
+      hasLocality: true,
+      hasPostcodeDistrict: true,
+    });
+    expect(wellSpecifiedNoCoords).toBeGreaterThan(0.4);
+
+    // Coordinates still add locational specificity, so they still count.
+    const sameRowWithCoords = scoreConfidence({
+      hasCoordinates: true,
+      hasContravention: true,
+      hasTime: true,
+      hasLocality: true,
+      hasPostcodeDistrict: true,
+    });
+    expect(sameRowWithCoords).toBeGreaterThan(wellSpecifiedNoCoords);
+  });
+
+  it('still refuses a row that identifies a street but characterises nothing', () => {
+    // The gate has to keep biting: an id, a date and a street name alone is not
+    // enough to rank a location on.
+    const bare = scoreConfidence({
+      hasCoordinates: false,
+      hasContravention: false,
+      hasTime: false,
+      hasLocality: false,
+      hasPostcodeDistrict: false,
+    });
+    expect(bare).toBeLessThan(DEFAULT_SCORING_CONFIG.minDataConfidence);
+  });
+
+  it('scores a real live Camden row above the gate', () => {
+    // The end-to-end consequence: with the live schema, Camden streets can be
+    // ranked. Under the previous model every one of them was refused.
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeNull();
+    expect(result.event.dataConfidence).toBeGreaterThanOrEqual(
+      DEFAULT_SCORING_CONFIG.minDataConfidence,
+    );
   });
 });
 
@@ -669,13 +711,17 @@ describe('live Camden schema', () => {
     }
   });
 
-  it('caps confidence so an unlocated record cannot be scored', () => {
+  it('does not let a missing coordinate suppress a well-specified record', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // Below the scoring engine's minimum data confidence, so the location is
-    // refused a score rather than ranked on a position we do not have.
-    expect(result.event.dataConfidence).toBeLessThan(0.4);
+    // No coordinate, and still rankable: the row carries an exact timestamp, a
+    // contravention code, a zone and a district. What it cannot do is appear on
+    // the map, and that is enforced separately, in SQL.
+    expect(result.event.longitude).toBeNull();
+    expect(result.event.dataConfidence).toBeGreaterThanOrEqual(
+      DEFAULT_SCORING_CONFIG.minDataConfidence,
+    );
   });
 
   it('drops outcome and vehicle fields rather than storing them', () => {

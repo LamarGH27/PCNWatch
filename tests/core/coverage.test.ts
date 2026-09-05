@@ -11,6 +11,7 @@ function evidence(overrides: Partial<CoverageEvidence> = {}): CoverageEvidence {
   return {
     configuredLive: true,
     eventCount: 5000,
+    geolocatedLocationCount: 400,
     lastSuccessfulIngestionAt: '2026-01-14T03:00:00.000Z',
     sourceUnavailable: false,
     isDemoData: false,
@@ -94,5 +95,21 @@ describe('coverage', () => {
     for (const e of cases) {
       expect(assessCoverage('camden', 'Camden', e).canShowActivity).toBe(false);
     }
+  });
+});
+
+describe('geography a source does not publish', () => {
+  it('is a covered authority with real activity and nothing to draw', () => {
+    // Camden's published PCN dataset has no coordinates. That is not an outage,
+    // not an absence of enforcement, and not a reason to hide the borough — the
+    // counts, streets, times and contraventions are all real.
+    const result = assessCoverage('camden', 'Camden', evidence({ geolocatedLocationCount: 0 }));
+    expect(result.canShowActivity).toBe(true);
+    expect(result.hasMappableGeography).toBe(false);
+    expect(result.eventCount).toBe(5000);
+  });
+
+  it('reports mappable geography when locations actually carry it', () => {
+    expect(assessCoverage('camden', 'Camden', evidence()).hasMappableGeography).toBe(true);
   });
 });

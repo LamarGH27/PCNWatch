@@ -106,7 +106,11 @@ describe('Ticket Activity Score', () => {
     expect(poor).toMatchObject({ scored: false, reason: 'INSUFFICIENT_SOURCE_QUALITY' });
   });
 
-  it('refuses to score locations without geometry rather than inventing a position', () => {
+  it('ranks a location that has no geometry, because ranking is not mapping', () => {
+    // Camden publishes no coordinates. Refusing to rank a street on that basis
+    // conflated "cannot be drawn on a map" with "cannot be ranked" and made the
+    // whole hotspot ranking empty on real data. The score measures recorded
+    // activity at a named location: street, counts and dates, no coordinate.
     const inputs = [
       ...population(),
       makeLocation('ungeocoded', [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50], {
@@ -114,9 +118,37 @@ describe('Ticket Activity Score', () => {
       }),
     ];
     const results = computeTicketActivityScores(inputs, { asOf: AS_OF });
-    expect(results.find((r) => r.locationId === 'ungeocoded')).toMatchObject({
+    const ungeocoded = results.find((r) => r.locationId === 'ungeocoded');
+    expect(ungeocoded?.scored).toBe(true);
+  });
+
+  it('scores a location identically whether or not it has geometry', () => {
+    // Geometry must not influence the ranking at all — otherwise it is a hidden
+    // input to a score that claims to measure enforcement activity.
+    const counts = [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50];
+    const withGeom = computeTicketActivityScores(
+      [...population(), makeLocation('subject', counts, { hasGeometry: true })],
+      { asOf: AS_OF },
+    ).find((r) => r.locationId === 'subject');
+    const withoutGeom = computeTicketActivityScores(
+      [...population(), makeLocation('subject', counts, { hasGeometry: false })],
+      { asOf: AS_OF },
+    ).find((r) => r.locationId === 'subject');
+    expect(withGeom).toEqual(withoutGeom);
+  });
+
+  it('still refuses a location whose source data is too poor to characterise', () => {
+    // The confidence gate has to keep biting, or nothing does.
+    const inputs = [
+      ...population(),
+      makeLocation('thin', [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50], {
+        dataConfidence: 0.2,
+      }),
+    ];
+    const results = computeTicketActivityScores(inputs, { asOf: AS_OF });
+    expect(results.find((r) => r.locationId === 'thin')).toMatchObject({
       scored: false,
-      reason: 'NO_GEOMETRY',
+      reason: 'INSUFFICIENT_SOURCE_QUALITY',
     });
   });
 

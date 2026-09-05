@@ -2,11 +2,13 @@
 
 export type ScoreClassification = 'VERY_LOW' | 'LOW' | 'MODERATE' | 'HIGH' | 'VERY_HIGH';
 
+// `NO_GEOMETRY` was a refusal reason and is deliberately gone: a location with
+// no coordinate can still be ranked, it just cannot be drawn. Keeping the member
+// would document a behaviour the engine no longer has.
 export type ScoreRefusalReason =
   | 'INSUFFICIENT_SOURCE_QUALITY'
   | 'INSUFFICIENT_OBSERVATIONS'
-  | 'NO_COMPARISON_POPULATION'
-  | 'NO_GEOMETRY';
+  | 'NO_COMPARISON_POPULATION';
 
 /** One PCN observation bucket for a location. Counts are aggregated, never raw events. */
 export interface ActivityBucket {
@@ -42,7 +44,13 @@ export interface LocationActivityInput {
    * geocoding precision, field completeness, source reliability.
    */
   readonly dataConfidence: number;
-  /** True when the location has usable geometry. Scores are refused without it. */
+  /**
+   * True when the location has usable geometry.
+   *
+   * Reported, never scored on: whether a location can be drawn is a question for
+   * the map, not for a ranking of enforcement activity. The map functions filter
+   * on it in SQL.
+   */
   readonly hasGeometry: boolean;
 }
 

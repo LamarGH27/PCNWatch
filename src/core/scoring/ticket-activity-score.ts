@@ -179,15 +179,17 @@ export function computeTicketActivityScores(
   const eligible: Features[] = [];
 
   for (const input of inputs) {
-    if (!input.hasGeometry) {
-      results.set(input.locationId, {
-        locationId: input.locationId,
-        scored: false,
-        reason: 'NO_GEOMETRY',
-        message: 'This location has no verified geometry, so activity cannot be placed on the map.',
-      });
-      continue;
-    }
+    // Geometry is deliberately NOT a precondition here.
+    //
+    // It was, and that was wrong: it conflated "cannot be drawn on a map" with
+    // "cannot be ranked". This score measures recorded enforcement activity at a
+    // named location, which needs the street, the counts and the dates — not a
+    // coordinate. Camden's published dataset has no coordinates at all, and under
+    // the old rule every Camden street was refused a score while the counts
+    // behind it were perfectly sound.
+    //
+    // Nothing unmappable can leak onto the map as a result: the map functions
+    // filter on `geom is not null` in SQL, independently of scoring.
     if (input.dataConfidence < config.minDataConfidence) {
       results.set(input.locationId, {
         locationId: input.locationId,

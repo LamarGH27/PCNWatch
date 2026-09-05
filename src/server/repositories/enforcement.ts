@@ -89,6 +89,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
     return assessCoverage(authoritySlug, fallbackName, {
       configuredLive,
       eventCount: 0,
+      geolocatedLocationCount: 0,
       lastSuccessfulIngestionAt: null,
       sourceUnavailable: true,
       isDemoData: false,
@@ -99,6 +100,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
     name: string;
     map_coverage_status: string;
     event_count: string;
+    geolocated_location_count: string;
     last_ingested_at: string | null;
     is_demo: boolean | null;
   }>(
@@ -106,6 +108,12 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
        a.name,
        a.map_coverage_status,
        (select count(*) from pcn_events e where e.authority_id = a.id)::text as event_count,
+       -- Whether anything can be drawn at all. A source that publishes no
+       -- coordinates yields locations with counts and no geometry, and the map
+       -- must say that rather than "no recorded PCNs".
+       (select count(*) from parking_locations l
+         where l.authority_id = a.id and l.geom is not null)::text
+         as geolocated_location_count,
        run.finished_at as last_ingested_at,
        (run.report ->> 'demo')::boolean as is_demo
      from authorities a
@@ -126,6 +134,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
     return assessCoverage(authoritySlug, fallbackName, {
       configuredLive,
       eventCount: 0,
+      geolocatedLocationCount: 0,
       lastSuccessfulIngestionAt: null,
       sourceUnavailable: true,
       isDemoData: false,
@@ -137,6 +146,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
     return assessCoverage(authoritySlug, fallbackName, {
       configuredLive: false,
       eventCount: 0,
+      geolocatedLocationCount: 0,
       lastSuccessfulIngestionAt: null,
       sourceUnavailable: false,
       isDemoData: false,
@@ -146,6 +156,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
   return assessCoverage(authoritySlug, String(row.name), {
     configuredLive: configuredLive && row.map_coverage_status === 'LIVE',
     eventCount: Number(row.event_count ?? 0),
+    geolocatedLocationCount: Number(row.geolocated_location_count ?? 0),
     lastSuccessfulIngestionAt: row.last_ingested_at,
     sourceUnavailable: false,
     isDemoData: row.is_demo === true,

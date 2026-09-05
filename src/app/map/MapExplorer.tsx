@@ -63,11 +63,14 @@ export function MapExplorer({
   canShowActivity,
   coverageHeadline,
   coverageDetail,
+  hasMappableGeography,
 }: {
   authoritySlug: string;
   canShowActivity: boolean;
   coverageHeadline: string;
   coverageDetail: string;
+  /** False when the authority publishes enforcement records without positions. */
+  hasMappableGeography: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -474,7 +477,22 @@ export function MapExplorer({
             )}
           </StatusPill>
         )}
-        {state.kind === 'READY' && summary && summary.pcns === 0 && (
+        {state.kind === 'READY' && summary && summary.pcns === 0 && !hasMappableGeography && (
+          // The critical distinction. With Camden's data loaded there ARE
+          // recorded PCNs — thousands of them — and none carry a coordinate.
+          // Saying "no recorded PCNs" here would be a false statement about
+          // enforcement, and telling the user to widen the filters would send
+          // them looking for something no filter can produce.
+          <StatusPill>
+            This authority publishes its penalty charge notices without any location coordinates, so
+            nothing can be drawn here yet. The activity is real — see{' '}
+            <Link href="/hotspots" style={{ color: 'inherit', textDecoration: 'underline' }}>
+              hotspots
+            </Link>{' '}
+            for the same data ranked by street.
+          </StatusPill>
+        )}
+        {state.kind === 'READY' && summary && summary.pcns === 0 && hasMappableGeography && (
           <StatusPill>
             No recorded PCNs in this view for the selected filters. Try widening the time period or
             panning to another area.

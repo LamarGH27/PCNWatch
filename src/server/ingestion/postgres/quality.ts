@@ -363,13 +363,22 @@ export function evaluateQualityGate(
   if (quality.location.percentageGeolocated < QUALITY_THRESHOLDS.minPercentageGeolocated) {
     switch (quality.location.geographyAvailability) {
       case 'SOURCE_PUBLISHES_NONE':
+        // A caution, not a failure — and the distinction is load-bearing.
+        //
+        // This gate asks whether the stored data can be presented as enforcement
+        // intelligence. A dataset with street names, dates, contravention codes
+        // and enforcement classes can: streets can be ranked, profiled and
+        // explained. What it cannot do is be drawn on a map, and that is stated
+        // separately by `mapReadiness` and enforced in SQL, which filters map
+        // cells on `geom is not null`. Failing the whole gate here would report
+        // sound data as unusable.
         mapReadiness = 'NO_SOURCE_GEOGRAPHY';
-        failures.push(
-          'The map cannot be built: this source publishes no coordinates for any record. ' +
+        cautions.push(
+          'THE MAP WILL BE EMPTY: this source publishes no coordinates for any record. ' +
             'This is a property of the dataset, not a fault in the records or the adapter — ' +
-            'the street names, dates and contravention codes are intact and worth storing. ' +
-            'Positions require a separate street-reference dataset (see docs/geography.md); ' +
-            'until one is loaded, no notice may be drawn on a map.',
+            'the street names, dates and contravention codes are intact, and hotspot ranking ' +
+            'works on them. Positions require a separate street-reference dataset ' +
+            '(see docs/geography.md); until one is loaded, no notice may be drawn on a map.',
         );
         break;
       case 'PUBLISHED_BUT_UNUSABLE':

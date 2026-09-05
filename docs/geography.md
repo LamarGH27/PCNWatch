@@ -63,14 +63,32 @@ No street reference is configured. `UnavailableStreetReference` resolves nothing
 Every Camden record therefore has `longitude = null`, `latitude = null`,
 `precision = NONE`, and a recorded reason. Consequences, all intended:
 
-- Nothing is drawn on the map.
-- `dataConfidence` is capped below the scoring gate, so locations are refused a
-  Ticket Activity Score rather than given a weak one.
-- The quality gate fails with `mapReadiness = NO_SOURCE_GEOGRAPHY`, and says the
-  records are intact and worth storing.
+- Nothing is drawn on the map, and the map says why: "this authority publishes
+  its penalty charge notices without any location coordinates". It does not say
+  "no recorded PCNs", which would be a false statement about enforcement.
+- Streets are still ranked. Geometry is **not** an input to the Ticket Activity
+  Score — see below.
+- The quality gate passes with `mapReadiness = NO_SOURCE_GEOGRAPHY` and a loud
+  caution. The stored data is usable as enforcement intelligence; it just cannot
+  be mapped, and those are different questions.
 
-The non-geographic intelligence still works on real data: which streets, which
+The non-geographic intelligence works on real data: which streets, which
 contraventions, what times, what enforcement classes, what trend.
+
+### Ranking is not mapping
+
+This was got wrong once and is worth stating plainly. The scoring engine used to
+refuse any location without geometry, and `dataConfidence` was capped below the
+scoring gate when a row had no coordinate. Against Camden's real data that meant
+every street was refused a score while the counts behind it were perfectly sound
+— the core of the product, empty, because of a question it never needed to ask.
+
+The Ticket Activity Score measures recorded enforcement activity at a named
+location: the street, the counts, the dates. It does not need a coordinate, and
+geometry is now not an input to it at all — a location scores identically with or
+without one. Mappability is enforced where it belongs, in the SQL behind the map,
+which filters on `geom is not null`. `MODEL_VERSION` moved to `tas-2.0.0`,
+because stored scores from before this change mean something different.
 
 ---
 

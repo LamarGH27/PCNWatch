@@ -392,6 +392,7 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
     hasContravention: contravention !== null,
     hasTime: timing.hour !== null,
     hasLocality: localityField !== null,
+    hasPostcodeDistrict: sourceLocation.postcodeDistrict !== null,
   });
 
   return {
@@ -479,22 +480,33 @@ function geometryOrReference(
 /**
  * Per-row data confidence in [0,1].
  *
- * Confidence describes how completely a row is specified, which is exactly what
- * the Ticket Activity Score needs in order to shrink uncertain locations toward
- * the middle. A row with no geometry cannot be mapped at all, so it is capped low.
+ * Confidence describes how completely a row is specified for the purpose of
+ * measuring enforcement activity at a named location. It is not a measure of
+ * whether the row can be drawn on a map.
+ *
+ * It used to be. A missing coordinate capped confidence at 0.35, below the
+ * scoring gate, so a row carrying an exact timestamp, a contravention code, a
+ * zone and a postcode district was treated as too poor to rank — because it
+ * could not be plotted. That is the wrong question for a ranking of streets by
+ * recorded activity. Coordinates now contribute to confidence, as one more piece
+ * of locational specificity, rather than gating it. Mappability is tracked
+ * separately and honestly, by the geometry provenance on each record.
  */
 export function scoreConfidence(signals: {
   hasCoordinates: boolean;
   hasContravention: boolean;
   hasTime: boolean;
   hasLocality: boolean;
+  hasPostcodeDistrict: boolean;
 }): number {
-  let confidence = 0.4; // A row with a valid id, date and street starts here.
-  if (signals.hasCoordinates) confidence += 0.3;
-  if (signals.hasContravention) confidence += 0.15;
-  if (signals.hasTime) confidence += 0.1;
-  if (signals.hasLocality) confidence += 0.05;
-  if (!signals.hasCoordinates) confidence = Math.min(confidence, 0.35);
+  // A row with a valid id, date and street and nothing else sits below the
+  // scoring gate: identifying a street is not the same as characterising it.
+  let confidence = 0.35;
+  if (signals.hasContravention) confidence += 0.2;
+  if (signals.hasTime) confidence += 0.15;
+  if (signals.hasLocality) confidence += 0.1;
+  if (signals.hasPostcodeDistrict) confidence += 0.1;
+  if (signals.hasCoordinates) confidence += 0.1;
   return Math.round(Math.min(1, confidence) * 1000) / 1000;
 }
 

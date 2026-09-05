@@ -9,7 +9,7 @@
  * the departure from the original conceptual weighting.
  */
 
-export const MODEL_VERSION = 'tas-1.1.0';
+export const MODEL_VERSION = 'tas-2.0.0';
 //
 // 1.1.0 — scores are computed from the data inside their own period.
 //   The weights and thresholds are unchanged; what changed is which buckets are

@@ -190,11 +190,15 @@ describe('geography availability', () => {
       200,
       0,
     );
-    expect(none.pass).toBe(false);
+    // Not a failure: the stored data is usable as enforcement intelligence even
+    // though it cannot be mapped. The distinction is reported, loudly, rather
+    // than collapsed into a pass/fail that would call sound data unusable.
+    expect(none.pass).toBe(true);
     expect(none.mapReadiness).toBe('NO_SOURCE_GEOGRAPHY');
-    expect(none.failures.join(' ')).toMatch(/street-reference dataset/);
+    expect(none.cautions.join(' ')).toMatch(/THE MAP WILL BE EMPTY/);
+    expect(none.cautions.join(' ')).toMatch(/street-reference dataset/);
     // And it must not slander the records themselves.
-    expect(none.failures.join(' ')).toMatch(/not a fault in the records/);
+    expect(none.cautions.join(' ')).toMatch(/not a fault in the records/);
 
     const unreadable = evaluateQualityGate(
       analyseQuality(
@@ -214,14 +218,33 @@ describe('geography availability', () => {
     expect(unreadable.failures.join(' ')).toMatch(/Fix the adapter/);
   });
 
-  it('does not pass the gate merely because the absence is explainable', () => {
-    // Honest reporting is not the same as an acceptable outcome. A dataset with
-    // no geography still cannot be presented as a map.
+  it('never lets a missing-geography pass be mistaken for a map', () => {
+    // Passing the gate must not imply the map works. The readiness field is the
+    // only thing that answers that, and it still says no.
     const q = analyseQuality(
       batch(500).map((e) => ({
         ...e,
         ...noCoords,
         sourceMetadata: { _geometry: { origin: 'NONE', reason: 'SOURCE_PUBLISHES_NO_COORDINATES' } },
+      })),
+      [],
+      KNOWN_CODES,
+      TODAY,
+    );
+    const gate = evaluateQualityGate(q, 500, 0);
+    expect(gate.pass).toBe(true);
+    expect(gate.mapReadiness).not.toBe('READY');
+    expect(q.location.percentageGeolocated).toBe(0);
+  });
+
+  it('still fails when geography is published and we cannot read it', () => {
+    // That is a fault in our code or a change in the source, not a property of
+    // the dataset, and it must not pass.
+    const q = analyseQuality(
+      batch(500).map((e) => ({
+        ...e,
+        ...noCoords,
+        sourceMetadata: { _geometry: { origin: 'NONE', reason: 'SOURCE_COORDINATES_UNUSABLE' } },
       })),
       [],
       KNOWN_CODES,
