@@ -8,6 +8,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
-    exclude: ['tests/e2e/**', 'node_modules/**'],
+    // Integration tests need a real PostGIS database and are run by
+    // `npm run db:test`, which creates one. See vitest.integration.config.ts.
+    exclude: ['tests/e2e/**', 'tests/integration/**', 'node_modules/**'],
   },
 });

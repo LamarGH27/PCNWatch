@@ -7,11 +7,18 @@
  *
  * For each location, walks the whole chain and prints it:
  *
- *   RAW SOURCE ROWS → NORMALISED EVENTS → AGGREGATES → SCORE → WHAT THE UI SHOWS
+ *   SOURCE PROVENANCE → AGGREGATE ROWS → SCORE → WHAT THE UI SHOWS
  *
  * The point is to make a displayed number falsifiable. Every figure on a hotspot
  * page should be reconstructible from the rows printed here; if a count does not
  * reconcile, this prints the discrepancy rather than the pretty number.
+ *
+ * The first link in that chain used to be the notices themselves. They are no
+ * longer stored — the pipeline aggregates in flight and discards them — so what
+ * stands in their place is the dataset version's provenance: where the rows came
+ * from, when, how many arrived, and how many are accounted for by what was
+ * stored. A dataset whose stored counts do not equal its accepted count is never
+ * published, so that equality is the guarantee this replaces the raw rows with.
  *
  * Requires DATABASE_URL.
  */
@@ -89,17 +96,23 @@ async function main(): Promise<void> {
       display_name: string;
       data_confidence: string;
       has_geom: boolean;
+      geometry_source: string | null;
+      geometry_method: string | null;
+      geometry_reference_version: string | null;
       raw_count: string;
     }>(
       `select l.id, l.slug, l.display_name, l.data_confidence,
               l.geom is not null as has_geom,
-              count(e.id)::text as raw_count
+              l.geometry_source, l.geometry_method, l.geometry_reference_version,
+              coalesce(sum(d.pcn_count), 0)::text as raw_count
        from parking_locations l
        join authorities a on a.id = l.authority_id and a.slug = 'camden'
-       left join pcn_events e on e.parking_location_id = l.id
+       left join pcn_activity_daily d
+              on d.parking_location_id = l.id
+             and d.dataset_version_id = pcnwatch_active_version('camden')
        ${args.slug ? 'where l.slug = $2' : ''}
        group by l.id
-       order by count(e.id) desc
+       order by coalesce(sum(d.pcn_count), 0) desc
        limit $1`,
       args.slug ? [args.limit, args.slug] : [args.limit],
     );
@@ -113,7 +126,7 @@ async function main(): Promise<void> {
     // whatever is in pcn_activity_scores, so a stored score that does not match
     // is visible as a discrepancy rather than trusted.
     const { rows: scoringRows } = await pool.query(
-      'select * from pcnwatch_scoring_inputs($1)',
+      'select * from pcnwatch_scoring_inputs($1, null, null)',
       ['camden'],
     );
     const inputs: LocationActivityInput[] = scoringRows.map((row) => ({
@@ -154,6 +167,9 @@ async function traceLocation(
     display_name: string;
     data_confidence: string;
     has_geom: boolean;
+    geometry_source: string | null;
+    geometry_method: string | null;
+    geometry_reference_version: string | null;
     raw_count: string;
   },
   recomputed: Map<string, ReturnType<typeof computeTicketActivityScores>[number]>,
@@ -165,89 +181,129 @@ async function traceLocation(
   console.log(`period ${period}   ·   scores recomputed as of ${asOf}`);
   console.log('='.repeat(96));
 
-  /* 1. Raw source rows ---------------------------------------------------- */
+  /* 1. Where the figures came from --------------------------------------- */
+
+  const { rows: provenance } = await pool.query<{
+    id: string;
+    source_url: string | null;
+    source_dataset_id: string | null;
+    source_fetched_at: string | null;
+    source_schema_fingerprint: string | null;
+    rows_fetched: number | null;
+    rows_accepted: number | null;
+    rows_rejected: number | null;
+    aggregate_total: number | null;
+    is_demo: boolean;
+    activated_at: string | null;
+  }>(
+    `select id, source_url, source_dataset_id, source_fetched_at::text,
+            source_schema_fingerprint, rows_fetched, rows_accepted, rows_rejected,
+            aggregate_total, is_demo, activated_at::text
+       from enforcement_dataset_versions
+      where id = pcnwatch_active_version('camden')`,
+  );
+  const v = provenance[0];
+
+  console.log('\n1. SOURCE  (the notices themselves are not stored; this is what they came from)');
+  if (!v) {
+    console.log('   (no active dataset version — nothing is published for this authority)');
+    return;
+  }
+  console.log(`   dataset url          ${v.source_url ?? '(none)'}`);
+  console.log(`   dataset id           ${v.source_dataset_id ?? '(none)'}`);
+  console.log(`   fetched at           ${v.source_fetched_at ?? '(none)'}`);
+  console.log(`   schema fingerprint   ${v.source_schema_fingerprint ?? '(none)'}`);
+  console.log(`   published at         ${v.activated_at ?? '(not published)'}`);
+  console.log(`   demo data            ${v.is_demo ? 'YES — not real enforcement data' : 'no'}`);
+  console.log(
+    `   rows                 ${v.rows_fetched ?? '?'} fetched, ${v.rows_accepted ?? '?'} accepted, ` +
+      `${v.rows_rejected ?? '?'} rejected`,
+  );
+  const versionReconciles = v.aggregate_total === v.rows_accepted;
+  console.log(
+    `   reconciliation       ${v.aggregate_total ?? '?'} stored vs ${v.rows_accepted ?? '?'} accepted → ` +
+      `${versionReconciles ? 'MATCH' : '*** MISMATCH ***'}`,
+  );
+
+  /* 2. This street's aggregate rows --------------------------------------- */
 
   const { rows: sample } = await pool.query<{
-    source_record_id: string;
-    issued_date: string;
-    issued_hour: number | null;
+    activity_date: string;
     contravention_code: string | null;
-    source_metadata: Record<string, unknown>;
-    lon: number | null;
-    lat: number | null;
+    enforcement_class: string;
+    pcn_count: number;
+    hour_histogram: number[];
+    via_cctv: boolean | null;
   }>(
-    `select source_record_id, issued_date::text, issued_hour, contravention_code, source_metadata,
-            st_x(geom::geometry) as lon, st_y(geom::geometry) as lat
-     from pcn_events where parking_location_id = $1
-     order by issued_date desc limit 3`,
+    `select activity_date::text, contravention_code, enforcement_class::text,
+            pcn_count, hour_histogram, via_cctv
+       from pcn_activity_daily
+      where parking_location_id = $1 and dataset_version_id = pcnwatch_active_version('camden')
+      order by activity_date desc, pcn_count desc
+      limit 3`,
     [location.id],
   );
 
-  console.log('\n1. SOURCE  (3 most recent stored events, with the columns they came from)');
-  for (const s of sample) {
-    const resolved = (s.source_metadata as { _resolvedFields?: Record<string, string> })._resolvedFields;
+  console.log('\n2. STORED  (3 most recent aggregate rows — one row is many notices)');
+  for (const r of sample) {
+    const hours = r.hour_histogram
+      .map((n, hour) => (n > 0 ? `${String(hour).padStart(2, '0')}:00×${n}` : null))
+      .filter(Boolean)
+      .join(' ');
     console.log(
-      `   ${s.source_record_id.padEnd(16)} ${s.issued_date} ${
-        s.issued_hour === null ? '--:00' : `${String(s.issued_hour).padStart(2, '0')}:00`
-      }  code ${s.contravention_code ?? '(none)'}  ${
-        s.lon === null ? 'no coords' : `${s.lon.toFixed(5)},${s.lat!.toFixed(5)}`
-      }`,
+      `   ${r.activity_date}  code ${(r.contravention_code ?? '(none)').padEnd(4)} ` +
+        `${r.enforcement_class.padEnd(15)} ${String(r.pcn_count).padStart(5)} PCNs  ` +
+        `${r.via_cctv === null ? 'mixed channel' : r.via_cctv ? 'camera' : 'on street'}`,
     );
-    if (resolved) {
-      console.log(
-        `   ${''.padEnd(16)} from columns: id=${resolved.recordId} street=${resolved.street} date=${resolved.date} coords=${resolved.coordinates ?? 'none'}`,
-      );
-    }
+    console.log(`   ${''.padEnd(12)} hours: ${hours || '(no times recorded)'}`);
   }
 
-  /* 2. Normalised event counts -------------------------------------------- */
+  /* 3. Totals and geography ----------------------------------------------- */
 
   const { rows: counts } = await pool.query<{
     total: string;
-    geolocated: string;
-    earliest: string;
-    latest: string;
+    rows_stored: string;
+    histogrammed: string;
+    earliest: string | null;
+    latest: string | null;
     codes: string;
   }>(
-    `select count(*)::text as total,
-            count(geom)::text as geolocated,
-            min(issued_date)::text as earliest,
-            max(issued_date)::text as latest,
+    `select coalesce(sum(pcn_count), 0)::text as total,
+            count(*)::text as rows_stored,
+            coalesce(sum((select sum(h) from unnest(hour_histogram) h)), 0)::text as histogrammed,
+            min(activity_date)::text as earliest,
+            max(activity_date)::text as latest,
             count(distinct contravention_code)::text as codes
-     from pcn_events where parking_location_id = $1`,
+       from pcn_activity_daily
+      where parking_location_id = $1 and dataset_version_id = pcnwatch_active_version('camden')`,
     [location.id],
   );
   const c = counts[0]!;
 
-  console.log('\n2. NORMALISED');
-  console.log(`   stored events        ${c.total}`);
-  console.log(`   geolocated           ${c.geolocated}`);
-  console.log(`   date range           ${c.earliest} → ${c.latest}`);
-  console.log(`   distinct codes       ${c.codes}`);
-  console.log(`   location confidence  ${Number(location.data_confidence).toFixed(3)}`);
-  console.log(`   has geometry         ${location.has_geom}`);
-
-  /* 3. Aggregates --------------------------------------------------------- */
-
-  const { rows: agg } = await pool.query<{ bucket_kind: string; total: string; buckets: string }>(
-    `select bucket_kind, sum(pcn_count)::text as total, count(*)::text as buckets
-     from pcn_activity_aggregates where parking_location_id = $1
-     group by bucket_kind order by bucket_kind`,
-    [location.id],
-  );
-
-  console.log('\n3. AGGREGATES');
-  for (const a of agg) {
-    console.log(`   ${a.bucket_kind.padEnd(12)} ${a.buckets.padStart(4)} buckets, ${a.total.padStart(8)} PCNs`);
-  }
-
-  const monthTotal = agg.find((a) => a.bucket_kind === 'MONTH')?.total;
-  const reconciles = monthTotal === c.total;
+  console.log('\n3. AGGREGATED');
+  console.log(`   notices counted      ${c.total}`);
+  console.log(`   rows stored          ${c.rows_stored}`);
   console.log(
-    `   reconciliation       MONTH aggregate ${monthTotal ?? '(none)'} vs stored events ${c.total} → ${
-      reconciles ? 'MATCH' : '*** MISMATCH ***'
+    `   compression          ${
+      Number(c.rows_stored) > 0
+        ? `${(Number(c.total) / Number(c.rows_stored)).toFixed(1)} notices per stored row`
+        : '(no rows)'
     }`,
   );
+  console.log(
+    `   with a recorded time ${c.histogrammed} of ${c.total}` +
+      `${Number(c.histogrammed) > Number(c.total) ? '  *** MORE HOURS THAN NOTICES ***' : ''}`,
+  );
+  console.log(`   date range           ${c.earliest ?? '(none)'} → ${c.latest ?? '(none)'}`);
+  console.log(`   distinct codes       ${c.codes}`);
+  console.log(`   location confidence  ${Number(location.data_confidence).toFixed(3)}`);
+  // Source location versus derived geography: the street name is what the
+  // authority published; the point is one notice's coordinate reused for the
+  // whole street, which is a derivation and is labelled as one.
+  console.log(`   has geometry         ${location.has_geom}`);
+  console.log(`   geometry origin      ${location.geometry_source ?? '(none — never invented)'}`);
+  console.log(`   geometry method      ${location.geometry_method ?? '(none)'}`);
+  console.log(`   placed from record   ${location.geometry_reference_version ?? '(none)'}`);
 
   /* 4. Score -------------------------------------------------------------- */
 

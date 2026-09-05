@@ -3,6 +3,9 @@
 -- Two guarantees that only a real database can demonstrate:
 --   1. A failed refresh never destroys previously valid data.
 --   2. Data ingested from a non-official source cannot be presented as real.
+--
+-- Production stores daily aggregates under a versioned dataset rather than one
+-- row per notice, so the fixture below seeds what ingestion actually writes.
 
 \set ON_ERROR_STOP on
 
@@ -27,15 +30,24 @@ values ('dddddddd-0000-0000-0000-000000000009', 'aaaaaaaa-0000-0000-0000-0000000
         'SUCCEEDED', now() - interval '1 day', now() - interval '1 day', 500, 500,
         jsonb_build_object('authorityId', 'bbbbbbbb-0000-0000-0000-000000000009', 'demo', false));
 
-insert into pcn_events (
-  authority_id, parking_location_id, contravention_code, issued_date,
-  source_id, source_record_id, retrieved_at, data_confidence, row_hash, geom
-)
-select 'bbbbbbbb-0000-0000-0000-000000000009', 'cccccccc-0000-0000-0000-000000000009',
-       '01', (current_date - (i % 300))::date,
-       'aaaaaaaa-0000-0000-0000-000000000009', 'GOOD-' || i, now(), 0.9, md5('GOOD-'||i),
-       st_point(-0.1338, 51.5305)::geography
-from generate_series(1, 500) i;
+-- 500 notices, accepted and published as one ACTIVE dataset version.
+insert into enforcement_dataset_versions (id, authority_id, source_id, status, activated_at, rows_accepted)
+values ('eeeeeeee-0000-0000-0000-000000000009', 'bbbbbbbb-0000-0000-0000-000000000009',
+        'aaaaaaaa-0000-0000-0000-000000000009', 'ACTIVE', now() - interval '1 day', 500);
+
+-- Notices are collapsed onto their day before they are written, so 500 notices
+-- across 300 days become 300 rows carrying 500 between them.
+insert into pcn_activity_daily (dataset_version_id, parking_location_id,
+  activity_date, contravention_code, enforcement_class, pcn_count, hour_histogram, data_confidence)
+select 'eeeeeeee-0000-0000-0000-000000000009',
+       'cccccccc-0000-0000-0000-000000000009',
+       day, '01', 'PARKING', n,
+       (select array_agg(case when h = 10 then n else 0 end::smallint order by h)
+          from generate_series(1, 24) h),
+       0.9
+from (select (current_date - (i % 300))::date as day, count(*)::integer as n
+        from generate_series(1, 500) i
+       group by 1) collapsed;
 
 -- ---------------------------------------------------------------------------
 -- 1. A failed refresh leaves prior data intact.
@@ -45,31 +57,33 @@ do $$
 declare
   before_count integer;
   after_count integer;
+  partial_version uuid;
 begin
-  select count(*) into before_count from pcn_events
-  where authority_id = 'bbbbbbbb-0000-0000-0000-000000000009';
+  select coalesce(sum(pcn_count), 0) into before_count from pcn_activity_daily
+  where dataset_version_id = pcnwatch_active_version('camden-safety');
 
-  -- A refresh begins, writes some rows, then fails and rolls back — exactly what
-  -- the ingestion job does when the pipeline judges the payload unusable.
-  begin
-    insert into pcn_events (
-      authority_id, parking_location_id, contravention_code, issued_date,
-      source_id, source_record_id, retrieved_at, data_confidence, row_hash
-    )
-    values ('bbbbbbbb-0000-0000-0000-000000000009', 'cccccccc-0000-0000-0000-000000000009',
-            '01', current_date, 'aaaaaaaa-0000-0000-0000-000000000009', 'PARTIAL-1',
-            now(), 0.9, md5('PARTIAL-1'));
-    raise exception 'simulated ingestion failure';
-  exception when others then
-    null;  -- the job records the failure and does not retry into a half state
-  end;
+  -- A refresh begins and writes into its own BUILDING version. Partial writes
+  -- land there, never in the version readers are looking at. When the pipeline
+  -- judges the payload unusable it abandons that version instead of activating
+  -- it, which is what the ingestion job does on failure.
+  insert into enforcement_dataset_versions (authority_id, source_id, status)
+  values ('bbbbbbbb-0000-0000-0000-000000000009',
+          'aaaaaaaa-0000-0000-0000-000000000009', 'BUILDING')
+  returning id into partial_version;
 
-  select count(*) into after_count from pcn_events
-  where authority_id = 'bbbbbbbb-0000-0000-0000-000000000009';
+  insert into pcn_activity_daily (dataset_version_id, parking_location_id,
+    activity_date, contravention_code, enforcement_class, pcn_count, data_confidence)
+  values (partial_version,
+          'cccccccc-0000-0000-0000-000000000009', current_date, '01', 'PARKING', 7, 0.9);
+
+  update enforcement_dataset_versions set status = 'ABANDONED' where id = partial_version;
+
+  select coalesce(sum(pcn_count), 0) into after_count from pcn_activity_daily
+  where dataset_version_id = pcnwatch_active_version('camden-safety');
 
   assert before_count = after_count,
     format('A failed refresh changed the stored data: %s → %s', before_count, after_count);
-  assert after_count = 500, format('Expected the original 500 events, found %s', after_count);
+  assert after_count = 500, format('Expected the original 500 notices, found %s', after_count);
 end;
 $$;
 
@@ -122,24 +136,37 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 3. Aggregates reconcile exactly with stored events.
+-- 3. Aggregates reconcile exactly with the notices the source supplied.
+--
+-- Raw notices are discarded after aggregation, so the version's accepted count
+-- is the only record of how many arrived. It must equal what is stored, or the
+-- product would be reporting numbers nothing accounts for.
 -- ---------------------------------------------------------------------------
-
-select pcnwatch_rebuild_aggregates('bbbbbbbb-0000-0000-0000-000000000009');
 
 do $$
 declare
-  events integer;
+  accepted integer;
   aggregated integer;
+  histogrammed integer;
 begin
-  select count(*) into events from pcn_events
-  where authority_id = 'bbbbbbbb-0000-0000-0000-000000000009';
+  select rows_accepted into accepted from enforcement_dataset_versions
+  where id = 'eeeeeeee-0000-0000-0000-000000000009';
 
-  select coalesce(sum(pcn_count), 0) into aggregated from pcn_activity_aggregates
-  where authority_id = 'bbbbbbbb-0000-0000-0000-000000000009' and bucket_kind = 'MONTH';
+  select coalesce(sum(pcn_count), 0) into aggregated from pcn_activity_daily
+  where dataset_version_id = 'eeeeeeee-0000-0000-0000-000000000009';
 
-  assert events = aggregated,
-    format('Aggregates must reconcile with events: %s events vs %s aggregated', events, aggregated);
+  assert accepted = aggregated,
+    format('Aggregates must reconcile with the source: %s accepted vs %s aggregated',
+           accepted, aggregated);
+
+  -- The hour histograms are part of the same accounting: they may hold fewer
+  -- notices than the counts (untimed notices) but never more.
+  select coalesce(sum(h), 0) into histogrammed
+  from pcn_activity_daily d, unnest(d.hour_histogram) h
+  where d.dataset_version_id = 'eeeeeeee-0000-0000-0000-000000000009';
+
+  assert histogrammed <= aggregated,
+    format('Histograms hold %s notices but only %s were counted', histogrammed, aggregated);
 end;
 $$;
 

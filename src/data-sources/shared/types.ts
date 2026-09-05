@@ -97,12 +97,39 @@ export interface FetchResult {
   readonly contentHash: string;
   readonly retrievedAt: string;
   readonly sourceEffectiveDate: string | null;
+  /**
+   * Hash of the source's column set.
+   *
+   * Once raw notices are discarded, a source that quietly changes shape cannot
+   * be diagnosed after the fact from stored rows. Recording the shape each run
+   * saw makes the change visible instead of leaving it to be inferred from
+   * broken output.
+   */
+  readonly schemaFingerprint?: string | null;
+}
+
+/** One page of a streaming fetch. */
+export interface SourcePage {
+  readonly rows: readonly unknown[];
+  readonly pageIndex: number;
+  readonly retrievedAt: string;
+  readonly schemaFingerprint: string | null;
 }
 
 export interface IngestionAdapter {
   readonly descriptor: SourceDescriptor;
   /** Retrieves raw rows from the source. Throws on transport or schema failure. */
   fetch(options: { readonly since?: string; readonly limit?: number }): Promise<FetchResult>;
+  /**
+   * The same rows, a page at a time.
+   *
+   * Optional so a source that cannot page still satisfies the contract. The
+   * streaming ingestion prefers it and falls back to `fetch` when it is absent.
+   */
+  fetchPages?(options: {
+    readonly since?: string;
+    readonly limit?: number;
+  }): AsyncGenerator<SourcePage>;
   /** Validates and normalises one raw row. Never throws; failures are returned. */
   normalise(row: unknown, rowNumber: number): NormalisationResult;
 }

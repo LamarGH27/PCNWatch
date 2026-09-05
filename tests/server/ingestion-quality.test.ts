@@ -5,7 +5,7 @@ import {
   analyseQuality,
   evaluateQualityGate,
 } from '@/server/ingestion/postgres/quality';
-import { periodStartFor } from '@/server/ingestion/postgres/run';
+import { periodStartFor } from '@/server/ingestion/postgres/aggregate-run';
 import type { IngestionError, NormalisedPcnEvent } from '@/data-sources/shared/types';
 
 const KNOWN_CODES = new Set(['01', '12', '21']);
@@ -413,10 +413,20 @@ describe('period-scoped scoring windows', () => {
     expect(p90! > p12!).toBe(true);
   });
 
-  it('aligns to the start of a month, because aggregates are monthly buckets', () => {
-    for (const period of ['30D', '90D', '12M'] as const) {
-      expect(periodStartFor(period, '2026-09-04')!.endsWith('-01')).toBe(true);
-    }
+  it('covers exactly the requested number of days, not the enclosing months', () => {
+    // This used to round back to the first of a month, because aggregates were
+    // stored in monthly buckets and a window could not be finer than one. The
+    // daily model has no such constraint, so "the last 30 days" now means the
+    // last 30 days: a window that quietly reached back to the 1st of a month
+    // was answering a different question than the filter said it was.
+    const days = (from: string, to: string) =>
+      Math.round(
+        (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000,
+      ) + 1;
+
+    expect(days(periodStartFor('30D', '2026-09-04'), '2026-09-04')).toBe(30);
+    expect(days(periodStartFor('90D', '2026-09-04'), '2026-09-04')).toBe(90);
+    expect(days(periodStartFor('12M', '2026-09-04'), '2026-09-04')).toBe(365);
   });
 
   it('is deterministic for a given as-of date', () => {

@@ -24,7 +24,10 @@ import {
   camdenDatasetUrl,
 } from '../src/data-sources/camden/adapter';
 import { runIngestion } from '../src/data-sources/shared/pipeline';
-import { runCamdenIngestionJob, type IngestionJobResult } from '../src/server/ingestion/postgres/run';
+import {
+  runCamdenAggregateIngestion,
+  type AggregateIngestionResult,
+} from '../src/server/ingestion/postgres/aggregate-run';
 import {
   analyseQuality,
   evaluateQualityGate,
@@ -127,43 +130,36 @@ async function main(): Promise<void> {
       return;
     }
 
-    const result = await runCamdenIngestionJob(adapter, {
-      connectionString: databaseUrl as string,
+    const result = await runCamdenAggregateIngestion(adapter, {
+      databaseUrl: databaseUrl as string,
       authoritySlug: CAMDEN_AUTHORITY_SLUG,
       since: args.since,
       limit: args.limit,
       triggerSource: 'cli',
       isDemo,
+      sourceUrl: datasetUrl,
+      sourceDatasetId: datasetIdFromUrl(datasetUrl),
+      onProgress: ({ fetched, cells }) => {
+        process.stdout.write(
+          `\r  streaming… ${fetched.toLocaleString('en-GB')} rows read, ` +
+            `${cells.toLocaleString('en-GB')} aggregate cells held`,
+        );
+      },
     });
+    process.stdout.write('\n');
 
-    printReport(result, datasetUrl, { limit: args.limit });
+    printAggregateReport(result, datasetUrl, args.limit);
 
     if (result.status === 'FAILED') {
-      if (result.committed) {
-        // The write transaction committed and something after it failed —
-        // quality analysis, the aggregate rebuild or scoring. Claiming nothing
-        // was written would be the worst kind of wrong to be about a write.
-        console.error(
-          '\n✗ Ingestion failed AFTER the events were committed.\n' +
-            '  The PCN events are in the database. What follows them — aggregates and\n' +
-            '  Ticket Activity Scores — may be missing or stale, so the site could show\n' +
-            '  figures that do not match the events behind them. Re-run to rebuild them.\n',
-        );
-      } else {
-        console.error(
-          '\n✗ Ingestion failed. No data was written; previously ingested data is untouched.\n',
-        );
-      }
-      process.exit(1);
-    }
-    if (result.qualityGate && !result.qualityGate.pass) {
       console.error(
-        '\n✗ Data was ingested, but the quality gate did not pass. The figures above are\n' +
-          '  real, and are not good enough to present as enforcement intelligence yet.\n',
+        `\n✗ Ingestion failed (${result.fatalClassification}).\n` +
+          '  Nothing was published. The previously active dataset is untouched and the\n' +
+          '  site continues to serve it. The run is recorded as FAILED.\n',
       );
       process.exit(1);
     }
-    console.log('\n✓ Ingestion complete.\n');
+
+    console.log('\n✓ Ingestion complete and published.\n');
   } catch (error) {
     if (error instanceof CamdenFetchError) {
       console.error(`\n✗ Could not fetch the Camden dataset (${error.code}): ${error.message}\n`);
@@ -217,13 +213,17 @@ async function dryRun(
       durationMs: Date.now() - startedAt,
       isDemo: !isOfficialSource(datasetUrl),
       counters: {
-        ...result.report,
+        fetched: result.report.fetched,
+        accepted: result.report.accepted,
+        rejected: result.report.rejected,
         duplicatesInBatch: errors.filter((e) => e.errorCode === 'DUPLICATE_IN_BATCH').length,
+        geolocated: result.report.geolocated,
+        notGeolocated: result.report.notGeolocated,
+        errors: errors.length,
       },
       warningCounts: result.warningCounts,
       quality,
       qualityGate: gate,
-      scoreDistributions: [],
       fatalError: null,
     },
     datasetUrl,
@@ -238,8 +238,41 @@ async function dryRun(
 /* Reporting                                                           */
 /* ------------------------------------------------------------------ */
 
+/**
+ * What a dry run has to report.
+ *
+ * Declared here rather than imported: the only remaining caller is the dry run,
+ * which validates the source without a database, so the shape it needs is
+ * narrower than anything the ingestion job returns.
+ */
+interface DryRunReport {
+  readonly runId: string;
+  readonly status: string;
+  readonly message: string | null;
+  readonly sourceUrl: string;
+  readonly versionLabel: string;
+  readonly contentHash: string;
+  readonly retrievedAt: string;
+  readonly durationMs: number;
+  readonly isDemo: boolean;
+  readonly counters: {
+    readonly fetched: number;
+    readonly accepted: number;
+    readonly rejected: number;
+    readonly duplicatesInBatch: number;
+    readonly geolocated: number;
+    readonly notGeolocated: number;
+    readonly errors: number;
+  };
+  readonly warningCounts: Readonly<Record<string, number>>;
+  readonly quality: ReturnType<typeof analyseQuality> | null;
+  readonly qualityGate: ReturnType<typeof evaluateQualityGate> | null;
+  readonly fatalError: string | null;
+  readonly fatalStack?: string | null;
+}
+
 function printReport(
-  result: IngestionJobResult,
+  result: DryRunReport,
   datasetUrl: string,
   options: { dryRun?: boolean; limit?: number } = {},
 ): void {
@@ -260,13 +293,7 @@ function printReport(
   row('Rows fetched', c.fetched);
   row('Rows accepted', c.accepted);
   row('Rows rejected', c.rejected);
-  if (options.dryRun) {
-    row('Rows written', 'none — dry run, nothing compared against stored data');
-  } else {
-    row('Rows inserted', c.inserted);
-    row('Rows updated', c.updated);
-    row('Rows unchanged', c.unchanged);
-  }
+  row('Rows written', 'none — dry run, nothing compared against stored data');
   row('Duplicates in batch', c.duplicatesInBatch);
   row('Geolocated', c.geolocated);
   row('Not geolocated', c.notGeolocated);
@@ -355,24 +382,6 @@ function printReport(
     }
   }
 
-  if (result.scoreDistributions.length > 0) {
-    section('TICKET ACTIVITY SCORE DISTRIBUTION');
-    for (const d of result.scoreDistributions) {
-      console.log(`\n  Period ${d.periodKey}: ${d.scored} scored, ${d.refused} refused`);
-      if (d.scored > 0) {
-        console.log(
-          `    min ${d.min}  p25 ${d.p25}  median ${d.median}  p75 ${d.p75}  max ${d.max}  mean ${d.mean}`,
-        );
-        const bands = ['VERY_LOW', 'LOW', 'MODERATE', 'HIGH', 'VERY_HIGH'];
-        console.log(
-          '    ' + bands.map((b) => `${b.toLowerCase()}: ${d.byClassification[b] ?? 0}`).join('  '),
-        );
-      }
-      for (const [reason, count] of Object.entries(d.refusalsByReason)) {
-        console.log(`    refused — ${reason}: ${count}`);
-      }
-    }
-  }
 
   if (q && q.warnings.length > 0) {
     section('WARNINGS');
@@ -398,6 +407,80 @@ function printReport(
         console.log(`  ${line.trim()}`);
       }
     }
+  }
+}
+
+/** The four-by-four dataset id inside a Socrata URL, for the run's provenance. */
+function datasetIdFromUrl(url: string): string | null {
+  return /\/resource\/([a-z0-9]{4}-[a-z0-9]{4})\./i.exec(url)?.[1] ?? null;
+}
+
+function printAggregateReport(
+  result: AggregateIngestionResult,
+  datasetUrl: string,
+  limit: number | undefined,
+): void {
+  const c = result.counters;
+
+  section('SOURCE');
+  row('URL', datasetUrl);
+  row('Dataset id', datasetIdFromUrl(datasetUrl) ?? '(not a Socrata URL)');
+  row('Official source', isOfficialSource(datasetUrl) ? 'yes' : 'NO — recorded as DEMO');
+  row('Run id', result.runId || '(not started)');
+  row('Dataset version', result.datasetVersionId ?? '(none)');
+  row('Status', result.status);
+  row('Published', result.published ? 'yes — this version is now live' : 'no');
+  row('Duration', `${(result.durationMs / 1000).toFixed(1)}s`);
+
+  section('INGESTION');
+  row('Rows fetched', c.fetched);
+  row('Rows accepted', c.accepted);
+  row('Rows rejected', c.rejected);
+  row('Aggregate rows written', c.aggregateRows);
+  row('Locations', c.locations);
+  row('Locations with a position', c.geolocatedLocations);
+  if (c.aggregateRows > 0) {
+    row('PCNs per aggregate row', (c.accepted / c.aggregateRows).toFixed(1));
+  }
+
+  if (result.reconciliation) {
+    const r = result.reconciliation;
+    section('RECONCILIATION');
+    row('Accepted from source', r.acceptedFromSource);
+    row('Sum of stored counts', r.aggregateTotal);
+    row('Difference', r.difference);
+    row('Result', r.reconciles ? '✓ every accepted notice is counted exactly once' : '✗ DOES NOT RECONCILE');
+    // Notices with no time of day are counted but contribute to no hour, so the
+    // histogram total is expected to be at most the aggregate total.
+    row('Sum of hour histograms', `${r.histogramTotal} (notices with a recorded time)`);
+  }
+
+  if (Object.keys(result.classificationCounts).length > 0) {
+    section('ENFORCEMENT CLASS');
+    for (const [cls, n] of Object.entries(result.classificationCounts).sort((a, b) => b[1] - a[1])) {
+      row(cls, n);
+    }
+  }
+
+  if (result.scoreDistributions.length > 0) {
+    section('TICKET ACTIVITY SCORE');
+    for (const d of result.scoreDistributions) {
+      row(`Period ${d.periodKey}`, `${d.scored} scored, ${d.refused} refused`);
+    }
+  }
+
+  if (limit !== undefined) {
+    section('READ THIS BEFORE TRUSTING THE DISTRIBUTIONS ABOVE');
+    console.log(
+      `  --limit ${limit} took the FIRST ${limit} rows in the source's own order, not a\n` +
+        '  random sample. Only a full run gives real proportions.',
+    );
+  }
+
+  if (result.fatalError) {
+    section('FATAL ERROR');
+    row('Classification', result.fatalClassification ?? 'UNEXPECTED');
+    console.log(`  ${result.fatalError}`);
   }
 }
 

@@ -10,10 +10,12 @@ import {
   slugify,
   contentHash,
 } from '../shared/normalise';
+import { createHash } from 'node:crypto';
 import { sanitiseErrorExcerpt, sanitiseSourceMetadata } from '../shared/pii';
 import type {
   FetchResult,
   IngestionAdapter,
+  SourcePage,
   NormalisationResult,
   SourceDescriptor,
 } from '../shared/types';
@@ -36,6 +38,18 @@ import {
   resolvePoint,
   type RawRow,
 } from './schema';
+
+/**
+ * A stable hash of a row's column names.
+ *
+ * With raw notices discarded, this is what lets a later investigation say "the
+ * source presented these columns on that run" without keeping the rows.
+ */
+export function fingerprintColumns(row: unknown): string | null {
+  if (typeof row !== 'object' || row === null) return null;
+  const columns = Object.keys(row as Record<string, unknown>).sort();
+  return createHash('sha256').update(columns.join(',')).digest('hex').slice(0, 16);
+}
 
 export const CAMDEN_AUTHORITY_SLUG = 'camden';
 
@@ -125,7 +139,20 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
   return {
     descriptor: CAMDEN_SOURCE,
 
-    async fetch({ since, limit }): Promise<FetchResult> {
+    /**
+     * Pages, one at a time.
+     *
+     * The streaming ingestion counts each page and drops it, so the whole
+     * dataset never sits in memory at once. `fetch` below is the same loop with
+     * the pages collected, kept for the probe and for tests that want the lot.
+     */
+    async *fetchPages({
+      since,
+      limit,
+    }: {
+      readonly since?: string;
+      readonly limit?: number;
+    }): AsyncGenerator<SourcePage> {
       const { datasetUrl } = options;
       if (!datasetUrl) {
         // The correct boundary when a source is not configured: refuse loudly.
@@ -138,8 +165,10 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
       }
 
       const doFetch = options.fetchImpl ?? fetch;
-      const rows: unknown[] = [];
       const retrievedAt = new Date().toISOString();
+      let fetchedSoFar = 0;
+      const runningHash = createHash('sha256');
+      let schemaFingerprint: string | null = null;
       let offset = 0;
       let previousPageFingerprint: string | null = null;
       let exhaustedPageBudget = true;
@@ -183,7 +212,7 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
         }
 
         if (options.onProgress && page > 0) {
-          options.onProgress({ page, rowsSoFar: rows.length });
+          options.onProgress({ page, rowsSoFar: fetchedSoFar });
         }
 
         let payload: unknown;
@@ -219,15 +248,26 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
         }
         previousPageFingerprint = pageFingerprint;
 
-        // `push(...payload)` passes every row as a separate argument, which
-        // overflows the call stack on a large page. A loop has no such ceiling.
-        for (const row of payload) rows.push(row);
+        // The content hash is fed page by page so it never needs the whole
+        // payload as one string, and the column set of the first page is kept
+        // as a fingerprint so a source that changes shape is visible after the
+        // fact rather than inferred from broken output.
+        runningHash.update(pageFingerprint);
+        if (schemaFingerprint === null && payload.length > 0) {
+          schemaFingerprint = fingerprintColumns(payload[0]);
+        }
+
+        const remaining = limit === undefined ? payload.length : limit - fetchedSoFar;
+        const rows = remaining < payload.length ? payload.slice(0, remaining) : payload;
+        fetchedSoFar += rows.length;
+
+        yield { rows, pageIndex: page, retrievedAt, schemaFingerprint };
 
         if (payload.length < pageSize) {
           exhaustedPageBudget = false;
           break;
         }
-        if (limit !== undefined && rows.length >= limit) {
+        if (limit !== undefined && fetchedSoFar >= limit) {
           exhaustedPageBudget = false;
           break;
         }
@@ -240,24 +280,38 @@ export function createCamdenAdapter(options: CamdenAdapterOptions = {}): Ingesti
       // the site reports the result as current. Refuse instead.
       if (exhaustedPageBudget && limit === undefined) {
         throw new CamdenFetchError(
-          `Fetched ${rows.length} rows across ${maxPages} pages without reaching the end of the ` +
+          `Fetched ${fetchedSoFar} rows across ${maxPages} pages without reaching the end of the ` +
             'dataset, so this is a truncated copy of it. Ingesting it would rebuild every ' +
             'aggregate over the part that happened to arrive and present the result as current. ' +
             'Narrow the run with --since, or raise maxPages if the machine has the memory for it.',
           'PAGE_BUDGET_EXHAUSTED',
-          { rows: rows.length, maxPages, pageSize },
+          { rows: fetchedSoFar, maxPages, pageSize },
         );
       }
+    },
 
-      const finalRows = limit === undefined ? rows : rows.slice(0, limit);
-      const hash = contentHash(finalRows);
+    /** Every page, collected. Used by the probe and by tests. */
+    async fetch(fetchOptions): Promise<FetchResult> {
+      const rows: unknown[] = [];
+      const hash = createHash('sha256');
+      let retrievedAt = new Date().toISOString();
+      let schemaFingerprint: string | null = null;
 
+      for await (const page of this.fetchPages!(fetchOptions)) {
+        for (const row of page.rows) rows.push(row);
+        retrievedAt = page.retrievedAt;
+        schemaFingerprint ??= page.schemaFingerprint;
+        hash.update(contentHash(page.rows));
+      }
+
+      const contentDigest = hash.digest('hex');
       return {
-        rows: finalRows,
-        versionLabel: `${retrievedAt.slice(0, 10)}-${hash.slice(0, 12)}`,
-        contentHash: hash,
+        rows,
+        versionLabel: `${retrievedAt.slice(0, 10)}-${contentDigest.slice(0, 12)}`,
+        contentHash: contentDigest,
         retrievedAt,
         sourceEffectiveDate: null,
+        schemaFingerprint,
       };
     },
 

@@ -1,7 +1,12 @@
 -- Aggregation function tests.
 --
--- Inserts a small, known set of PCN events and asserts that the aggregate and
--- query functions return exactly what the data says — no more, no less.
+-- Inserts a small, known set of enforcement activity and asserts that the query
+-- functions return exactly what the data says — no more, no less.
+--
+-- The fixture now seeds `pcn_activity_daily` under an ACTIVE dataset version
+-- rather than seeding `pcn_events` and rebuilding from it: production no longer
+-- stores a row per notice, so a suite that started from notices would be
+-- testing a path the product does not use. Every assertion below is unchanged.
 
 \set ON_ERROR_STOP on
 
@@ -28,66 +33,53 @@ values
    'unknown-place', 'Unknown Place', 'Unknown Place', 'unknown place',
    null, 'aaaaaaaa-0000-0000-0000-000000000001', 0.30, now());
 
--- 30 events on Eversholt Street, 10 on Camden High Street, 5 with no geometry.
-insert into pcn_events (
-  authority_id, parking_location_id, contravention_code, issued_date, issued_hour,
-  issued_day_of_week, geom, source_id, source_record_id, retrieved_at, data_confidence, row_hash
-)
-select
-  'bbbbbbbb-0000-0000-0000-000000000001',
-  'cccccccc-0000-0000-0000-000000000001',
-  case when i % 3 = 0 then '12' else '01' end,
-  (current_date - (i % 60))::date,
-  9,
-  3,
-  st_point(-0.1338, 51.5305)::geography,
-  'aaaaaaaa-0000-0000-0000-000000000001',
-  'EV-' || i,
-  now(),
-  0.90,
-  md5('EV-' || i)
-from generate_series(1, 30) i;
+-- 30 notices on Eversholt Street, 10 on Camden High Street, 5 with no geometry.
+insert into enforcement_dataset_versions (id, authority_id, source_id, status, activated_at, rows_accepted)
+values ('ffffffff-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000001',
+        'aaaaaaaa-0000-0000-0000-000000000001', 'ACTIVE', now(), 45);
 
-insert into pcn_events (
-  authority_id, parking_location_id, contravention_code, issued_date, issued_hour,
-  issued_day_of_week, geom, source_id, source_record_id, retrieved_at, data_confidence, row_hash
-)
-select
-  'bbbbbbbb-0000-0000-0000-000000000001',
-  'cccccccc-0000-0000-0000-000000000002',
-  '21',
-  (current_date - (i % 60))::date,
-  14,
-  5,
-  st_point(-0.1426, 51.5390)::geography,
-  'aaaaaaaa-0000-0000-0000-000000000001',
-  'CH-' || i,
-  now(),
-  0.90,
-  md5('CH-' || i)
-from generate_series(1, 10) i;
+-- Eversholt Street: 20 under code 01 and 10 under 12, all at 09:00, so the
+-- dominant code and the peak window are both known exactly.
+insert into pcn_activity_daily (dataset_version_id, parking_location_id,
+  activity_date, contravention_code, enforcement_class, pcn_count, hour_histogram, data_confidence)
+select 'ffffffff-0000-0000-0000-000000000001',
+       'cccccccc-0000-0000-0000-000000000001',
+       (current_date - (i % 60))::date,
+       case when i % 3 = 0 then '12' else '01' end,
+       'PARKING', 1,
+       (select array_agg(case when h = 10 then 1 else 0 end::smallint order by h)
+          from generate_series(1, 24) h),
+       0.90
+from generate_series(1, 30) i
+on conflict (dataset_version_id, parking_location_id, activity_date, contravention_code, enforcement_class)
+do update set pcn_count = pcn_activity_daily.pcn_count + excluded.pcn_count,
+              hour_histogram = pcnwatch_add_histograms(pcn_activity_daily.hour_histogram, excluded.hour_histogram);
 
-insert into pcn_events (
-  authority_id, parking_location_id, contravention_code, issued_date,
-  source_id, source_record_id, retrieved_at, data_confidence, row_hash
-)
-select
-  'bbbbbbbb-0000-0000-0000-000000000001',
-  'cccccccc-0000-0000-0000-000000000003',
-  '24',
-  (current_date - i)::date,
-  'aaaaaaaa-0000-0000-0000-000000000001',
-  'NG-' || i,
-  now(),
-  0.30,
-  md5('NG-' || i)
+insert into pcn_activity_daily (dataset_version_id, parking_location_id,
+  activity_date, contravention_code, enforcement_class, pcn_count, hour_histogram, data_confidence)
+select 'ffffffff-0000-0000-0000-000000000001',
+       'cccccccc-0000-0000-0000-000000000002',
+       (current_date - (i % 60))::date, '21', 'PARKING', 1,
+       (select array_agg(case when h = 15 then 1 else 0 end::smallint order by h)
+          from generate_series(1, 24) h),
+       0.90
+from generate_series(1, 10) i
+on conflict (dataset_version_id, parking_location_id, activity_date, contravention_code, enforcement_class)
+do update set pcn_count = pcn_activity_daily.pcn_count + excluded.pcn_count,
+              hour_histogram = pcnwatch_add_histograms(pcn_activity_daily.hour_histogram, excluded.hour_histogram);
+
+-- No geometry, and no recorded time: must never appear on the map, and must not
+-- contribute to an hour profile.
+insert into pcn_activity_daily (dataset_version_id, parking_location_id,
+  activity_date, contravention_code, enforcement_class, pcn_count, data_confidence)
+select 'ffffffff-0000-0000-0000-000000000001',
+       'cccccccc-0000-0000-0000-000000000003',
+       (current_date - i)::date, '24', 'PARKING', 1, 0.30
 from generate_series(1, 5) i;
 
 -- ---------------------------------------------------------------------------
--- 1. Rebuilding aggregates reproduces the event counts exactly.
+-- 1. The stored aggregate reproduces the notice counts exactly.
 -- ---------------------------------------------------------------------------
-
-select pcnwatch_rebuild_aggregates('bbbbbbbb-0000-0000-0000-000000000001');
 
 do $$
 declare
@@ -95,33 +87,61 @@ declare
   ev_total integer;
 begin
   select sum(pcn_count) into total
-  from pcn_activity_aggregates
-  where bucket_kind = 'MONTH';
-  select count(*) into ev_total from pcn_events;
+  from pcn_activity_daily
+  where dataset_version_id = pcnwatch_active_version('camden');
+  ev_total := 45;
   assert total = ev_total,
     format('Monthly aggregates total %s but there are %s events', total, ev_total);
 
-  select sum(pcn_count) into total
-  from pcn_activity_aggregates where bucket_kind = 'HOUR';
-  -- Only the 40 events that carry an hour.
+  -- The hour histograms carry only the 40 notices that recorded a time; the
+  -- five untimed ones are counted but contribute no hour.
+  select coalesce(sum(h), 0) into total
+  from pcn_activity_daily d, unnest(d.hour_histogram) h
+  where d.dataset_version_id = pcnwatch_active_version('camden');
   assert total = 40, format('Hour profile should cover 40 events, got %s', total);
 end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 2. Rebuilding is idempotent.
+-- 2. Re-ingesting the same source is idempotent.
+--
+-- Aggregate rows accumulate on conflict, so a refresh that wrote into the live
+-- dataset would double every count. A refresh instead builds a new version and
+-- swaps it in, which is what makes repeated ingestion safe.
 -- ---------------------------------------------------------------------------
 
 do $$
 declare
-  first_count integer;
-  second_count integer;
+  before_total integer;
+  after_total  integer;
+  rebuilt      uuid;
 begin
-  select count(*) into first_count from pcn_activity_aggregates;
-  perform pcnwatch_rebuild_aggregates('bbbbbbbb-0000-0000-0000-000000000001');
-  select count(*) into second_count from pcn_activity_aggregates;
-  assert first_count = second_count,
-    format('Rebuild is not idempotent: %s then %s rows', first_count, second_count);
+  select sum(pcn_count) into before_total from pcn_activity_daily
+   where dataset_version_id = pcnwatch_active_version('camden');
+
+  insert into enforcement_dataset_versions (authority_id, source_id, status, rows_accepted)
+  values ('bbbbbbbb-0000-0000-0000-000000000001',
+          'aaaaaaaa-0000-0000-0000-000000000001', 'BUILDING', 45)
+  returning id into rebuilt;
+
+  insert into pcn_activity_daily (dataset_version_id, parking_location_id,
+    activity_date, contravention_code, enforcement_class, pcn_count, hour_histogram, data_confidence)
+  select rebuilt, d.parking_location_id, d.activity_date, d.contravention_code,
+         d.enforcement_class, d.pcn_count, d.hour_histogram, d.data_confidence
+  from pcn_activity_daily d
+  where d.dataset_version_id = pcnwatch_active_version('camden');
+
+  update enforcement_dataset_versions set status = 'SUPERSEDED'
+   where authority_id = 'bbbbbbbb-0000-0000-0000-000000000001' and status = 'ACTIVE';
+  update enforcement_dataset_versions set status = 'ACTIVE', activated_at = now()
+   where id = rebuilt;
+
+  select sum(pcn_count) into after_total from pcn_activity_daily
+   where dataset_version_id = pcnwatch_active_version('camden');
+
+  assert after_total = before_total,
+    format('Re-ingesting the same source changed the visible total: %s then %s',
+           before_total, after_total);
 end;
 $$;
 

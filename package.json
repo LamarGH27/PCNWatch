@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:db": "vitest run --config vitest.integration.config.ts",
     "ingest:camden": "tsx scripts/ingest-camden.ts",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
     "db:test": "scripts/db-test.sh",

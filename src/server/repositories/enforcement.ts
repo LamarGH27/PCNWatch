@@ -98,50 +98,31 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
     });
   }
 
+  // Counts come from the active dataset version, not from a table of individual
+  // notices: production no longer stores one row per PCN.
   const result = await queryRows<{
     name: string;
     map_coverage_status: string;
     event_count: string;
-    geolocated_location_count: string;
     geolocated_event_count: string;
     mapped_event_count: string;
+    geolocated_location_count: string;
     last_ingested_at: string | null;
     is_demo: boolean | null;
   }>(
     `select
        a.name,
        a.map_coverage_status,
-       (select count(*) from pcn_events e where e.authority_id = a.id)::text as event_count,
-       -- Whether anything can be drawn at all. A source that publishes no
-       -- coordinates yields locations with counts and no geometry, and the map
-       -- must say that rather than "no recorded PCNs".
-       (select count(*) from parking_locations l
-         where l.authority_id = a.id and l.geom is not null)::text
-         as geolocated_location_count,
-       -- Notices the authority published a position for, counted on the event's
-       -- own geometry rather than its street's.
-       --
-       -- The distinction is the whole point. A street gets its position from one
-       -- representative notice, and the map then shows every notice on that
-       -- street at that one point — so counting events whose *location* has
-       -- geometry reports 100% while most of those notices have no position of
-       -- their own. That would state the opposite of the truth.
-       (select count(*) from pcn_events e
-         where e.authority_id = a.id and e.geom is not null)::text
-         as geolocated_event_count,
-       -- Notices that actually appear on the map: every notice on a street the
-       -- authority positioned, including those with no position of their own.
-       -- A different number from the one above, and both are needed — one says
-       -- how much of the activity is visible, the other how precisely.
-       (select count(*) from pcn_events e
-          join parking_locations l on l.id = e.parking_location_id
-         where e.authority_id = a.id and l.geom is not null)::text
-         as mapped_event_count,
-       run.finished_at as last_ingested_at,
-       (run.report ->> 'demo')::boolean as is_demo
+       c.event_count::text,
+       c.geolocated_event_count::text,
+       c.mapped_event_count::text,
+       c.geolocated_location_count::text,
+       coalesce(c.source_fetched_at, run.finished_at) as last_ingested_at,
+       c.is_demo
      from authorities a
+     cross join lateral pcnwatch_coverage_counts(a.slug) c
      left join lateral (
-       select r.finished_at, r.report
+       select r.finished_at
        from ingestion_runs r
        where r.status in ('SUCCEEDED', 'PARTIAL')
          and r.report ->> 'authorityId' = a.id::text
@@ -215,15 +196,7 @@ export async function getContraventionFilters(
   limit = 16,
 ): Promise<readonly ContraventionFilter[]> {
   const result = await queryRows<{ contravention_code: string; pcn_count: string }>(
-    `select a.contravention_code, sum(a.pcn_count)::text as pcn_count
-       from pcn_activity_aggregates a
-       join authorities auth on auth.id = a.authority_id
-      where auth.slug = $1
-        and a.bucket_kind = 'MONTH_CODE'
-        and a.contravention_code is not null
-      group by a.contravention_code
-      order by sum(a.pcn_count) desc, a.contravention_code
-      limit $2`,
+    'select * from pcnwatch_contravention_filters($1, $2)',
     [authoritySlug, limit],
   );
 
