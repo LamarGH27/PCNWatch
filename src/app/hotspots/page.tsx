@@ -1,8 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { COVERAGE_SCOPE } from '@/core/coverage/coverage';
-import { getCoverage, getHotspots, type HotspotRow } from '@/server/repositories/enforcement';
+import { getCoverage, getHotspots, type HotspotRow,
+  getContraventionFilters,
+  type ContraventionFilter,
+} from '@/server/repositories/enforcement';
 import { getContravention } from '@/core/reference/store';
+import { getAuthorityLabels } from '@/server/repositories/contravention-labels';
 import {
   Card,
   CoverageNotice,
@@ -41,6 +45,10 @@ export default async function HotspotsPage({
   const contravention = parseCode(params.code);
 
   const coverage = await getCoverage(AUTHORITY);
+  const [contraventionFilters, authorityLabels] = await Promise.all([
+    getContraventionFilters(AUTHORITY),
+    getAuthorityLabels(AUTHORITY),
+  ]);
   const hotspots = coverage.canShowActivity
     ? await getHotspots({ authoritySlug: AUTHORITY, periodKey: period, contraventionCode: contravention })
     : null;
@@ -67,7 +75,7 @@ export default async function HotspotsPage({
         <CoverageNotice coverage={coverage} />
       </div>
 
-      <Filters period={period} code={contravention} />
+      <Filters period={period} code={contravention} available={contraventionFilters} labels={authorityLabels} />
 
       <div style={{ marginTop: 24 }}>
         {!coverage.canShowActivity ? (
@@ -111,8 +119,19 @@ export default async function HotspotsPage({
   );
 }
 
-function Filters({ period, code }: { period: Period; code?: string }) {
-  const codes = ['01', '02', '12', '21', '23', '24', '30', '40', '45', '46', '47', '99'];
+function Filters({
+  period,
+  code,
+  available,
+  labels,
+}: {
+  period: Period;
+  code?: string;
+  /** Codes actually present in this authority's data, most common first. */
+  available: readonly ContraventionFilter[];
+  labels: ReadonlyMap<string, string>;
+}) {
+  const codes = available.map((c) => c.code);
   const href = (nextPeriod: Period, nextCode?: string) => {
     const params = new URLSearchParams({ period: nextPeriod });
     if (nextCode) params.set('code', nextCode);
@@ -149,6 +168,12 @@ function Filters({ period, code }: { period: Period; code?: string }) {
         </div>
       </div>
 
+      {/*
+        Hidden entirely when we know of no codes. An empty filter row invites a
+        click that cannot do anything, and a filter is only honest when every
+        option it offers leads somewhere.
+      */}
+      {codes.length > 0 && (
       <div style={{ minWidth: 0 }}>
         <div className="fr-eyebrow" style={{ marginBottom: 7 }}>
           Contravention
@@ -162,14 +187,27 @@ function Filters({ period, code }: { period: Period; code?: string }) {
             >
               All
             </Link>
-            {codes.map((value) => (
-              <Link key={value} href={href(period, value)} className="fr-touch" style={chipStyle(code === value)}>
-                {value}
-              </Link>
-            ))}
+            {codes.map((value) => {
+              const label = labels.get(value);
+              const count = available.find((c) => c.code === value)?.pcnCount ?? 0;
+              return (
+                <Link
+                  key={value}
+                  href={href(period, value)}
+                  className="fr-touch"
+                  style={chipStyle(code === value)}
+                  // Every chip here is a code the authority has actually issued
+                  // notices under, so the hover says which and how many.
+                  title={`${label ?? `Contravention ${value}`} — ${count.toLocaleString('en-GB')} notices`}
+                >
+                  {value}
+                </Link>
+              );
+            })}
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

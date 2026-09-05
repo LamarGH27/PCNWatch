@@ -192,6 +192,53 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
   });
 }
 
+export interface ContraventionFilter {
+  readonly code: string;
+  readonly pcnCount: number;
+}
+
+/**
+ * The contravention codes that actually appear in an authority's data, most
+ * common first.
+ *
+ * The filter used to be a hardcoded list of twelve codes. Against real Camden
+ * data that offered six codes the borough may never have issued — clicking one
+ * showed an empty ranking, which reads as "no enforcement here" rather than
+ * "that code is not in this data" — while hiding three of the four most common
+ * ones, including 33, 11 and 52 with roughly 75,000 notices each.
+ *
+ * Read from the monthly code buckets rather than counted over events: the
+ * aggregate is small and already maintained for exactly this shape of question.
+ */
+export async function getContraventionFilters(
+  authoritySlug: string,
+  limit = 16,
+): Promise<readonly ContraventionFilter[]> {
+  const result = await queryRows<{ contravention_code: string; pcn_count: string }>(
+    `select a.contravention_code, sum(a.pcn_count)::text as pcn_count
+       from pcn_activity_aggregates a
+       join authorities auth on auth.id = a.authority_id
+      where auth.slug = $1
+        and a.bucket_kind = 'MONTH_CODE'
+        and a.contravention_code is not null
+      group by a.contravention_code
+      order by sum(a.pcn_count) desc, a.contravention_code
+      limit $2`,
+    [authoritySlug, limit],
+  );
+
+  if (!result.ok) {
+    // No filter is better than a filter that lies about what is available.
+    logError('enforcement.getContraventionFilters', new Error(result.reason), { authoritySlug });
+    return [];
+  }
+
+  return result.rows.map((row) => ({
+    code: row.contravention_code,
+    pcnCount: Number(row.pcn_count),
+  }));
+}
+
 export interface HotspotQuery {
   readonly authoritySlug: string;
   readonly periodKey: '30D' | '90D' | '12M';

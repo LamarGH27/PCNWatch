@@ -144,3 +144,25 @@ describe('routes that read live data are not prerendered', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * A filter may only offer options that exist in the data.
+ *
+ * The contravention filter on /hotspots was a hardcoded list of twelve codes.
+ * Against real Camden data it offered six the borough may never have issued —
+ * clicking one showed an empty ranking, which reads as "no enforcement here"
+ * rather than "that code is not in this data" — while hiding three of the four
+ * most common, including two with roughly 75,000 notices each.
+ */
+describe('filters offer only what the data contains', () => {
+  it('builds the contravention filter from the database, not a literal', () => {
+    const source = readFileSync(resolve(ROOT, 'src/app/hotspots/page.tsx'), 'utf8');
+
+    // A literal array of two-digit strings is the shape the old bug had.
+    const hardcodedCodeList = /\[\s*'\d{2}'\s*,\s*'\d{2}'/.test(source);
+    expect(hardcodedCodeList, 'contravention codes must come from the data, not a literal list').toBe(
+      false,
+    );
+    expect(source).toContain('getContraventionFilters');
+  });
+});
