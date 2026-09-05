@@ -28,10 +28,13 @@ rather than left to be assumed:
   `REPRESENTATIVE_EVENT`, precision `STREET`, and the notice it came from), and
   the map says positions are street-level and what share of notices carry one of
   their own.
-- The count of notices carrying their own position is taken from `pcn_events.geom`,
-  never from whether their street has geometry. The second reports 100% as soon
-  as one notice on a street has a coordinate, which would state the opposite of
-  the truth.
+- Two shares are carried, and quoting either alone misdescribes the map. **How
+  much is visible** — notices on a street the authority positioned, which
+  includes notices with no position of their own — comes from joining events to
+  located streets. **How precisely it is placed** comes from `pcn_events.geom`,
+  never from whether a street has geometry: that reports 100% as soon as one
+  notice on a street has a coordinate, which would state the opposite of the
+  truth. The map states both.
 - Hotspot ranking uses every notice, geolocated or not — ranking is not mapping.
 
 ## The separation

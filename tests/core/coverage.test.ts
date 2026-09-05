@@ -13,6 +13,7 @@ function evidence(overrides: Partial<CoverageEvidence> = {}): CoverageEvidence {
     eventCount: 5000,
     geolocatedLocationCount: 400,
     geolocatedEventCount: 5000,
+    mappedEventCount: 5000,
     lastSuccessfulIngestionAt: '2026-01-14T03:00:00.000Z',
     sourceUnavailable: false,
     isDemoData: false,
@@ -100,6 +101,21 @@ describe('coverage', () => {
 });
 
 describe('geography a source does not publish', () => {
+  it('separates what the map shows from what carries its own position', () => {
+    // The map draws every notice on a street the authority positioned, so a
+    // notice with no position of its own still appears — at its street's point.
+    // One number says how much activity is visible, the other how precisely it
+    // is placed, and quoting either alone misdescribes the map.
+    const c = assessCoverage(
+      'camden',
+      'Camden',
+      evidence({ eventCount: 900_000, geolocatedEventCount: 300_000, mappedEventCount: 810_000 }),
+    );
+    expect(c.mappableEventShare).toBeCloseTo(1 / 3, 5);
+    expect(c.mappedEventShare).toBeCloseTo(0.9, 5);
+    expect(c.mappedEventShare!).toBeGreaterThan(c.mappableEventShare!);
+  });
+
   it('reports the share of notices that can actually be drawn', () => {
     // Camden publishes coordinates for roughly a third of its notices. A map of
     // that third is true about every point it shows and silent about the rest,
@@ -107,7 +123,12 @@ describe('geography a source does not publish', () => {
     const partial = assessCoverage(
       'camden',
       'Camden',
-      evidence({ eventCount: 900_000, geolocatedEventCount: 300_000, geolocatedLocationCount: 400 }),
+      evidence({
+        eventCount: 900_000,
+        geolocatedEventCount: 300_000,
+        mappedEventCount: 810_000,
+        geolocatedLocationCount: 400,
+      }),
     );
     expect(partial.hasMappableGeography).toBe(true);
     expect(partial.mappableEventShare).toBeCloseTo(1 / 3, 5);
@@ -127,7 +148,7 @@ describe('geography a source does not publish', () => {
     const result = assessCoverage(
       'camden',
       'Camden',
-      evidence({ geolocatedLocationCount: 0, geolocatedEventCount: 0 }),
+      evidence({ geolocatedLocationCount: 0, geolocatedEventCount: 0, mappedEventCount: 0 }),
     );
     expect(result.canShowActivity).toBe(true);
     expect(result.hasMappableGeography).toBe(false);

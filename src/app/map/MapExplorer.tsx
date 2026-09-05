@@ -65,6 +65,7 @@ export function MapExplorer({
   coverageDetail,
   hasMappableGeography,
   mappableEventShare,
+  mappedEventShare,
 }: {
   authoritySlug: string;
   canShowActivity: boolean;
@@ -72,8 +73,10 @@ export function MapExplorer({
   coverageDetail: string;
   /** False when the authority publishes enforcement records without positions. */
   hasMappableGeography: boolean;
-  /** Share of recorded notices that can be placed, 0–1, or null when none are. */
+  /** Share of recorded notices carrying a position of their own, 0–1. */
   mappableEventShare: number | null;
+  /** Share of recorded notices that appear on the map at all, 0–1. */
+  mappedEventShare: number | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -517,11 +520,26 @@ export function MapExplorer({
           mappableEventShare !== null &&
           mappableEventShare < 0.99 && (
             <StatusPill>
-              Positions are street-level. Every notice on a street is drawn at one point on that
-              street, taken from a notice the authority did publish coordinates for — not at the
-              place each notice was issued.{' '}
-              <span className="fr-numeric">{Math.round(mappableEventShare * 100)}%</span> of recorded
-              notices carry a position of their own.
+              {/*
+                Two different shares, and quoting either alone misdescribes the
+                map. The first says how much of the activity is visible; the
+                second how precisely it is placed.
+              */}
+              {mappedEventShare !== null && (
+                <>
+                  This map shows the{' '}
+                  <span className="fr-numeric">{Math.round(mappedEventShare * 100)}%</span> of
+                  recorded notices that are on a street the authority gave a position for.{' '}
+                </>
+              )}
+              Positions are street-level: every notice on a street is drawn at one point on it, not
+              where each notice was issued —{' '}
+              <span className="fr-numeric">{Math.round(mappableEventShare * 100)}%</span> carry a
+              position of their own.{' '}
+              <Link href="/hotspots" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                Hotspots
+              </Link>{' '}
+              ranks every notice by street.
             </StatusPill>
           )}
       </div>

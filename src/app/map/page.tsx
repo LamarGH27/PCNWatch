@@ -70,6 +70,7 @@ export default async function MapPage() {
         coverageDetail={coverage.detail}
         hasMappableGeography={coverage.hasMappableGeography}
         mappableEventShare={coverage.mappableEventShare}
+        mappedEventShare={coverage.mappedEventShare}
       />
     </div>
   );
