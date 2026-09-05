@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PLACEHOLDER_COORDINATE_STREETS,
   QUALITY_THRESHOLDS,
   analyseQuality,
   evaluateQualityGate,
@@ -308,29 +309,29 @@ describe('a point that cannot be a real position', () => {
   // genuinely hot spot — a bus gate camera issuing thousands from one position —
   // or a placeholder the publisher uses when it does not know where something
   // happened. Identical in a count, completely different on a map.
-  it('flags one coordinate shared by several streets as a placeholder', () => {
-    const events = [
-      ...Array.from({ length: 300 }, (_, i) =>
-        event({
-          sourceRecordId: `A${i}`,
-          rowHash: `a${i}`,
-          streetName: 'Eversholt Street',
-          locationSlug: 'eversholt-street',
-        }),
+  it('does not flag a junction, where a few named approaches share a camera', () => {
+    // Camden names locations by junction, so two or three streets at one point
+    // is ordinary. The live data has 4,737 notices on one coordinate across two
+    // streets; calling that a placeholder would discard real positions.
+    const events = ['eversholt-street', 'judd-street'].flatMap((slug, s) =>
+      Array.from({ length: 300 }, (_, i) =>
+        event({ sourceRecordId: `${s}-${i}`, rowHash: `${s}-${i}`, locationSlug: slug }),
       ),
-      ...Array.from({ length: 300 }, (_, i) =>
-        event({
-          sourceRecordId: `B${i}`,
-          rowHash: `b${i}`,
-          streetName: 'Judd Street',
-          locationSlug: 'judd-street',
-        }),
-      ),
-    ];
+    );
     const q = analyseQuality(events, [], KNOWN_CODES, TODAY);
-    expect(q.location.largestCoordinateCluster).toBe(600);
     expect(q.location.largestClusterLocations).toBe(2);
-    expect(q.warnings.join(' ')).toMatch(/probably a placeholder/);
+    expect(q.warnings.join(' ')).not.toMatch(/placeholder|publisher uses/);
+  });
+
+  it('flags one coordinate shared by more streets than a junction has', () => {
+    const events = Array.from({ length: PLACEHOLDER_COORDINATE_STREETS }, (_, s) =>
+      Array.from({ length: 150 }, (_, i) =>
+        event({ sourceRecordId: `${s}-${i}`, rowHash: `${s}-${i}`, locationSlug: `street-${s}` }),
+      ),
+    ).flat();
+    const q = analyseQuality(events, [], KNOWN_CODES, TODAY);
+    expect(q.location.largestClusterLocations).toBe(PLACEHOLDER_COORDINATE_STREETS);
+    expect(q.warnings.join(' ')).toMatch(/more than a junction camera can account for/);
   });
 
   it('does not flag a real hotspot, where one point belongs to one street', () => {

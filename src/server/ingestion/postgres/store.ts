@@ -316,29 +316,54 @@ export function createPostgresSink(context: PostgresSinkContext): IngestionSink 
  * A location takes its geometry and confidence from the best record seen for it:
  * a street is placeable if *any* of its records can place it, so one vague row
  * does not cost the whole street its position on the map.
+ *
+ * "Any of its records" means across the whole run, not within one batch. This
+ * used to skip a location the moment its id was cached, so whichever batch
+ * happened to mention a street first decided permanently whether it had a
+ * position. Hatton Garden had 8,774 notices with coordinates and no position on
+ * the map, because the first batch that mentioned it happened to contain none of
+ * them. Every batch now upserts the locations it refers to; the conflict clause
+ * keeps the first position found, so re-ingesting the same data is stable.
  */
+/**
+ * One representative event per location in a batch: the one best able to place
+ * and describe the street.
+ *
+ * Exported because the rule it encodes is the one that failed in production, and
+ * the failure was an omission — a filter that skipped locations already seen —
+ * which is invisible in any test that only checks the rows it does return.
+ *
+ * Note what it deliberately does NOT take: a cache of known location ids. A
+ * cached id means we know where the row is, not that the row is right. A later
+ * batch may be the first to carry a coordinate for a street, and it must be
+ * allowed to say so.
+ */
+export function chooseLocationRepresentatives(
+  events: readonly NormalisedPcnEvent[],
+): readonly NormalisedPcnEvent[] {
+  const best = new Map<string, NormalisedPcnEvent>();
+  for (const event of events) {
+    const current = best.get(event.locationSlug);
+    const hasPosition = event.longitude !== null;
+    const currentHasPosition = current?.longitude != null;
+    if (
+      !current ||
+      (hasPosition && !currentHasPosition) ||
+      (hasPosition === currentHasPosition && event.dataConfidence > current.dataConfidence)
+    ) {
+      best.set(event.locationSlug, event);
+    }
+  }
+  return [...best.values()];
+}
+
 async function ensureLocations(
   context: PostgresSinkContext,
   events: readonly NormalisedPcnEvent[],
   cache: Map<string, string>,
 ): Promise<void> {
-  const best = new Map<string, NormalisedPcnEvent>();
-  for (const event of events) {
-    const current = best.get(event.locationSlug);
-    if (
-      !current ||
-      (event.longitude !== null && current.longitude === null) ||
-      (event.longitude !== null) === (current.longitude !== null) &&
-        event.dataConfidence > current.dataConfidence
-    ) {
-      best.set(event.locationSlug, event);
-    }
-  }
-
-  const needed = [...best.keys()].filter((slug) => !cache.has(slug));
-  if (needed.length === 0) return;
-
-  const chosen = needed.map((slug) => best.get(slug)!);
+  const chosen = chooseLocationRepresentatives(events);
+  if (chosen.length === 0) return;
 
   const { rows } = await context.client.query<{ id: string; slug: string }>(
     `insert into parking_locations (
@@ -379,10 +404,14 @@ async function ensureLocations(
        street_name_normalised = excluded.street_name_normalised,
        locality = coalesce(excluded.locality, parking_locations.locality),
        postcode_district = coalesce(excluded.postcode_district, parking_locations.postcode_district),
-       -- Never replace a known position with a null one.
-       geom = coalesce(excluded.geom, parking_locations.geom),
+       -- Keep the first position found. Preferring excluded would never lose a
+       -- position either, but it would let the last batch carrying a coordinate
+       -- move the street, so the same input could place a street differently
+       -- depending on batch order.
+       geom = coalesce(parking_locations.geom, excluded.geom),
        source_metadata = case
-         when excluded.geom is not null then excluded.source_metadata
+         when parking_locations.geom is null and excluded.geom is not null
+           then excluded.source_metadata
          else parking_locations.source_metadata
        end,
        retrieved_at = excluded.retrieved_at,

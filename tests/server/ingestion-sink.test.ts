@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createSupabaseSink, type IngestionContext } from '@/server/ingestion/supabase-sink';
 import { trendLabelFor } from '@/server/ingestion/scoring-job';
+import { chooseLocationRepresentatives } from '@/server/ingestion/postgres/store';
 import type { NormalisedPcnEvent } from '@/data-sources/shared/types';
 
 /**
@@ -230,5 +231,75 @@ describe('scoring job trend labelling', () => {
   it('reports UNKNOWN when there is no trend component at all', () => {
     expect(trendLabelFor([])).toBe('UNKNOWN');
     expect(trendLabelFor([{ key: 'volume', value: 0.9 }])).toBe('UNKNOWN');
+  });
+});
+
+describe('choosing the row that places a street', () => {
+  // Hatton Garden: 10,175 notices, 8,774 with coordinates, no position on the
+  // map. Whichever batch mentioned the street first created the location, and a
+  // filter then skipped every later batch for it — so a street's position was
+  // decided by batch order rather than by whether any of its notices had one.
+  function ev(overrides: Partial<NormalisedPcnEvent>): NormalisedPcnEvent {
+    return {
+      sourceRecordId: 'X',
+      authoritySlug: 'camden',
+      contraventionCode: '11',
+      enforcementType: 'PARKING',
+      issuedDate: '2026-01-05',
+      issuedAt: '2026-01-05T09:14:00.000Z',
+      issuedHour: 9,
+      issuedDayOfWeek: 1,
+      streetName: 'Hatton Garden',
+      streetNameNormalised: 'hatton garden',
+      locationSlug: 'hatton-garden',
+      locality: null,
+      postcodeDistrict: 'EC1',
+      longitude: null,
+      latitude: null,
+      dataConfidence: 0.8,
+      sourceMetadata: {},
+      rowHash: 'h',
+      ...overrides,
+    };
+  }
+
+  it('prefers a row that can place the street over one that cannot', () => {
+    const chosen = chooseLocationRepresentatives([
+      ev({ sourceRecordId: 'A', dataConfidence: 0.95 }),
+      ev({ sourceRecordId: 'B', longitude: -0.1084, latitude: 51.5205, dataConfidence: 0.6 }),
+    ]);
+    expect(chosen).toHaveLength(1);
+    expect(chosen[0]!.sourceRecordId).toBe('B');
+  });
+
+  it('breaks a tie on confidence when both can place it, or neither can', () => {
+    const positioned = chooseLocationRepresentatives([
+      ev({ sourceRecordId: 'A', longitude: -0.1, latitude: 51.5, dataConfidence: 0.6 }),
+      ev({ sourceRecordId: 'B', longitude: -0.2, latitude: 51.6, dataConfidence: 0.9 }),
+    ]);
+    expect(positioned[0]!.sourceRecordId).toBe('B');
+
+    const unpositioned = chooseLocationRepresentatives([
+      ev({ sourceRecordId: 'A', dataConfidence: 0.6 }),
+      ev({ sourceRecordId: 'B', dataConfidence: 0.9 }),
+    ]);
+    expect(unpositioned[0]!.sourceRecordId).toBe('B');
+  });
+
+  it('returns a representative for every location in the batch, seen before or not', () => {
+    // The actual defect, and it was an omission: the function used to be handed
+    // a cache of known location ids and skip anything already in it. Nothing it
+    // returned was wrong; what it left out was. It no longer takes a cache at
+    // all, so there is nothing to skip with.
+    const chosen = chooseLocationRepresentatives([
+      ev({ sourceRecordId: 'A', locationSlug: 'hatton-garden' }),
+      ev({ sourceRecordId: 'B', locationSlug: 'judd-street' }),
+      ev({ sourceRecordId: 'C', locationSlug: 'hatton-garden', longitude: -0.1084, latitude: 51.5205 }),
+    ]);
+    expect(chooseLocationRepresentatives.length).toBe(1);
+    expect(new Set(chosen.map((c) => c.locationSlug))).toEqual(
+      new Set(['hatton-garden', 'judd-street']),
+    );
+    expect(chosen.find((c) => c.locationSlug === 'hatton-garden')!.longitude).not.toBeNull();
   });
 });

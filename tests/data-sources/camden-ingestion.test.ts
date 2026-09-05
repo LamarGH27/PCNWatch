@@ -926,6 +926,55 @@ describe('fetching at realistic volume', () => {
   });
 });
 
+describe('a street is placeable if any of its notices can place it', () => {
+  // Hatton Garden had 10,175 notices, 8,774 of them with coordinates, and no
+  // position on the map. The location was created by whichever batch mentioned
+  // the street first, and once its id was cached no later batch could correct
+  // it — so a street's position was decided by batch order rather than by
+  // whether any of its notices had one.
+  it('keeps looking for a position after the location already exists', async () => {
+    const upserted: { slug: string; hasGeometry: boolean }[] = [];
+    const sink: IngestionSink = {
+      async upsertEvents(events) {
+        for (const e of events) {
+          upserted.push({ slug: e.locationSlug, hasGeometry: e.longitude !== null });
+        }
+        return { inserted: events.length, updated: 0, unchanged: 0 };
+      },
+      async recordErrors() {},
+    };
+
+    // The first rows for this street have no coordinates; later ones do.
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      socrata_id: `H${i}`,
+      street: 'HATTON GARDEN EC1',
+      contravention_date: '2026-01-05T09:14:00.000',
+      contravention_code: '11',
+      ...(i >= 30 ? { latitude: '51.5205', longitude: '-0.1084' } : {}),
+    }));
+
+    const adapter = createCamdenAdapter({
+      datasetUrl: 'https://opendata.camden.gov.uk/resource/4k7m-4gkk.json',
+      fetchImpl: async () =>
+        new Response(JSON.stringify(rows), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    // Batches small enough that the street appears in several of them, the way
+    // it does in a real run.
+    await runIngestion(adapter, sink, { batchSize: 10 });
+
+    const forStreet = upserted.filter((u) => u.slug === 'hatton-garden-ec1');
+    expect(forStreet.length).toBe(40);
+    // The pipeline must present the positioned rows to the sink at all — the
+    // store's conflict clause is what turns that into a placed street, and it
+    // cannot do so for rows it never sees.
+    expect(forStreet.some((u) => u.hasGeometry)).toBe(true);
+    expect(forStreet.filter((u) => u.hasGeometry)).toHaveLength(10);
+  });
+});
+
 describe('the Camden rows that do carry coordinates', () => {
   // A whole-dataset census found 296,978 rows with latitude, longitude and a
   // `location` column. Every 50-row probe had shown none, because Socrata omits

@@ -124,6 +124,14 @@ const VAGUE_PATTERNS: readonly RegExp[] = [
   /^[^a-z]*$/i,
 ];
 
+/**
+ * Streets sharing one coordinate before it stops looking like a junction.
+ *
+ * A camera at a junction serves a handful of named approaches; nothing serves a
+ * dozen. Below this the shared point is reported and not warned about.
+ */
+export const PLACEHOLDER_COORDINATE_STREETS = 4;
+
 /** Anything before civil parking enforcement is implausible in this dataset. */
 export const IMPLAUSIBLY_OLD_BEFORE = '2004-01-01';
 
@@ -217,12 +225,18 @@ export function analyseQuality(
       `Only ${percentageGeolocated}% of accepted records carry usable coordinates. Map coverage will be sparse and many locations will be refused a score.`,
     );
   }
-  if (streetsAtLargestCluster.size > 1) {
+  // Two or three streets at one point is ordinary: Camden names locations by
+  // junction ("X BY JUNCTION WITH Y"), and one camera at a junction legitimately
+  // serves several named approaches. Treating that as a placeholder would
+  // discard real positions. Many streets at one point is a different matter —
+  // no junction has a dozen approaches — so the threshold is set where the
+  // innocent explanation runs out, and the wording keeps both readings open.
+  if (streetsAtLargestCluster.size >= PLACEHOLDER_COORDINATE_STREETS) {
     warnings.push(
       `The busiest single coordinate (${largestClusterAt}) carries ${largestCoordinateCluster} notices ` +
-        `spread across ${streetsAtLargestCluster.size} different streets. One point cannot be on several ` +
-        'streets, so this is probably a placeholder the publisher uses rather than a real position. ' +
-        'Those notices would sit on the map in a place none of them happened.',
+        `spread across ${streetsAtLargestCluster.size} different streets. That is more than a junction ` +
+        'camera can account for, so it may be a value the publisher uses when it does not know where ' +
+        'something happened. Check it before trusting that point on the map.',
     );
   }
   if (outsideBounds > 0) {
