@@ -20,7 +20,7 @@
     "db:test": "scripts/db-test.sh",
     "camden:probe": "tsx scripts/camden-probe.ts",
     "camden:trace": "tsx scripts/camden-trace.ts",
-    "db:setup": "scripts/db-setup.sh"
+    "db:setup": "tsx scripts/db-setup.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",

@@ -25,7 +25,9 @@ loaded. See [docs/geography.md](./geography.md).
 - **Node 20.11+**
 - For writing: **PostgreSQL 15+ with PostGIS.** Postgres 15 is the minimum
   because the unique indexes use `NULLS NOT DISTINCT`. A dry run needs no
-  database at all.
+  database at all. `psql` is **not** required — `db:setup` runs the migrations
+  through the same `pg` client the pipeline uses. (Only `npm run db:test`, the
+  SQL suites, needs `psql`, because those files use its meta-commands.)
 - Network access to `opendata.camden.gov.uk`.
 
 ```bash
@@ -77,6 +79,10 @@ export PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres
 npm run db:setup
 cp .env.example .env.local     # then check DATABASE_URL in it
 ```
+
+`db:setup` waits for the container to start accepting connections, so running it
+straight after `docker run` is fine. It verifies PostGIS is actually present
+rather than letting that surface halfway through an ingestion.
 
 `db:setup` drops and recreates a `pcnwatch` database, applies every migration in
 order, and seeds the authority directory, products and the Camden source record.

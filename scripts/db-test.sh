@@ -10,6 +10,18 @@
 
 set -euo pipefail
 
+# The SQL suites use psql meta-commands (\set, \echo), so unlike db:setup they
+# genuinely need the client. Say so rather than dying on "command not found".
+if ! command -v psql >/dev/null 2>&1; then
+  echo "✗ psql is not installed, and the SQL test suites need it." >&2
+  echo "" >&2
+  echo "  Debian/Ubuntu:  sudo apt-get install -y postgresql-client" >&2
+  echo "  macOS:          brew install libpq && brew link --force libpq" >&2
+  echo "" >&2
+  echo "  \`npm run db:setup\` does not need psql — only these tests do." >&2
+  exit 1
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB="${PCNWATCH_TEST_DB:-pcnwatch_test}"
 PSQL=(psql -v ON_ERROR_STOP=1 -q)
