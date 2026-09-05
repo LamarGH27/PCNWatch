@@ -179,6 +179,13 @@ npm run build && npm start
 uses. With `DATABASE_URL` set and no Supabase configured, the app reads Postgres
 directly.
 
+**The map needs a basemap.** Without `NEXT_PUBLIC_MAP_STYLE_URL` it falls back to
+MapLibre's demo style, which has country outlines only and stops at about zoom 5
+— so the enforcement data draws correctly onto a flat colour with no streets
+beneath it. The map states this when it happens rather than leaving it looking
+broken. `.env.example` lists the options and the licensing question behind
+choosing one.
+
 ---
 
 ## Refresh cadence and failure behaviour

@@ -18,13 +18,32 @@ const nonEmpty = z.string().min(1).optional();
 /* Public (client-safe) configuration                                  */
 /* ------------------------------------------------------------------ */
 
+/**
+ * MapLibre's demo style, used when no basemap is configured.
+ *
+ * It contains country outlines from Natural Earth and nothing else, and its
+ * sources stop at about zoom 5. At the zoom this product uses there is nothing
+ * to draw but the background colour, so the map renders as a flat expanse with
+ * the enforcement data floating on it — indistinguishable from a broken page.
+ *
+ * Kept as the default because a missing basemap must not stop the app starting,
+ * but the map says plainly when it is in use rather than leaving someone to
+ * wonder why there are no streets.
+ */
+export const PLACEHOLDER_MAP_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
+
+/** Whether the configured basemap is the placeholder rather than a real one. */
+export function isPlaceholderMapStyle(styleUrl: string): boolean {
+  return styleUrl.trim() === PLACEHOLDER_MAP_STYLE_URL;
+}
+
 // Next.js inlines `process.env.NEXT_PUBLIC_*` at build time only for literal
 // property access, so these must be written out longhand.
 const publicSchema = z.object({
   NEXT_PUBLIC_SITE_URL: z.string().url().default('http://localhost:3000'),
   NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: nonEmpty,
-  NEXT_PUBLIC_MAP_STYLE_URL: z.string().min(1).default('https://demotiles.maplibre.org/style.json'),
+  NEXT_PUBLIC_MAP_STYLE_URL: z.string().min(1).default(PLACEHOLDER_MAP_STYLE_URL),
   NEXT_PUBLIC_MAP_ATTRIBUTION: z.string().min(1).default('© OpenStreetMap contributors'),
   NEXT_PUBLIC_POSTHOG_KEY: nonEmpty,
   NEXT_PUBLIC_POSTHOG_HOST: optionalUrl,

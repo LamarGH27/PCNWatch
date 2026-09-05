@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import Link from 'next/link';
 import maplibregl, { type Map as MapLibreMap, type GeoJSONSource } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { publicEnv } from '@/lib/env';
+import { publicEnv, isPlaceholderMapStyle} from '@/lib/env';
 import { SCORE_DISCLAIMER } from '@/core/scoring/config';
 import type { ScoreClassification } from '@/core/scoring/types';
 
@@ -78,6 +78,8 @@ export function MapExplorer({
   /** Share of recorded notices that appear on the map at all, 0–1. */
   mappedEventShare: number | null;
 }) {
+  const [basemapError, setBasemapError] = useState<string | null>(null);
+  const usingPlaceholderBasemap = isPlaceholderMapStyle(publicEnv.NEXT_PUBLIC_MAP_STYLE_URL);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const requestSeq = useRef(0);
@@ -168,6 +170,16 @@ export function MapExplorer({
       new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true } }),
       'top-right',
     );
+
+    // A basemap that fails to load leaves the enforcement data floating on a
+    // blank colour, which looks exactly like a broken page. MapLibre reports
+    // these and we were discarding them.
+    map.on('error', (event) => {
+      const message = event.error?.message ?? 'unknown error';
+      // Tile 404s at the edge of a source's coverage are normal and noisy.
+      if (/404|Not Found/i.test(message)) return;
+      setBasemapError(message);
+    });
 
     map.on('load', () => {
       map.addSource('activity', {
@@ -502,6 +514,20 @@ export function MapExplorer({
           <StatusPill>
             No recorded PCNs in this view for the selected filters. Try widening the time period or
             panning to another area.
+          </StatusPill>
+        )}
+        {usingPlaceholderBasemap && (
+          <StatusPill>
+            <strong>No basemap configured.</strong> The enforcement data below is real, but there
+            are no streets under it: PCNWatch is falling back to MapLibre&rsquo;s demo style, which
+            has country outlines only and stops at about zoom 5. Set{' '}
+            <code>NEXT_PUBLIC_MAP_STYLE_URL</code> to a street-level style.
+          </StatusPill>
+        )}
+        {basemapError !== null && !usingPlaceholderBasemap && (
+          <StatusPill>
+            The basemap failed to load ({basemapError}). The enforcement data shown is unaffected —
+            it comes from our own database, not the map tiles.
           </StatusPill>
         )}
         {state.kind === 'READY' && summary && summary.pcns > 0 && (
