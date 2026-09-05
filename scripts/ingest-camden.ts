@@ -131,7 +131,7 @@ async function main(): Promise<void> {
       isDemo,
     });
 
-    printReport(result, datasetUrl);
+    printReport(result, datasetUrl, { limit: args.limit });
 
     if (result.status === 'FAILED') {
       console.error('\n✗ Ingestion failed. No data was written; previously ingested data is untouched.\n');
@@ -169,7 +169,11 @@ async function dryRun(
     {
       async upsertEvents(events) {
         accepted.push(...events);
-        return { inserted: 0, updated: 0, unchanged: events.length };
+        // Nothing is compared against stored rows in a dry run, so every write
+        // counter stays zero. Reporting these as "unchanged" claimed they had
+        // been found identical to existing records, which is a different and
+        // untrue statement.
+        return { inserted: 0, updated: 0, unchanged: 0 };
       },
       async recordErrors(rejected) {
         errors.push(...rejected);
@@ -204,6 +208,7 @@ async function dryRun(
       fatalError: null,
     },
     datasetUrl,
+    { dryRun: true, limit: args.limit },
   );
 
   console.log('\nDRY RUN — nothing was written. Re-run without --dry-run to persist.\n');
@@ -214,7 +219,11 @@ async function dryRun(
 /* Reporting                                                           */
 /* ------------------------------------------------------------------ */
 
-function printReport(result: IngestionJobResult, datasetUrl: string): void {
+function printReport(
+  result: IngestionJobResult,
+  datasetUrl: string,
+  options: { dryRun?: boolean; limit?: number } = {},
+): void {
   const c = result.counters;
   const q = result.quality;
 
@@ -232,9 +241,13 @@ function printReport(result: IngestionJobResult, datasetUrl: string): void {
   row('Rows fetched', c.fetched);
   row('Rows accepted', c.accepted);
   row('Rows rejected', c.rejected);
-  row('Rows inserted', c.inserted);
-  row('Rows updated', c.updated);
-  row('Rows unchanged', c.unchanged);
+  if (options.dryRun) {
+    row('Rows written', 'none — dry run, nothing compared against stored data');
+  } else {
+    row('Rows inserted', c.inserted);
+    row('Rows updated', c.updated);
+    row('Rows unchanged', c.unchanged);
+  }
   row('Duplicates in batch', c.duplicatesInBatch);
   row('Geolocated', c.geolocated);
   row('Not geolocated', c.notGeolocated);
@@ -269,7 +282,18 @@ function printReport(result: IngestionJobResult, datasetUrl: string): void {
     row('Future dates', q.temporal.futureDates);
     row('Implausibly old', q.temporal.implausiblyOld);
 
-    section('CONTRAVENTION QUALITY');
+    if (options.limit !== undefined) {
+    section('READ THIS BEFORE TRUSTING THE DISTRIBUTIONS BELOW');
+    console.log(
+      `  --limit ${options.limit} took the FIRST ${options.limit} rows in the source's own\n` +
+        '  order, not a random sample. Socrata returns rows ordered by :id, which for\n' +
+        '  Camden groups notices of the same kind together — so the contravention mix,\n' +
+        '  the enforcement mix, the street list and the date range below describe that\n' +
+        '  slice of the dataset, not the dataset. Only a full run gives real proportions.',
+    );
+  }
+
+  section('CONTRAVENTION QUALITY');
     row('With code', q.contravention.withCode);
     row('Without code', q.contravention.withoutCode);
     row('Unique codes', q.contravention.uniqueCodes);
@@ -296,7 +320,15 @@ function printReport(result: IngestionJobResult, datasetUrl: string): void {
   if (Object.keys(result.warningCounts).length > 0) {
     section('NORMALISATION WARNINGS');
     for (const [code, count] of Object.entries(result.warningCounts).sort((a, b) => b[1] - a[1])) {
-      console.log(`  ${code.padEnd(34)} ${String(count).padStart(8)}`);
+      // A warning on every single accepted row is telling you about the shape of
+      // the dataset, not about anything unusual in it. Left unlabelled, five
+      // thousand of them reads like five thousand problems and buries the one
+      // warning that fired on three rows.
+      const everyRow = c.accepted > 0 && count === c.accepted;
+      console.log(
+        `  ${code.padEnd(34)} ${String(count).padStart(8)}` +
+          (everyRow ? '   (every row — a property of the source schema)' : ''),
+      );
     }
   }
 
