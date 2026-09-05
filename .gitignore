@@ -1,8 +1,13 @@
 node_modules/
 .next/
-out/
-build/
-coverage/
+# Anchored to the repository root. Unanchored, `coverage/` matches a directory
+# of that name at ANY depth — and it did: src/core/coverage/ was silently
+# untracked for the whole life of the branch, so every local build passed
+# against a file the repository did not contain. `out/` and `build/` are
+# anchored for the same reason.
+/out/
+/build/
+/coverage/
 *.tsbuildinfo
 next-env.d.ts
 .env
