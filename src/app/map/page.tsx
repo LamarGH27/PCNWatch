@@ -13,7 +13,21 @@ export const metadata: Metadata = {
 
 // Coverage depends on ingested data, so this page must not be statically cached
 // with a stale answer about what we hold.
-export const revalidate = 300;
+/**
+ * Rendered per request, deliberately not prerendered.
+ *
+ * This page's only server-side data is the coverage banner — whether the borough
+ * is covered, how fresh the data is, and what share of notices can be placed.
+ * Prerendering froze that at build time: a build run while the database was
+ * unreachable baked "data temporarily unavailable" into the page and served it
+ * to every visitor until revalidation, turning a transient build-time blip into
+ * a user-visible falsehood about our coverage.
+ *
+ * It also meant `next build` needed a database, which a build should not.
+ * Nothing heavy is lost: the map's cells are fetched client-side per viewport,
+ * and the JavaScript bundle is still cached.
+ */
+export const dynamic = 'force-dynamic';
 
 const PRIMARY_AUTHORITY = COVERAGE_SCOPE.liveAuthoritySlugs[0];
 

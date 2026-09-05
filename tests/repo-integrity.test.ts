@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -73,5 +73,74 @@ describe.runIf(gitAvailable)('the repository contains what it is built from', ()
     for (const pattern of ['coverage/', 'out/', 'build/', 'dist/']) {
       expect(lines, `"${pattern}" must be anchored as "/${pattern}"`).not.toContain(pattern);
     }
+  });
+});
+
+/**
+ * `next build` must not need a database.
+ *
+ * A prerendered route that reads live data freezes whatever the database said at
+ * build time. A build run while the database was unreachable baked "data
+ * temporarily unavailable" into /map and an empty location list into the
+ * sitemap, and served both — a transient build-time blip turned into a
+ * user-visible falsehood, and a static sitemap has nothing to revalidate it.
+ *
+ * A route is safe if it opts out of prerendering explicitly, or reads
+ * `searchParams`, which makes it dynamic anyway.
+ */
+describe('routes that read live data are not prerendered', () => {
+  const APP = resolve(ROOT, 'src/app');
+  const REPOSITORIES = resolve(ROOT, 'src/server/repositories');
+
+  /**
+   * Repository modules that actually query the database, derived rather than
+   * listed: a module is live if it imports the database reader. A hand-written
+   * list would go stale the first time someone adds one.
+   */
+  const liveRepositories = readdirSync(REPOSITORIES)
+    .filter((f) => f.endsWith('.ts'))
+    .filter((f) => readFileSync(resolve(REPOSITORIES, f), 'utf8').includes('@/server/db/reader'))
+    .map((f) => f.replace(/\.ts$/, ''));
+
+  function routeFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = resolve(dir, entry.name);
+      if (entry.isDirectory()) out.push(...routeFiles(path));
+      else if (/^(page|route|sitemap)\.tsx?$/.test(entry.name)) out.push(path);
+    }
+    return out;
+  }
+
+  it('derives which repositories are live rather than trusting a list', () => {
+    expect(liveRepositories).toContain('enforcement');
+    expect(liveRepositories).toContain('contravention-labels');
+    // A module of constants is not a database read, and treating it as one
+    // would flag pages that are correctly prerendered.
+    expect(liveRepositories).not.toContain('authorities-data');
+  });
+
+  it('opts every prerenderable one out of static generation', () => {
+    const offenders: string[] = [];
+    for (const file of routeFiles(APP)) {
+      const relative = file.replace(`${ROOT}/`, '');
+      // A dynamic segment already forces per-request rendering without
+      // generateStaticParams, so those routes were never frozen.
+      if (relative.includes('[')) continue;
+
+      const source = readFileSync(file, 'utf8');
+      const readsLiveData = liveRepositories.some((repo) =>
+        source.includes(`@/server/repositories/${repo}`),
+      );
+      if (!readsLiveData) continue;
+
+      const optsOut = /export const dynamic\s*=\s*'force-dynamic'/.test(source);
+      const usesSearchParams = source.includes('searchParams');
+      if (!optsOut && !usesSearchParams) offenders.push(relative);
+    }
+    expect(
+      offenders,
+      'these routes read live data and would be prerendered, freezing whatever the database said at build time',
+    ).toEqual([]);
   });
 });

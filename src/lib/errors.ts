@@ -86,12 +86,41 @@ export function logError(
     level: 'error',
     scope,
     correlationId,
-    message: error instanceof Error ? error.message : String(error),
+    message: describeError(error),
     stack: error instanceof Error ? error.stack : undefined,
     ...context,
   };
   console.error(JSON.stringify(payload));
   return correlationId;
+}
+
+/**
+ * A message that says what actually went wrong.
+ *
+ * `error.message` alone is not enough for two common shapes. An AggregateError
+ * carries an empty message and puts the real causes in `.errors` — which is what
+ * a failed database connection throws, so a build against an unreachable
+ * database logged `"message": ""` and a stack with no reason in it. A wrapped
+ * error hides its reason in `.cause` the same way.
+ */
+export function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  const parts: string[] = [];
+  if (error.message) parts.push(error.message);
+
+  if (error instanceof AggregateError && Array.isArray(error.errors)) {
+    const causes = error.errors.map((e) => describeError(e)).filter((m) => m !== '');
+    // Repeating one message per address family says nothing extra; the distinct
+    // set does. ECONNREFUSED on ::1 and on 127.0.0.1 are different facts.
+    const distinct = [...new Set(causes)];
+    if (distinct.length > 0) parts.push(distinct.join('; '));
+  } else if (error.cause !== undefined && error.cause !== null) {
+    const cause = describeError(error.cause);
+    if (cause !== '') parts.push(`caused by: ${cause}`);
+  }
+
+  return parts.join(' — ') || error.name;
 }
 
 export function logInfo(scope: string, message: string, context: Record<string, unknown> = {}): void {

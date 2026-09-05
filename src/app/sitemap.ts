@@ -14,6 +14,17 @@ import { getHotspots } from '@/server/repositories/enforcement';
  * thin pages is exactly what the product must not do.
  */
 
+/**
+ * Rendered per request rather than at build time.
+ *
+ * The location entries come from the database. Prerendered, a build run while
+ * the database was unreachable would ship a sitemap missing every location page
+ * and keep serving it — a static sitemap has nothing to revalidate it. Crawler
+ * traffic is negligible and the query is one call, so computing it per request
+ * costs little and can never be silently wrong.
+ */
+export const dynamic = 'force-dynamic';
+
 const MIN_PCNS_FOR_INDEXING = 20;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
