@@ -31,9 +31,16 @@
 -- ---------------------------------------------------------------------------
 -- Dataset versions: how a refresh becomes visible, all at once or not at all.
 -- ---------------------------------------------------------------------------
-create type dataset_version_status as enum ('BUILDING', 'ACTIVE', 'SUPERSEDED', 'ABANDONED');
+-- Every statement in this migration is safe to run again. A migration that
+-- half-applies and then refuses to be retried is how 0006 cost us a day.
+do $$
+begin
+  create type dataset_version_status as enum ('BUILDING', 'ACTIVE', 'SUPERSEDED', 'ABANDONED');
+exception when duplicate_object then null;
+end;
+$$;
 
-create table enforcement_dataset_versions (
+create table if not exists enforcement_dataset_versions (
   id                uuid primary key default gen_random_uuid(),
   authority_id      uuid not null references authorities(id) on delete cascade,
   status            dataset_version_status not null default 'BUILDING',
@@ -64,13 +71,14 @@ create table enforcement_dataset_versions (
 
 -- At most one ACTIVE version per authority. Enforced by the database rather than
 -- by the code that flips it, so a bug in that code cannot publish two.
-create unique index enforcement_dataset_versions_one_active
+create unique index if not exists enforcement_dataset_versions_one_active
   on enforcement_dataset_versions (authority_id)
   where status = 'ACTIVE';
 
-create index enforcement_dataset_versions_authority_idx
+create index if not exists enforcement_dataset_versions_authority_idx
   on enforcement_dataset_versions (authority_id, status, built_at desc);
 
+drop trigger if exists touch_enforcement_dataset_versions on enforcement_dataset_versions;
 create trigger touch_enforcement_dataset_versions
   before update on enforcement_dataset_versions
   for each row execute function touch_updated_at();
@@ -90,7 +98,7 @@ create trigger touch_enforcement_dataset_versions
 -- the dataset version and from the location, and a stored copy is 16 bytes a
 -- row that can disagree with both. At this table's row count those choices are
 -- the difference between a compact index and a warehouse habit.
-create table pcn_activity_daily (
+create table if not exists pcn_activity_daily (
   dataset_version_id  uuid not null references enforcement_dataset_versions(id) on delete cascade,
   parking_location_id uuid not null references parking_locations(id) on delete cascade,
   activity_date       date not null,
@@ -116,7 +124,7 @@ create table pcn_activity_daily (
 
 -- NULLS NOT DISTINCT so a null contravention code participates in the key; an
 -- index over coalesce() cannot be targeted by `on conflict (columns)`.
-create unique index pcn_activity_daily_key
+create unique index if not exists pcn_activity_daily_key
   on pcn_activity_daily (dataset_version_id, parking_location_id, activity_date, contravention_code, enforcement_class)
   nulls not distinct;
 
@@ -126,9 +134,9 @@ create unique index pcn_activity_daily_key
 -- would be redundant: the unique key above already leads with exactly those
 -- three columns, and at this row count a redundant index is not free — the three
 -- indexes on this table cost more than its data.
-create index pcn_activity_daily_version_date_idx
+create index if not exists pcn_activity_daily_version_date_idx
   on pcn_activity_daily (dataset_version_id, activity_date desc);
-create index pcn_activity_daily_version_code_idx
+create index if not exists pcn_activity_daily_version_code_idx
   on pcn_activity_daily (dataset_version_id, contravention_code, activity_date desc);
 
 comment on table pcn_activity_daily is
