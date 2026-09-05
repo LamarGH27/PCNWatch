@@ -99,6 +99,15 @@ export interface IngestionJobResult {
   readonly fatalError: string | null;
   /** Stack of the fatal error. A long run is expensive to repeat blind. */
   readonly fatalStack?: string | null;
+  /**
+   * Whether the write transaction committed before the failure.
+   *
+   * Everything after the commit — quality analysis, aggregate rebuild, scoring —
+   * can still fail, and "no data was written" is then untrue. A caller that says
+   * so unconditionally tells the operator their database is untouched when it is
+   * not, which is the worst kind of wrong to be about a write.
+   */
+  readonly committed?: boolean;
 }
 
 export async function runCamdenIngestionJob(
@@ -111,6 +120,7 @@ export async function runCamdenIngestionJob(
 
   let runId = '';
   let authorityId = '';
+  let committed = false;
 
   try {
     authorityId = await withClient(pool, (c) => requireAuthorityId(c, options.authoritySlug));
@@ -186,6 +196,7 @@ export async function runCamdenIngestionJob(
         await client.query('rollback');
       } else {
         await client.query('commit');
+        committed = true;
       }
     } catch (error) {
       await client.query('rollback').catch(() => {});
@@ -299,6 +310,7 @@ export async function runCamdenIngestionJob(
       scoreDistributions: [],
       fatalError: message,
       fatalStack: error instanceof Error ? (error.stack ?? null) : null,
+      committed,
     };
   } finally {
     await pool.end();

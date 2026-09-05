@@ -263,6 +263,50 @@ async function main(): Promise<void> {
     }
   }
 
+  /* -- Geography census across the whole dataset ---------------------------- */
+
+  // The column list above comes from 50 rows. Socrata omits null fields per row,
+  // so a column that is null in those 50 does not appear at all — which is how a
+  // dataset that does publish coordinates can look like one that does not. Ask
+  // the whole dataset directly instead of inferring from a sample.
+  console.log('\nGEOGRAPHY ACROSS THE WHOLE DATASET');
+  console.log('─'.repeat(100));
+  const geoColumns = ['latitude', 'longitude', ...POINT_FIELD_CANDIDATES];
+  let anyGeography = false;
+  for (const column of geoColumns) {
+    const countUrl = new URL(datasetUrl);
+    countUrl.searchParams.set('$select', 'count(*) as n');
+    countUrl.searchParams.set('$where', `${column} IS NOT NULL`);
+    try {
+      const response = await fetch(countUrl.toString(), {
+        headers: {
+          accept: 'application/json',
+          ...(process.env.CAMDEN_APP_TOKEN ? { 'X-App-Token': process.env.CAMDEN_APP_TOKEN } : {}),
+        },
+      });
+      if (!response.ok) {
+        // A 400 here means the column does not exist, which is an answer.
+        console.log(`  ${column.padEnd(20)} no such column`);
+        continue;
+      }
+      const body = (await response.json()) as { n?: string }[];
+      const n = Number(body[0]?.n ?? 0);
+      if (n > 0) anyGeography = true;
+      console.log(`  ${column.padEnd(20)} ${n.toLocaleString('en-GB')} rows with a value`);
+    } catch (error) {
+      console.log(
+        `  ${column.padEnd(20)} could not check: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+  console.log(
+    anyGeography
+      ? '\n  Some rows DO carry coordinates. The 50-row sample above did not show them\n' +
+          '  because Socrata omits null fields per row. A full ingestion will report the\n' +
+          '  real geolocated percentage.'
+      : '\n  No row in the dataset carries a coordinate under any known column name.',
+  );
+
   /* -- Dry normalisation --------------------------------------------------- */
 
   console.log('\nNORMALISATION OF THE SAMPLE');

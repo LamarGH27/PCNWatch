@@ -139,7 +139,21 @@ async function main(): Promise<void> {
     printReport(result, datasetUrl, { limit: args.limit });
 
     if (result.status === 'FAILED') {
-      console.error('\n✗ Ingestion failed. No data was written; previously ingested data is untouched.\n');
+      if (result.committed) {
+        // The write transaction committed and something after it failed —
+        // quality analysis, the aggregate rebuild or scoring. Claiming nothing
+        // was written would be the worst kind of wrong to be about a write.
+        console.error(
+          '\n✗ Ingestion failed AFTER the events were committed.\n' +
+            '  The PCN events are in the database. What follows them — aggregates and\n' +
+            '  Ticket Activity Scores — may be missing or stale, so the site could show\n' +
+            '  figures that do not match the events behind them. Re-run to rebuild them.\n',
+        );
+      } else {
+        console.error(
+          '\n✗ Ingestion failed. No data was written; previously ingested data is untouched.\n',
+        );
+      }
       process.exit(1);
     }
     if (result.qualityGate && !result.qualityGate.pass) {

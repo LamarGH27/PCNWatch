@@ -140,7 +140,16 @@ export function analyseQuality(
     const key = `${e.longitude!.toFixed(6)},${e.latitude!.toFixed(6)}`;
     coordinateCounts.set(key, (coordinateCounts.get(key) ?? 0) + 1);
   }
-  const clusters = [...coordinateCounts.values()];
+  // Summarised in one pass rather than materialising an array of every distinct
+  // coordinate pair. `Math.max(...clusters)` passes one argument per pair, which
+  // overflows the call stack on a real borough-sized batch — that is exactly how
+  // this failed on the first million-row run.
+  let sharedCoordinatePairs = 0;
+  let largestCoordinateCluster = 0;
+  for (const count of coordinateCounts.values()) {
+    if (count > 1) sharedCoordinatePairs += 1;
+    if (count > largestCoordinateCluster) largestCoordinateCluster = count;
+  }
   const outsideBounds = located.filter(
     (e) =>
       e.longitude! < CAMDEN_BBOX.minLon ||
@@ -221,6 +230,7 @@ export function analyseQuality(
   for (const e of events) {
     if (e.contraventionCode) codeCounts.set(e.contraventionCode, (codeCounts.get(e.contraventionCode) ?? 0) + 1);
   }
+  // Bounded: distinct contravention codes number in the dozens.
   const codes = [...codeCounts.entries()]
     .map(([code, count]) => ({ code, count }))
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
@@ -244,8 +254,13 @@ export function analyseQuality(
     ids.add(e.sourceRecordId);
     contentKeys.set(key, ids);
   }
-  const repeatedSourceIds = [...idCounts.values()].filter((n) => n > 1).length;
-  const identicalContentDifferentId = [...contentKeys.values()].filter((s) => s.size > 1).length;
+  // Counted in place for the same reason: one entry per source record id is
+  // hundreds of thousands of entries on a real batch, and there is no need to
+  // build an array of them to count the ones above one.
+  let repeatedSourceIds = 0;
+  for (const count of idCounts.values()) if (count > 1) repeatedSourceIds += 1;
+  let identicalContentDifferentId = 0;
+  for (const ids of contentKeys.values()) if (ids.size > 1) identicalContentDifferentId += 1;
 
   /* -- Rejections --------------------------------------------------------- */
 
@@ -262,11 +277,11 @@ export function analyseQuality(
       percentageGeolocated,
       uniqueLocations: new Set(events.map((e) => e.locationSlug)).size,
       uniqueCoordinatePairs: coordinateCounts.size,
-      sharedCoordinatePairs: clusters.filter((n) => n > 1).length,
-      largestCoordinateCluster: clusters.length === 0 ? 0 : Math.max(...clusters),
+      sharedCoordinatePairs,
+      largestCoordinateCluster,
       outsideBounds,
       vagueLocations: vague.length,
-      vagueExamples: [...new Set(vague.map((e) => e.streetName))].slice(0, 5),
+      vagueExamples: firstDistinct(vague, (e) => e.streetName, 5),
       geographyAvailability,
       noGeometryReasons,
     },
@@ -291,6 +306,20 @@ export function analyseQuality(
     rejections,
     warnings,
   };
+}
+
+/** First `max` distinct values, without materialising every value first. */
+function firstDistinct<T>(
+  items: readonly T[],
+  pick: (item: T) => string,
+  max: number,
+): readonly string[] {
+  const seen = new Set<string>();
+  for (const item of items) {
+    seen.add(pick(item));
+    if (seen.size >= max) break;
+  }
+  return [...seen];
 }
 
 function daysBetween(from: string, to: string): number {

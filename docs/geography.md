@@ -1,8 +1,21 @@
 # Geography: where a PCN happened, and where we may draw it
 
-Camden's published PCN dataset (`4k7m-4gkk`) contains **no coordinates**. It
-contains a street name and a `spatial_accuracy` value of `Unknown` — the
-publisher makes no claim at all about how precisely a notice is located.
+Camden's published PCN dataset (`4k7m-4gkk`) contains a street name and a
+`spatial_accuracy` value of `Unknown` — the publisher makes no claim at all about
+how precisely a notice is located.
+
+**Whether it contains coordinates is being re-checked.** Every 50-row probe of it
+showed no latitude, longitude or point column, and that was taken as settled.
+Then a full ingestion crashed inside the coordinate-cluster summary, which only
+executes when rows *do* carry coordinates. Socrata omits null fields per row, so
+a column that is null across a 50-row sample never appears in that sample at all
+— a dataset with partial geography is indistinguishable from one with none, if
+you only ever look at 50 rows. `npm run camden:probe` now asks the whole dataset
+directly (`$select=count(*)` with `$where <column> IS NOT NULL`) instead of
+inferring it from a sample.
+
+Nothing below changes either way: the architecture holds whether the source
+publishes coordinates for all, some, or none of its rows.
 
 Everything below follows from that one fact.
 

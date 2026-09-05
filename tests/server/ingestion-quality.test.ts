@@ -267,6 +267,42 @@ describe('geography availability', () => {
   });
 });
 
+describe('borough-sized batches', () => {
+  it('summarises coordinate clusters without overflowing the call stack', () => {
+    // This is the real failure: a live run of 450,000 rows died in
+    // analyseQuality on `Math.max(...clusters)`, which passes one argument per
+    // distinct coordinate pair. 200,000 distinct pairs is enough to reproduce it
+    // and fast enough to keep in the suite.
+    const events = Array.from({ length: 200_000 }, (_, i) =>
+      event({
+        sourceRecordId: `CA${i}`,
+        rowHash: `h${i}`,
+        // Distinct at the six decimal places the cluster key uses.
+        longitude: -0.2 + (i % 1000) * 0.000001,
+        latitude: 51.5 + Math.floor(i / 1000) * 0.000001,
+      }),
+    );
+    // One pair repeated, so the largest cluster is a real answer rather than 1.
+    events.push(event({ sourceRecordId: 'DUP', rowHash: 'dup', longitude: -0.2, latitude: 51.5 }));
+
+    const q = analyseQuality(events, [], KNOWN_CODES, TODAY);
+    expect(q.location.withCoordinates).toBe(200_001);
+    expect(q.location.uniqueCoordinatePairs).toBe(200_000);
+    expect(q.location.largestCoordinateCluster).toBe(2);
+    expect(q.location.sharedCoordinatePairs).toBe(1);
+  });
+
+  it('counts repeated ids at that scale too', () => {
+    // Same shape of bug: one entry per source record id.
+    const events = Array.from({ length: 150_000 }, (_, i) =>
+      event({ sourceRecordId: `CA${i}`, rowHash: `h${i}` }),
+    );
+    const q = analyseQuality(events, [], KNOWN_CODES, TODAY);
+    expect(q.duplicates.repeatedSourceIds).toBe(0);
+    expect(q.totalAccepted).toBe(150_000);
+  });
+});
+
 describe('quality gate', () => {
   it('passes a healthy batch', () => {
     const q = analyseQuality(batch(500), [], KNOWN_CODES, TODAY);
