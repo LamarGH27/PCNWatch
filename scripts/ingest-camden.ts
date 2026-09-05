@@ -479,6 +479,19 @@ function printAggregateReport(
     );
   }
 
+  if (result.stageTimings.length > 0) {
+    section('WHERE THE TIME WENT');
+    for (const t of result.stageTimings) {
+      const seconds = `${(t.ms / 1000).toFixed(1)}s`;
+      row(
+        t.stage,
+        t.items === null
+          ? seconds
+          : `${seconds}  (${t.items.toLocaleString('en-GB')} items)`,
+      );
+    }
+  }
+
   if (result.fatalError) {
     section('FATAL ERROR');
     row('Classification', result.fatalClassification ?? 'UNEXPECTED');

@@ -463,13 +463,62 @@ async function replaceContraventionLabels(
   );
 }
 
-/** Marks a version that will never be published, so it is not mistaken for one still building. */
-export async function abandonVersion(pool: Pool, datasetVersionId: string): Promise<void> {
+/**
+ * Discards a version that will never be published, and the rows staged under it.
+ *
+ * Marking it ABANDONED and stopping was not enough. `pruneVersions` only ran on
+ * the success path, so every failed run left its staged rows in
+ * `pcn_activity_daily` permanently: the full Camden run that timed out during
+ * scoring had already written 247,712 of them, roughly 60 MB, and a second
+ * failure would have added 60 MB more. Nothing would ever have collected them,
+ * because a run only reaches the cleanup step by succeeding.
+ *
+ * The delete cascades from the version row, so the staged activity goes with
+ * it. What survives is the `ingestion_runs` row, which is where the diagnosis
+ * lives — the staged aggregates add nothing to it.
+ *
+ * The rows are never reused. A failed run cannot know how much of the source it
+ * consumed before it stopped, so resuming on top of a partial version would
+ * publish counts that reconcile against nothing.
+ */
+export async function abandonVersion(pool: Pool, datasetVersionId: string): Promise<number> {
   await pool.query(
     `update enforcement_dataset_versions set status = 'ABANDONED'
       where id = $1 and status = 'BUILDING'`,
     [datasetVersionId],
   );
+  const { rowCount } = await pool.query(
+    `delete from enforcement_dataset_versions where id = $1 and status = 'ABANDONED'`,
+    [datasetVersionId],
+  );
+  return rowCount ?? 0;
+}
+
+/**
+ * Removes staged rows left behind by runs that died before they could clean up.
+ *
+ * `abandonVersion` handles a failure this process caught. A process killed
+ * outright — out of memory, a container replaced — never reaches any catch
+ * block, and its BUILDING version would sit there for ever holding a full
+ * dataset. Each run therefore clears any earlier BUILDING version for the
+ * authority before starting its own.
+ *
+ * Only BUILDING versions, and only ones older than the grace period, so a
+ * concurrent ingestion is never robbed of the version it is filling.
+ */
+export async function reapStaleVersions(
+  pool: Pool,
+  authorityId: string,
+  olderThanMinutes = 60,
+): Promise<number> {
+  const { rowCount } = await pool.query(
+    `delete from enforcement_dataset_versions
+      where authority_id = $1
+        and status = 'BUILDING'
+        and built_at < now() - make_interval(mins => $2::int)`,
+    [authorityId, olderThanMinutes],
+  );
+  return rowCount ?? 0;
 }
 
 /**

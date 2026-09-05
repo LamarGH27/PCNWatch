@@ -10,6 +10,7 @@ import {
   flushActivity,
   pruneVersions,
   reapStaleRuns,
+  reapStaleVersions,
   reconcileVersion,
   upsertLocations,
   type Reconciliation,
@@ -27,6 +28,7 @@ import { computeTicketActivityScores } from '@/core/scoring/ticket-activity-scor
 import { MODEL_VERSION } from '@/core/scoring/config';
 import { knownContraventionCodes } from '@/core/reference/store';
 import { logError, logInfo } from '@/lib/errors';
+import { StageTimer, type StageTiming } from './stage-timing';
 
 /**
  * Streaming, aggregate-only Camden ingestion.
@@ -64,6 +66,8 @@ export interface AggregateIngestionOptions {
   readonly sourceDatasetId?: string | null;
   /** Cells held before a flush. Bounds memory independently of dataset size. */
   readonly flushEveryCells?: number;
+  /** Per-statement ceiling for this ingestion's own connections, in ms. */
+  readonly statementTimeoutMs?: number;
   readonly onProgress?: (progress: { fetched: number; cells: number }) => void;
 }
 
@@ -89,6 +93,8 @@ export interface AggregateIngestionResult {
   readonly fatalError: string | null;
   readonly fatalClassification: string | null;
   readonly durationMs: number;
+  /** Where the time went, slowest first. Present on failure as well as success. */
+  readonly stageTimings: readonly StageTiming[];
 }
 
 export interface ScoreDistribution {
@@ -98,6 +104,17 @@ export interface ScoreDistribution {
 }
 
 const DEFAULT_FLUSH_EVERY = 50_000;
+
+/**
+ * Per-statement ceiling for ingestion connections.
+ *
+ * Ten minutes: comfortably above every measured stage at Camden scale (the
+ * slowest is the index rebuild at a few seconds), and still low enough that a
+ * genuinely stuck statement fails the run rather than holding a connection
+ * open indefinitely. A run that needs longer than this has a problem a longer
+ * timeout will not solve.
+ */
+const DEFAULT_INGESTION_STATEMENT_TIMEOUT_MS = 600_000;
 
 /**
  * A sample of accepted events, kept for the quality report only.
@@ -118,6 +135,17 @@ export async function runCamdenAggregateIngestion(
     connectionString: options.databaseUrl,
     max: 4,
     ssl: /localhost|127\.0\.0\.1/.test(options.databaseUrl) ? undefined : { rejectUnauthorized: false },
+    // Raised for this pool only, and only because a borough-sized refresh is a
+    // legitimately long batch job: the flushes and the index rebuild take tens
+    // of seconds each on the full dataset, and Supabase's default cuts them off.
+    //
+    // This is not a substitute for the query fix in migration 0013. Scoring at
+    // Camden scale went from 45.8 s to 1.2 s there, and it would now fit inside
+    // any sane default. The ceiling exists so a slow hosted instance does not
+    // kill a correct, bounded stage — and it applies to this ingestion's own
+    // connections, never to the application serving pages, where a query that
+    // takes ten minutes should be killed.
+    statement_timeout: options.statementTimeoutMs ?? DEFAULT_INGESTION_STATEMENT_TIMEOUT_MS,
   });
   try {
     return await ingestAggregates(pool, adapter, options);
@@ -157,6 +185,10 @@ export async function ingestAggregates(
   const classificationCounts: Record<string, number> = {};
   const errors: IngestionError[] = [];
   const qualitySample: NormalisedPcnEvent[] = [];
+  const timer = new StageTimer();
+  // Kept outside the try so a failure after reconciliation still reports it:
+  // returning null said "we never checked", which is a different fact.
+  let reconciliation: Reconciliation | null = null;
 
   try {
     const sourceId = await withClient(pool, (c) => upsertSource(c, adapter.descriptor));
@@ -168,6 +200,15 @@ export async function ingestAggregates(
     const reaped = await reapStaleRuns(pool, sourceId);
     if (reaped > 0) {
       logInfo('ingestion', 'Closed abandoned runs left at RUNNING', { count: reaped });
+    }
+
+    // And the versions those runs were filling. A process killed outright never
+    // reaches the catch block below, so its staged rows are nobody else's job.
+    const reapedVersions = await reapStaleVersions(pool, authorityId);
+    if (reapedVersions > 0) {
+      logInfo('ingestion', 'Discarded dataset versions left half-built', {
+        count: reapedVersions,
+      });
     }
 
     runId = await withClient(pool, (c) =>
@@ -188,7 +229,12 @@ export async function ingestAggregates(
 
     const pendingFlushes: { cells: ReturnType<ActivityAccumulator['drain']> }[] = [];
 
+    let pageStarted = Date.now();
     for await (const page of pages) {
+      // Everything since the last page arrived was spent waiting on the source.
+      timer.add('FETCH', Date.now() - pageStarted, page.rows.length);
+      const normaliseStarted = Date.now();
+
       retrievedAt = page.retrievedAt;
       schemaFingerprint ??= page.schemaFingerprint;
       counters.fetched += page.rows.length;
@@ -211,14 +257,17 @@ export async function ingestAggregates(
         if (qualitySample.length < QUALITY_SAMPLE_LIMIT) qualitySample.push(result.event);
       }
 
+      timer.add('NORMALISE', Date.now() - normaliseStarted, page.rows.length);
       options.onProgress?.({ fetched: counters.fetched, cells: accumulator.cellCount });
 
       if (accumulator.cellCount >= flushEvery) {
         pendingFlushes.push({ cells: accumulator.drain() });
         accumulator.clearCells();
       }
+      pageStarted = Date.now();
     }
     pendingFlushes.push({ cells: accumulator.drain() });
+    timer.flushAccumulated();
 
     if (counters.accepted === 0) {
       throw new IngestionFailure(
@@ -263,6 +312,7 @@ export async function ingestAggregates(
         // Locations first: the activity rows reference them. Written once per
         // flush rather than once per batch — the old pipeline's per-batch upsert
         // of every street left 238 MB of dead tuples behind 1,000 live rows.
+        const locationsStarted = Date.now();
         const ids = await upsertLocations(
           client,
           authorityId,
@@ -271,12 +321,16 @@ export async function ingestAggregates(
           flush.cells.locations,
         );
         for (const [slug, id] of ids) locationIds.set(slug, id);
+        timer.add('LOCATION_RESOLUTION', Date.now() - locationsStarted, ids.size);
 
-        counters.aggregateRows += await flushActivity(client, {
+        const flushStarted = Date.now();
+        const written = await flushActivity(client, {
           datasetVersionId,
           locationIds,
           cells: flush.cells.cells,
         });
+        counters.aggregateRows += written;
+        timer.add('AGGREGATE_FLUSH', Date.now() - flushStarted, written);
         await client.query('commit');
       } catch (error) {
         await client.query('rollback').catch(() => {});
@@ -287,17 +341,20 @@ export async function ingestAggregates(
     }
 
     counters.locations = locationIds.size;
+    timer.flushAccumulated();
 
     // Repack the indexes now the writing has stopped and before the swap. Never
     // fatal: a dataset that reconciles is publishable whether or not its index
     // is tidy.
-    await compactActivity(pool).catch((error) =>
-      logError('ingestion.compactActivity', error, { datasetVersionId }),
-    );
+    await timer
+      .time('INDEX_COMPACTION', () => compactActivity(pool))
+      .catch((error) => logError('ingestion.compactActivity', error, { datasetVersionId }));
 
     /* -- Prove it came from the source ------------------------------------ */
 
-    const reconciliation = await reconcileVersion(pool, datasetVersionId, counters.accepted);
+    reconciliation = await timer.time('RECONCILIATION', () =>
+      reconcileVersion(pool, datasetVersionId as string, counters.accepted),
+    );
     if (!reconciliation.reconciles) {
       throw new IngestionFailure(
         `Aggregate totals do not reconcile: stored ${reconciliation.aggregateTotal} against ` +
@@ -309,8 +366,10 @@ export async function ingestAggregates(
     /* -- Quality, scoring, publication ------------------------------------ */
 
     const today = new Date().toISOString().slice(0, 10);
-    const quality = analyseQuality(qualitySample, errors, new Set(knownContraventionCodes()), today);
-    const qualityGate = evaluateQualityGate(quality, counters.fetched, counters.rejected);
+    const { quality, qualityGate } = await timer.time('QUALITY_GATE', async () => {
+      const q = analyseQuality(qualitySample, errors, new Set(knownContraventionCodes()), today);
+      return { quality: q, qualityGate: evaluateQualityGate(q, counters.fetched, counters.rejected) };
+    });
 
     const geolocated = await pool.query<{ n: string }>(
       `select count(*)::text as n from parking_locations
@@ -324,18 +383,23 @@ export async function ingestAggregates(
       authorityId,
       options.authoritySlug,
       datasetVersionId,
+      timer,
     );
 
-    await activateVersion(pool, {
-      datasetVersionId,
-      authorityId,
-      reconciliation,
-      rowsFetched: counters.fetched,
-      rowsRejected: counters.rejected,
-      labels: accumulator.drainLabels(),
-    });
+    await timer.time('PUBLICATION', () =>
+      activateVersion(pool, {
+        datasetVersionId: datasetVersionId as string,
+        authorityId,
+        reconciliation: reconciliation as Reconciliation,
+        rowsFetched: counters.fetched,
+        rowsRejected: counters.rejected,
+        labels: accumulator.drainLabels(),
+      }),
+    );
     published = true;
-    await pruneVersions(pool, authorityId).catch(() => 0);
+    await timer
+      .time('OLD_VERSION_CLEANUP', () => pruneVersions(pool, authorityId))
+      .catch(() => 0);
 
     await withClient(pool, (c) =>
       finishRun(c, runId, {
@@ -379,6 +443,7 @@ export async function ingestAggregates(
       fatalError: null,
       fatalClassification: null,
       durationMs: Date.now() - startedAt,
+      stageTimings: timer.report(),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -417,7 +482,10 @@ export async function ingestAggregates(
       datasetVersionId,
       published: false,
       counters,
-      reconciliation: null,
+      // Reported when it was reached. Returning null said "never checked",
+      // which hid the fact that the full run reconciled exactly and then died
+      // on a later stage.
+      reconciliation,
       quality: null,
       qualityGate: null,
       scoreDistributions: [],
@@ -426,6 +494,7 @@ export async function ingestAggregates(
       fatalError: message,
       fatalClassification: classification,
       durationMs: Date.now() - startedAt,
+      stageTimings: timer.report(),
     };
   }
 }
@@ -498,13 +567,21 @@ async function scoreVersion(
   authorityId: string,
   authoritySlug: string,
   datasetVersionId: string,
+  timer: StageTimer,
 ): Promise<ScoreDistribution[]> {
   const distributions: ScoreDistribution[] = [];
   const asOf = new Date().toISOString().slice(0, 10);
 
   for (const periodKey of ['30D', '90D', '12M'] as const) {
     const fromDate = periodStartFor(periodKey, asOf);
-    const rows = await loadScoringInputsForVersion(pool, authoritySlug, fromDate, datasetVersionId);
+    // Timed per period: the 12-month window reads far more rows than the other
+    // two, and it was the one that timed out. A single "SCORING" number would
+    // have averaged that away.
+    const rows = await timer.time(
+      `SCORING_${periodKey}` as const,
+      () => loadScoringInputsForVersion(pool, authoritySlug, fromDate, datasetVersionId),
+      (r) => r.length,
+    );
     const results = computeTicketActivityScores(toScoringInputs(rows), { asOf });
     await persistScores(pool, authorityId, periodKey, asOf, toScoreRows(results));
     distributions.push({

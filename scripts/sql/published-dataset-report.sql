@@ -16,6 +16,12 @@
 --   DATA       the shape of what was published, including how much of it falls
 --              inside each scoring window — which is what decides whether a
 --              location can be scored at all.
+--   VERSIONS   every dataset version and what it is holding, so staged rows
+--              left by a failed run are visible rather than silently resident.
+--   GEOGRAPHY  how each street got its position, and how many never did.
+--   UNKNOWN    contravention codes the classifier would not assume were
+--              parking, so a new ticket type shows up as a bucket to decide
+--              about rather than as inflated parking figures.
 --   READ PATH  every public read function exercised against the live version.
 with storage as (
   select 'STORAGE' as section, 'database total' as metric,
@@ -69,6 +75,43 @@ shape as (
          coalesce(string_agg(distinct l.geometry_source, ', '), 'none'), 9
   from parking_locations l join authorities a on a.id = l.authority_id where a.slug = 'camden'
 ),
+versions as (
+  select 'VERSIONS' as section,
+         v.status::text || ' ' || left(v.id::text, 8) ||
+         case when v.is_demo then ' (demo)' else '' end as metric,
+         coalesce(sum(d.pcn_count), 0)::text || ' notices in ' ||
+         count(d.*)::text || ' rows, built ' ||
+         to_char(v.built_at, 'YYYY-MM-DD HH24:MI') as value,
+         15 as ord
+  from enforcement_dataset_versions v
+  join authorities a on a.id = v.authority_id and a.slug = 'camden'
+  left join pcn_activity_daily d on d.dataset_version_id = v.id
+  group by v.id, v.status, v.is_demo, v.built_at
+),
+geography as (
+  select 'GEOGRAPHY' as section,
+         coalesce(l.geometry_source, 'unresolved (no position)') as metric,
+         count(*)::text || ' streets' ||
+         case when l.geometry_method is not null then ', via ' || l.geometry_method else '' end as value,
+         16 as ord
+  from parking_locations l
+  join authorities a on a.id = l.authority_id and a.slug = 'camden'
+  group by l.geometry_source, l.geometry_method
+),
+unknown_class as (
+  select 'UNKNOWN' as section,
+         'code ' || coalesce(d.contravention_code, '(none)') as metric,
+         sum(d.pcn_count)::text || ' notices' ||
+         coalesce(' — "' || left(max(lab.description), 70) || '"', ' — no published wording') as value,
+         17 as ord
+  from pcn_activity_daily d
+  join enforcement_dataset_versions v on v.id = d.dataset_version_id
+  join authorities a on a.id = v.authority_id and a.slug = 'camden'
+  left join authority_contravention_labels lab
+         on lab.authority_id = a.id and lab.code = d.contravention_code
+  where d.enforcement_class = 'UNKNOWN'
+  group by d.contravention_code
+),
 reads as (
   select 'READ PATH' as section, 'coverage' as metric,
          c.event_count::text || ' notices, ' || c.mapped_event_count::text || ' mappable, demo=' ||
@@ -95,6 +138,8 @@ reads as (
 )
 select section, metric, value from (
   select * from storage union all select * from scoring
-  union all select * from shape union all select * from reads
+  union all select * from shape union all select * from versions
+  union all select * from geography union all select * from unknown_class
+  union all select * from reads
 ) all_rows
 order by ord, metric;
