@@ -303,6 +303,51 @@ describe('borough-sized batches', () => {
   });
 });
 
+describe('a point that cannot be a real position', () => {
+  // The live run put 4,737 notices on one exact coordinate. That is either a
+  // genuinely hot spot — a bus gate camera issuing thousands from one position —
+  // or a placeholder the publisher uses when it does not know where something
+  // happened. Identical in a count, completely different on a map.
+  it('flags one coordinate shared by several streets as a placeholder', () => {
+    const events = [
+      ...Array.from({ length: 300 }, (_, i) =>
+        event({
+          sourceRecordId: `A${i}`,
+          rowHash: `a${i}`,
+          streetName: 'Eversholt Street',
+          locationSlug: 'eversholt-street',
+        }),
+      ),
+      ...Array.from({ length: 300 }, (_, i) =>
+        event({
+          sourceRecordId: `B${i}`,
+          rowHash: `b${i}`,
+          streetName: 'Judd Street',
+          locationSlug: 'judd-street',
+        }),
+      ),
+    ];
+    const q = analyseQuality(events, [], KNOWN_CODES, TODAY);
+    expect(q.location.largestCoordinateCluster).toBe(600);
+    expect(q.location.largestClusterLocations).toBe(2);
+    expect(q.warnings.join(' ')).toMatch(/probably a placeholder/);
+  });
+
+  it('does not flag a real hotspot, where one point belongs to one street', () => {
+    // A camera issues thousands of notices from a single position on a single
+    // street. That is the signal the product exists to find, not an error.
+    const q = analyseQuality(
+      Array.from({ length: 600 }, (_, i) => event({ sourceRecordId: `C${i}`, rowHash: `c${i}` })),
+      [],
+      KNOWN_CODES,
+      TODAY,
+    );
+    expect(q.location.largestCoordinateCluster).toBe(600);
+    expect(q.location.largestClusterLocations).toBe(1);
+    expect(q.warnings.join(' ')).not.toMatch(/placeholder/);
+  });
+});
+
 describe('quality gate', () => {
   it('passes a healthy batch', () => {
     const q = analyseQuality(batch(500), [], KNOWN_CODES, TODAY);

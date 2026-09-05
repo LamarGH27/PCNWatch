@@ -285,6 +285,10 @@ function printReport(
     row('Unique coordinate pairs', q.location.uniqueCoordinatePairs);
     row('Shared coordinate pairs', q.location.sharedCoordinatePairs);
     row('Largest coordinate cluster', q.location.largestCoordinateCluster);
+    if (q.location.largestClusterAt) {
+      row('  at', q.location.largestClusterAt);
+      row('  streets sharing that point', q.location.largestClusterLocations);
+    }
     row('Outside Camden bounds', q.location.outsideBounds);
     row('Vague location names', q.location.vagueLocations);
     if (q.location.vagueExamples.length > 0) {

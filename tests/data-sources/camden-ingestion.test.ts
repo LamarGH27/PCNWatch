@@ -996,6 +996,42 @@ describe('the Camden rows that do carry coordinates', () => {
     );
   });
 
+  it('warns once about a bad coordinate, not once per route tried', () => {
+    // A row with both scalar columns and a nested point raised the same warning
+    // twice, so the ingestion report showed twice as many affected rows as
+    // there were.
+    const result = normaliseCamdenRow(
+      {
+        ...geoBase,
+        latitude: '53.4808',
+        longitude: '-2.2426',
+        location: { latitude: '53.4808', longitude: '-2.2426' },
+      },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings.filter((w) => w === 'COORDINATES_OUT_OF_RANGE')).toHaveLength(1);
+  });
+
+  it('falls back to the nested point when the scalar columns are unusable', () => {
+    // The two routes are alternatives, so one failing must not suppress the
+    // other — and must not warn when the fallback succeeds.
+    const result = normaliseCamdenRow(
+      {
+        ...geoBase,
+        latitude: 'not a number',
+        longitude: 'not a number',
+        location: { latitude: '51.5205', longitude: '-0.1401' },
+      },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.latitude).toBeCloseTo(51.5205, 4);
+    expect(result.warnings).not.toContain('COORDINATES_OUT_OF_RANGE');
+  });
+
   it('still refuses a coordinate outside the borough rather than plotting it', () => {
     // Manchester. A real position from the wrong place is worse than none.
     const result = normaliseCamdenRow({ ...geoBase, latitude: '53.4808', longitude: '-2.2426' }, 0);

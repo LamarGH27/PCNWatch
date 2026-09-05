@@ -389,17 +389,24 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
   let sourcePoint: { longitude: number; latitude: number } | null = null;
   let coordinateSource: string | null = null;
 
+  // A row carrying both scalar columns and a nested point would raise the same
+  // warning twice, so the count read as twice as many affected rows as there
+  // were. Warned once, after both routes have been tried.
+  let coordinatesRejected = false;
+
   if (lonField && latField) {
     sourcePoint = parseCoordinates(lonField.value, latField.value, CAMDEN_BBOX);
     coordinateSource = sourcePoint ? `${lonField.key}/${latField.key}` : null;
-    if (!sourcePoint) warnings.push('COORDINATES_OUT_OF_RANGE');
+    if (!sourcePoint) coordinatesRejected = true;
   }
 
   if (!sourcePoint && nestedPoint) {
     sourcePoint = parseCoordinates(nestedPoint.longitude, nestedPoint.latitude, CAMDEN_BBOX);
     coordinateSource = sourcePoint ? nestedPoint.key : null;
-    if (!sourcePoint) warnings.push('COORDINATES_OUT_OF_RANGE');
+    if (!sourcePoint) coordinatesRejected = true;
   }
+
+  if (!sourcePoint && coordinatesRejected) warnings.push('COORDINATES_OUT_OF_RANGE');
 
   if (!sourcePublishesCoordinates) warnings.push('COORDINATES_ABSENT');
 

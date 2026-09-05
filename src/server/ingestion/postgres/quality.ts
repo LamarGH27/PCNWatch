@@ -28,6 +28,9 @@ export interface QualityReport {
     readonly largestCoordinateCluster: number;
     /** Accepted records whose coordinates sit outside the expected bounding box. */
     readonly outsideBounds: number;
+    /** The coordinate holding the largest cluster, and what sits there. */
+    readonly largestClusterAt: string | null;
+    readonly largestClusterLocations: number;
     /** Street values that look like a placeholder rather than a real place. */
     readonly vagueLocations: number;
     readonly vagueExamples: readonly string[];
@@ -146,9 +149,28 @@ export function analyseQuality(
   // this failed on the first million-row run.
   let sharedCoordinatePairs = 0;
   let largestCoordinateCluster = 0;
-  for (const count of coordinateCounts.values()) {
+  let largestClusterAt: string | null = null;
+  for (const [key, count] of coordinateCounts) {
     if (count > 1) sharedCoordinatePairs += 1;
-    if (count > largestCoordinateCluster) largestCoordinateCluster = count;
+    if (count > largestCoordinateCluster) {
+      largestCoordinateCluster = count;
+      largestClusterAt = key;
+    }
+  }
+
+  // Many notices at one exact point is either a genuinely hot spot — a bus gate
+  // camera issues thousands from one position — or a default the publisher uses
+  // when it does not know where something happened. The two look identical in a
+  // count and completely different on a map, and the tell is how many separate
+  // streets share the point: a camera sits on one street, a default collects
+  // many.
+  const streetsAtLargestCluster = new Set<string>();
+  if (largestClusterAt !== null) {
+    for (const e of located) {
+      if (`${e.longitude!.toFixed(6)},${e.latitude!.toFixed(6)}` === largestClusterAt) {
+        streetsAtLargestCluster.add(e.locationSlug);
+      }
+    }
   }
   const outsideBounds = located.filter(
     (e) =>
@@ -193,6 +215,14 @@ export function analyseQuality(
   } else if (percentageGeolocated < 50 && events.length > 0) {
     warnings.push(
       `Only ${percentageGeolocated}% of accepted records carry usable coordinates. Map coverage will be sparse and many locations will be refused a score.`,
+    );
+  }
+  if (streetsAtLargestCluster.size > 1) {
+    warnings.push(
+      `The busiest single coordinate (${largestClusterAt}) carries ${largestCoordinateCluster} notices ` +
+        `spread across ${streetsAtLargestCluster.size} different streets. One point cannot be on several ` +
+        'streets, so this is probably a placeholder the publisher uses rather than a real position. ' +
+        'Those notices would sit on the map in a place none of them happened.',
     );
   }
   if (outsideBounds > 0) {
@@ -280,6 +310,8 @@ export function analyseQuality(
       sharedCoordinatePairs,
       largestCoordinateCluster,
       outsideBounds,
+      largestClusterAt,
+      largestClusterLocations: streetsAtLargestCluster.size,
       vagueLocations: vague.length,
       vagueExamples: firstDistinct(vague, (e) => e.streetName, 5),
       geographyAvailability,

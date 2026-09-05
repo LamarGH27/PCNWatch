@@ -2,7 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getCoverage, getLocation, type LocationDetail } from '@/server/repositories/enforcement';
-import { getContravention } from '@/core/reference/store';
+import {
+  describeContravention,
+  getAuthorityLabels,
+} from '@/server/repositories/contravention-labels';
 import { isAuthorityInMapScope } from '@/core/coverage/coverage';
 import { SCORE_DISCLAIMER } from '@/core/scoring/config';
 import {
@@ -56,7 +59,10 @@ export default async function LocationPage({ params }: PageProps) {
   if (!isAuthorityInMapScope(authority)) notFound();
 
   const coverage = await getCoverage(authority);
-  const result = await getLocation(authority, location);
+  const [result, authorityLabels] = await Promise.all([
+    getLocation(authority, location),
+    getAuthorityLabels(authority),
+  ]);
 
   if (!result.ok) {
     return (
@@ -176,7 +182,11 @@ export default async function LocationPage({ params }: PageProps) {
           <Card padded={false}>
             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
               {detail.contraventionBreakdown.slice(0, 6).map((entry: { code: string; count: number }, i: number) => {
-                const record = getContravention(entry.code);
+                const described = describeContravention(
+                  entry.code,
+                  authorityLabels,
+                  coverage.authorityName,
+                );
                 const share = detail.totalPcns > 0 ? entry.count / detail.totalPcns : 0;
                 return (
                   <li
@@ -216,9 +226,22 @@ export default async function LocationPage({ params }: PageProps) {
                         }}
                       />
                     </div>
-                    {record && (
+                    {described && (
                       <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text-muted)' }}>
-                        {record.summary}
+                        {described.text}
+                        {/*
+                          The distinction a reader needs: our reviewed reference
+                          explains what the law requires; the authority's own
+                          wording only says what it calls the code. Attributed
+                          so the two are never mistaken for each other.
+                        */}
+                        {described.source === 'AUTHORITY_PUBLISHED' && (
+                          <span style={{ color: 'var(--text-faint)' }}>
+                            {' '}
+                            — as described by {described.attribution}. Not a legal explanation of
+                            the contravention.
+                          </span>
+                        )}
                       </p>
                     )}
                   </li>

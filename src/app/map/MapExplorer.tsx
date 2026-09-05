@@ -517,14 +517,11 @@ export function MapExplorer({
           mappableEventShare !== null &&
           mappableEventShare < 0.99 && (
             <StatusPill>
-              Showing the{' '}
+              Positions are street-level. Every notice on a street is drawn at one point on that
+              street, taken from a notice the authority did publish coordinates for — not at the
+              place each notice was issued.{' '}
               <span className="fr-numeric">{Math.round(mappableEventShare * 100)}%</span> of recorded
-              notices the authority published a position for. The rest are recorded against a street
-              with no coordinates and cannot be drawn —{' '}
-              <Link href="/hotspots" style={{ color: 'inherit', textDecoration: 'underline' }}>
-                hotspots
-              </Link>{' '}
-              ranks every notice by street.
+              notices carry a position of their own.
             </StatusPill>
           )}
       </div>

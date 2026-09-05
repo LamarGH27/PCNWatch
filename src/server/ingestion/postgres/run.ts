@@ -16,6 +16,7 @@ import {
   rebuildAggregates,
   requireAuthorityId,
   startRun,
+  upsertContraventionLabels,
   upsertSource,
   upsertSourceVersion,
   type ScoreRow,
@@ -195,6 +196,9 @@ export async function runCamdenIngestionJob(
         // Nothing is written for a run the pipeline judged unusable.
         await client.query('rollback');
       } else {
+        // Inside the same transaction, so a label can never describe a code
+        // whose events were rolled back.
+        await upsertContraventionLabels(client, authorityId, acceptedEvents);
         await client.query('commit');
         committed = true;
       }

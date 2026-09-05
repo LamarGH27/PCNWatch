@@ -116,13 +116,16 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
        (select count(*) from parking_locations l
          where l.authority_id = a.id and l.geom is not null)::text
          as geolocated_location_count,
-       -- How much of the recorded activity can actually be drawn. A source that
-       -- publishes coordinates for only some of its notices makes a map that is
-       -- true about what it shows and silent about the rest, so the share has to
-       -- be stated rather than left for the user to assume.
+       -- Notices the authority published a position for, counted on the event's
+       -- own geometry rather than its street's.
+       --
+       -- The distinction is the whole point. A street gets its position from one
+       -- representative notice, and the map then shows every notice on that
+       -- street at that one point — so counting events whose *location* has
+       -- geometry reports 100% while most of those notices have no position of
+       -- their own. That would state the opposite of the truth.
        (select count(*) from pcn_events e
-          join parking_locations l on l.id = e.parking_location_id
-         where e.authority_id = a.id and l.geom is not null)::text
+         where e.authority_id = a.id and e.geom is not null)::text
          as geolocated_event_count,
        run.finished_at as last_ingested_at,
        (run.report ->> 'demo')::boolean as is_demo

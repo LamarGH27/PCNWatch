@@ -19,9 +19,19 @@ assumed to handle them.
 The consequence for the product is partial coverage, which has to be stated
 rather than left to be assumed:
 
-- The map draws the geolocated subset. It is true about every point it shows and
-  silent about the rest, and on a map silence reads as an absence of enforcement.
-  So the map states the share it is showing and points at hotspots for the whole.
+- The map is **street-level, not point-level**, and this is easy to miss. A street
+  takes its position from one notice the authority published coordinates for, and
+  then *every* notice on that street is drawn at that point — including notices
+  with no coordinate of their own. That is defensible as street-level positioning
+  and indefensible if left undeclared, so the location records where its point
+  came from (`_geometry`: origin `SOURCE_PUBLISHED`, method
+  `REPRESENTATIVE_EVENT`, precision `STREET`, and the notice it came from), and
+  the map says positions are street-level and what share of notices carry one of
+  their own.
+- The count of notices carrying their own position is taken from `pcn_events.geom`,
+  never from whether their street has geometry. The second reports 100% as soon
+  as one notice on a street has a coordinate, which would state the opposite of
+  the truth.
 - Hotspot ranking uses every notice, geolocated or not — ranking is not mapping.
 
 ## The separation

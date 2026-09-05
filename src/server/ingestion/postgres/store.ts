@@ -352,7 +352,23 @@ async function ensureLocations(
        case when lon = '' then null
             else st_setsrid(st_point(lon::double precision, lat::double precision), 4326)::geography
        end,
-       $2::uuid, rec_id, $3::timestamptz, conf::numeric, '{}'::jsonb
+       $2::uuid, rec_id, $3::timestamptz, conf::numeric,
+       -- Provenance for the street's position, because it is derived, not
+       -- observed. The point comes from ONE notice on this street; every other
+       -- notice here is drawn at it. Recording where it came from is what
+       -- separates street-level positioning from an invented coordinate.
+       case when lon = '' then '{}'::jsonb
+            else jsonb_build_object(
+              '_geometry', jsonb_build_object(
+                'origin', 'SOURCE_PUBLISHED',
+                'method', 'REPRESENTATIVE_EVENT',
+                'precision', 'STREET',
+                'referenceSource', 'pcn_events.geom',
+                'referenceRecordId', rec_id,
+                'confidence', conf::numeric,
+                'lookedUpAt', $3::timestamptz
+              ))
+       end
      from unnest(
        $4::text[], $5::text[], $6::text[], $7::text[], $8::text[],
        $9::text[], $10::text[], $11::text[], $12::text[], $13::text[]
@@ -365,6 +381,10 @@ async function ensureLocations(
        postcode_district = coalesce(excluded.postcode_district, parking_locations.postcode_district),
        -- Never replace a known position with a null one.
        geom = coalesce(excluded.geom, parking_locations.geom),
+       source_metadata = case
+         when excluded.geom is not null then excluded.source_metadata
+         else parking_locations.source_metadata
+       end,
        retrieved_at = excluded.retrieved_at,
        data_confidence = greatest(excluded.data_confidence, parking_locations.data_confidence)
      returning id, slug`,
@@ -391,6 +411,50 @@ async function ensureLocations(
 /* ------------------------------------------------------------------ */
 /* Post-ingestion recomputation                                        */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Records what the authority itself calls each contravention code.
+ *
+ * Kept strictly apart from `contravention_codes`, which is the reviewed legal
+ * reference. This is descriptive labelling of enforcement data: the publisher's
+ * own words, verbatim, so a location page can say what a code means where no
+ * reviewed record exists — with the authority named as the source.
+ *
+ * Written inside the same transaction as the events, so the labels can never
+ * describe codes that were rolled back.
+ */
+export async function upsertContraventionLabels(
+  client: PoolClient,
+  authorityId: string,
+  events: readonly NormalisedPcnEvent[],
+): Promise<number> {
+  const counts = new Map<string, { code: string; description: string; count: number }>();
+  for (const event of events) {
+    if (!event.contraventionCode) continue;
+    const description = event.sourceMetadata['contravention_code_description'];
+    if (typeof description !== 'string') continue;
+    const trimmed = description.trim();
+    if (trimmed === '') continue;
+    const key = `${event.contraventionCode}\u0000${trimmed}`;
+    const existing = counts.get(key);
+    if (existing) existing.count += 1;
+    else counts.set(key, { code: event.contraventionCode, description: trimmed, count: 1 });
+  }
+  if (counts.size === 0) return 0;
+
+  const rows = [...counts.values()];
+  await client.query(
+    `insert into authority_contravention_labels
+       (authority_id, code, description, event_count, last_seen_at)
+     select $1::uuid, c.code, c.description, c.n, now()
+     from unnest($2::text[], $3::text[], $4::int[]) as c(code, description, n)
+     on conflict (authority_id, code, description) do update
+       set event_count = authority_contravention_labels.event_count + excluded.event_count,
+           last_seen_at = excluded.last_seen_at`,
+    [authorityId, rows.map((r) => r.code), rows.map((r) => r.description), rows.map((r) => r.count)],
+  );
+  return rows.length;
+}
 
 export async function rebuildAggregates(pool: Pool, authorityId: string): Promise<number> {
   const { rows } = await pool.query<{ pcnwatch_rebuild_aggregates: number }>(
