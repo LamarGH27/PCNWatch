@@ -154,6 +154,50 @@ describe('routes that read live data are not prerendered', () => {
  * rather than "that code is not in this data" — while hiding three of the four
  * most common, including two with roughly 75,000 notices each.
  */
+describe('the read pool can reach a transaction pooler', () => {
+  const reader = readFileSync(resolve(ROOT, 'src/server/db/reader.ts'), 'utf8');
+
+  it('sets no startup parameter a pooler in transaction mode would refuse', () => {
+    // node-postgres sends statement_timeout, lock_timeout and
+    // idle_in_transaction_session_timeout in the StartupMessage. A pooler in
+    // transaction mode rejects a connection carrying startup parameters it does
+    // not track, so these fail the connection outright rather than making a
+    // query slow — and serverless deployments have to use that pooler.
+    // Searched forward from the constructor: `return pool;` also appears above
+    // it, in the memoisation check, and slicing to that gave an empty string —
+    // a guard that passed because it was examining nothing at all.
+    const start = reader.indexOf('new Pool(');
+    const poolConfig = reader.slice(start, reader.indexOf('return pool;', start));
+    expect(poolConfig).toContain('connectionString');
+    for (const forbidden of [
+      'statement_timeout',
+      'lock_timeout',
+      'idle_in_transaction_session_timeout',
+      'options:',
+    ]) {
+      // Named in a comment is fine; passed as configuration is not.
+      const configured = new RegExp(`^\\s*${forbidden.replace(':', '')}\\s*:`, 'm');
+      expect(configured.test(poolConfig), `${forbidden} must not be a pool option`).toBe(false);
+    }
+  });
+
+  it('still bounds a slow read, client-side', () => {
+    expect(reader).toMatch(/query_timeout:\s*[\d_]+/);
+    expect(reader).toMatch(/connectionTimeoutMillis:\s*[\d_]+/);
+  });
+
+  it('keeps the ingestion timeout out of the request path', () => {
+    // The ingestion pool allows ten minutes for a borough-sized batch. That
+    // ceiling must never be what a visitor's map query is held to.
+    const ingestion = readFileSync(
+      resolve(ROOT, 'src/server/ingestion/postgres/aggregate-run.ts'),
+      'utf8',
+    );
+    expect(ingestion).toMatch(/statement_timeout/);
+    expect(reader).not.toMatch(/600_000|600000/);
+  });
+});
+
 describe('filters offer only what the data contains', () => {
   it('builds the contravention filter from the database, not a literal', () => {
     const source = readFileSync(resolve(ROOT, 'src/app/hotspots/page.tsx'), 'utf8');

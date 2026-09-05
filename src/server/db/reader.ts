@@ -40,9 +40,29 @@ function getPool(): Pool | null {
     connectionString,
     // Read path: small pool, short timeout. A slow map query must fail fast and
     // render "temporarily unavailable" rather than hold a request open.
+    //
+    // `query_timeout`, not `statement_timeout`. They look interchangeable and
+    // are not: node-postgres sends `statement_timeout` as a StartupMessage
+    // parameter, and a pooler in transaction mode refuses connections carrying
+    // startup parameters it does not track — the connection fails outright
+    // rather than the query being slow. `query_timeout` is a client-side timer
+    // in the driver, so it behaves identically against a direct connection, a
+    // session pooler and a transaction pooler. Serverless deployments must go
+    // through the transaction pooler, so the portable one is the only choice.
+    //
+    // It abandons the query rather than cancelling it server-side, so pair it
+    // with a ceiling set on the database role, which no pooler can strip:
+    //   alter role authenticator set statement_timeout = '10s';
     max: 5,
-    statement_timeout: 10_000,
-    idleTimeoutMillis: 30_000,
+    query_timeout: 10_000,
+    connectionTimeoutMillis: 10_000,
+    // Short, because on a serverless platform every idle instance holds pooler
+    // slots the next cold start will want. Thirty seconds was tuned for a long
+    // -lived server.
+    idleTimeoutMillis: 10_000,
+    // Lets an idle instance release its connections instead of keeping the
+    // event loop alive until the platform freezes it.
+    allowExitOnIdle: true,
     ssl: /^postgres(ql)?:\/\/[^/]*(localhost|127\.0\.0\.1)/.test(connectionString)
       ? undefined
       : { rejectUnauthorized: false },
