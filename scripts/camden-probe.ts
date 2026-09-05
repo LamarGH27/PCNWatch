@@ -18,6 +18,7 @@ import { FIELD_ALIASES, POINT_FIELD_CANDIDATES, readSocrataPoint } from '../src/
 import { redactRegistrations, isForbiddenField } from '../src/data-sources/shared/pii';
 import { normaliseCamdenRow } from '../src/data-sources/camden/adapter';
 import { classifyEnforcement } from '../src/data-sources/camden/enforcement-class';
+import { execFileSync } from 'node:child_process';
 
 const SAMPLE_SIZE = 50;
 
@@ -108,7 +109,8 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log(`Sampled ${payload.length} rows, ${columns.size} columns.\n`);
+  console.log(`Sampled ${payload.length} rows, ${columns.size} columns.`);
+  console.log(`Adapter build: ${adapterRevision()}\n`);
   console.log('COLUMNS');
   console.log('─'.repeat(100));
   console.log(
@@ -222,7 +224,28 @@ async function main(): Promise<void> {
 
   if (missingRequired > 0) {
     console.log('  ✗ The adapter cannot read this dataset: a required field has no matching column.');
-    console.log('    Add the real column name to FIELD_ALIASES in src/data-sources/camden/schema.ts.');
+    console.log('');
+    // Print the alias lists this build actually compiled in. A required field
+    // failing while the obvious column sits in the source usually means the
+    // checkout predates the fix, not that the fix is wrong — and the two look
+    // identical from the summary line above. This makes them look different.
+    for (const logical of ['recordId', 'street'] as const) {
+      const aliases = FIELD_ALIASES[logical];
+      if (aliases.some((a) => names.has(a))) continue;
+      console.log(`    ${logical} — this build looks for, in order:`);
+      console.log(`      ${aliases.join(', ')}`);
+      console.log(`    The source published: ${[...names].sort().join(', ')}`);
+      const obvious = [...names].filter((n) => !Object.values(FIELD_ALIASES).some((l) => (l as readonly string[]).includes(n)));
+      if (obvious.length > 0) {
+        console.log(`    Columns no alias list mentions: ${obvious.join(', ')}`);
+      }
+      console.log('');
+    }
+    console.log(`    Adapter build: ${adapterRevision()}`);
+    console.log('    If a column above is plainly the right one, this checkout is behind —');
+    console.log('    pull the branch and re-run before editing FIELD_ALIASES.');
+    console.log('    Otherwise add the real column name to FIELD_ALIASES in');
+    console.log('    src/data-sources/camden/schema.ts.');
   } else if (acceptRate < 0.8) {
     console.log(`  ✗ Only ${Math.round(acceptRate * 100)}% of the sample normalised successfully.`);
     console.log('    Fix the rejections above before attempting a full ingestion.');
@@ -246,6 +269,29 @@ async function main(): Promise<void> {
   console.log('');
 
   process.exit(missingRequired > 0 || acceptRate < 0.8 ? 1 : 0);
+}
+
+/**
+ * Which build of the adapter produced this output.
+ *
+ * A probe result is evidence, and evidence needs to say what it is evidence
+ * about. Best-effort: outside a git checkout it says so rather than guessing.
+ */
+function adapterRevision(): string {
+  try {
+    const rev = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const dirty =
+      execFileSync('git', ['status', '--porcelain'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim() !== '';
+    return `${rev}${dirty ? ' (uncommitted changes present)' : ''}`;
+  } catch {
+    return 'unknown (not a git checkout)';
+  }
 }
 
 /** Distinct non-empty values of one column across the sample, with counts. */
