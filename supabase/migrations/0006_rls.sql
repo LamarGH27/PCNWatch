@@ -29,19 +29,32 @@ alter table products                enable row level security;
 alter table dtro_records            enable row level security;
 alter table dtro_restrictions       enable row level security;
 
-create policy "public read data_sources"            on data_sources            for select using (true);
-create policy "public read source_versions"         on source_versions         for select using (true);
-create policy "public read authorities"             on authorities             for select using (true);
-create policy "public read authority_data_sources"  on authority_data_sources  for select using (true);
-create policy "public read contravention_codes"     on contravention_codes     for select using (true);
-create policy "public read authority_procedures"    on authority_procedures    for select using (true);
-create policy "public read parking_locations"       on parking_locations       for select using (true);
-create policy "public read road_segments"           on road_segments           for select using (true);
+drop policy if exists "public read data_sources" on data_sources;
+create policy "public read data_sources" on data_sources            for select using (true);
+drop policy if exists "public read source_versions" on source_versions;
+create policy "public read source_versions" on source_versions         for select using (true);
+drop policy if exists "public read authorities" on authorities;
+create policy "public read authorities" on authorities             for select using (true);
+drop policy if exists "public read authority_data_sources" on authority_data_sources;
+create policy "public read authority_data_sources" on authority_data_sources  for select using (true);
+drop policy if exists "public read contravention_codes" on contravention_codes;
+create policy "public read contravention_codes" on contravention_codes     for select using (true);
+drop policy if exists "public read authority_procedures" on authority_procedures;
+create policy "public read authority_procedures" on authority_procedures    for select using (true);
+drop policy if exists "public read parking_locations" on parking_locations;
+create policy "public read parking_locations" on parking_locations       for select using (true);
+drop policy if exists "public read road_segments" on road_segments;
+create policy "public read road_segments" on road_segments           for select using (true);
+drop policy if exists "public read pcn_activity_aggregates" on pcn_activity_aggregates;
 create policy "public read pcn_activity_aggregates" on pcn_activity_aggregates for select using (true);
-create policy "public read pcn_activity_scores"     on pcn_activity_scores     for select using (true);
-create policy "public read active products"         on products                for select using (active);
-create policy "public read dtro_records"            on dtro_records            for select using (true);
-create policy "public read dtro_restrictions"       on dtro_restrictions       for select using (true);
+drop policy if exists "public read pcn_activity_scores" on pcn_activity_scores;
+create policy "public read pcn_activity_scores" on pcn_activity_scores     for select using (true);
+drop policy if exists "public read active products" on products;
+create policy "public read active products" on products                for select using (active);
+drop policy if exists "public read dtro_records" on dtro_records;
+create policy "public read dtro_records" on dtro_records            for select using (true);
+drop policy if exists "public read dtro_restrictions" on dtro_restrictions;
+create policy "public read dtro_restrictions" on dtro_restrictions       for select using (true);
 
 -- pcn_events holds one row per issued PCN. Even stripped of personal fields it is
 -- not exposed to clients: the map and hotspot pages read aggregates only.
@@ -74,6 +87,7 @@ alter table payments                enable row level security;
 alter table entitlements            enable row level security;
 alter table subscriptions           enable row level security;
 
+drop policy if exists "own profile" on profiles;
 create policy "own profile" on profiles
   for all to authenticated
   using (id = (select auth.uid()))
@@ -96,6 +110,7 @@ begin
     'case_events'
   ]
   loop
+    execute format($f$drop policy if exists "own rows %1$s" on %1$I$f$, t);
     execute format($f$
       create policy "own rows %1$s" on %1$I
         for all to authenticated
@@ -109,12 +124,15 @@ $$;
 -- Payments, entitlements and subscriptions: the owner may look, never touch.
 -- Writes come from the Stripe webhook running as the service role, which bypasses
 -- RLS. A client cannot insert an entitlement for itself.
+drop policy if exists "read own payments" on payments;
 create policy "read own payments" on payments
   for select to authenticated using (user_id = (select auth.uid()));
 
+drop policy if exists "read own entitlements" on entitlements;
 create policy "read own entitlements" on entitlements
   for select to authenticated using (user_id = (select auth.uid()));
 
+drop policy if exists "read own subscriptions" on subscriptions;
 create policy "read own subscriptions" on subscriptions
   for select to authenticated using (user_id = (select auth.uid()));
 
@@ -162,6 +180,7 @@ begin
     'case_events'
   ]
   loop
+    execute format('drop trigger if exists assert_case_owner_%1$s on %1$I', t);
     execute format(
       'create trigger assert_case_owner_%1$s before insert or update on %1$I
          for each row execute function assert_case_belongs_to_user()',
@@ -193,6 +212,7 @@ begin
 end;
 $$;
 
+drop trigger if exists assert_assessment_owner on pcn_assessment_findings;
 create trigger assert_assessment_owner
   before insert or update on pcn_assessment_findings
   for each row execute function assert_assessment_belongs_to_user();
@@ -204,69 +224,163 @@ create trigger assert_assessment_owner
 -- Buckets are private. Object paths are "<user_id>/<case_id>/<filename>" so the
 -- owning user is the first path segment and policies can check it without a join.
 
--- Supabase enables RLS on storage.objects by default, but we never rely on a
--- platform default for a security boundary: without this the policies below are
--- decorative and every signed-in user can read every stored document.
+-- storage.objects belongs to Supabase, not to us.
 --
--- On hosted Supabase that table is owned by supabase_storage_admin, so the role
--- running these migrations may not be allowed to alter it. Rather than let the
--- whole migration fail, the attempt is made and then the *outcome* is checked:
--- if RLS is not enabled by the time we are done, this raises. Tolerating the
--- privilege error is safe; tolerating an unprotected table is not.
-do $$
-begin
-  begin
-    execute 'alter table storage.objects enable row level security';
-  exception
-    when insufficient_privilege then
-      raise notice 'Could not alter storage.objects (not owner). Checking whether RLS is already on.';
-  end;
-
-  if not exists (
-    select 1 from pg_class c
-    join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'storage' and c.relname = 'objects' and c.relrowsecurity
-  ) then
-    raise exception
-      'Row level security is NOT enabled on storage.objects and this role cannot enable it. '
-      'Every signed-in user would be able to read every stored document. Enable it as an '
-      'owner before continuing.';
-  end if;
-end;
-$$;
-
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values
-  ('pcn-documents', 'pcn-documents', false, 12582912,
-   array['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
-  ('pcn-evidence', 'pcn-evidence', false, 12582912,
-   array['image/jpeg', 'image/png', 'image/webp', 'application/pdf'])
-on conflict (id) do nothing;
+-- On a hosted project the table is owned by `supabase_storage_admin`, and the
+-- migration role owns none of it. Every statement below that needs ownership —
+-- ALTER TABLE ... ENABLE ROW LEVEL SECURITY, DROP POLICY, CREATE POLICY —
+-- fails with `42501: must be owner of table objects`. Seizing ownership is not
+-- an option: the platform manages that schema and would be entitled to break us.
+--
+-- So this section ATTEMPTS the setup and never fails the migration on a
+-- privilege error, then records what is actually true. Storage readiness is not
+-- assumed from the migration having run; it is read back from the catalogue by
+-- `pcnwatch_storage_readiness()`, and the application refuses to accept uploads
+-- until that reports ready. A missing policy therefore closes the feature rather
+-- than silently exposing one user's documents to another.
+--
+-- Buckets are private. Object paths are "<user_id>/<case_id>/<filename>" so the
+-- owning user is the first path segment and a policy can check it without a join.
 
 do $$
 declare
-  b text;
+  bucket text;
+  attempted_rls boolean := false;
+  attempted_buckets boolean := false;
+  attempted_policies boolean := false;
 begin
-  foreach b in array array['pcn-documents', 'pcn-evidence']
-  loop
-    execute format($f$drop policy if exists "own objects read %1$s" on storage.objects$f$, b);
-    execute format($f$drop policy if exists "own objects write %1$s" on storage.objects$f$, b);
-    execute format($f$drop policy if exists "own objects delete %1$s" on storage.objects$f$, b);
-    execute format($f$
-      create policy "own objects read %1$s" on storage.objects
-        for select to authenticated
-        using (bucket_id = %1$L and (storage.foldername(name))[1] = (select auth.uid())::text)
-    $f$, b);
-    execute format($f$
-      create policy "own objects write %1$s" on storage.objects
-        for insert to authenticated
-        with check (bucket_id = %1$L and (storage.foldername(name))[1] = (select auth.uid())::text)
-    $f$, b);
-    execute format($f$
-      create policy "own objects delete %1$s" on storage.objects
-        for delete to authenticated
-        using (bucket_id = %1$L and (storage.foldername(name))[1] = (select auth.uid())::text)
-    $f$, b);
-  end loop;
+  -- 1. Row level security on storage.objects. Supabase enables this by default,
+  --    so on a hosted project the attempt is redundant and the check passes.
+  begin
+    execute 'alter table storage.objects enable row level security';
+    attempted_rls := true;
+  exception
+    when insufficient_privilege then
+      raise notice '[storage] Cannot ALTER storage.objects (owned by Supabase). Relying on the platform default.';
+  end;
+
+  -- 2. Buckets. INSERT is a table privilege rather than ownership, so this
+  --    normally succeeds on hosted Supabase; it is still guarded, because a
+  --    failure here must not stop the public-schema work above from landing.
+  begin
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values
+      ('pcn-documents', 'pcn-documents', false, 12582912,
+       array['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
+      ('pcn-evidence', 'pcn-evidence', false, 12582912,
+       array['image/jpeg', 'image/png', 'image/webp', 'application/pdf'])
+    on conflict (id) do nothing;
+    attempted_buckets := true;
+  exception
+    when insufficient_privilege then
+      raise notice '[storage] Cannot INSERT into storage.buckets. Create both buckets in the dashboard, private.';
+  end;
+
+  -- 3. Object policies. These are the ones that failed on hosted Supabase.
+  begin
+    foreach bucket in array array['pcn-documents', 'pcn-evidence']
+    loop
+      execute format($f$drop policy if exists "own objects read %1$s" on storage.objects$f$, bucket);
+      execute format($f$drop policy if exists "own objects write %1$s" on storage.objects$f$, bucket);
+      execute format($f$drop policy if exists "own objects delete %1$s" on storage.objects$f$, bucket);
+      execute format($f$
+        create policy "own objects read %1$s" on storage.objects
+          for select to authenticated
+          using (bucket_id = %1$L and (storage.foldername(name))[1] = (select auth.uid())::text)
+      $f$, bucket);
+      execute format($f$
+        create policy "own objects write %1$s" on storage.objects
+          for insert to authenticated
+          with check (bucket_id = %1$L and (storage.foldername(name))[1] = (select auth.uid())::text)
+      $f$, bucket);
+      execute format($f$
+        create policy "own objects delete %1$s" on storage.objects
+          for delete to authenticated
+          using (bucket_id = %1$L and (storage.foldername(name))[1] = (select auth.uid())::text)
+      $f$, bucket);
+    end loop;
+    attempted_policies := true;
+  exception
+    when insufficient_privilege then
+      raise notice '[storage] Cannot CREATE POLICY on storage.objects (owned by Supabase).';
+      raise notice '[storage] Create the six policies through Storage -> Policies. See docs/deployment-supabase.md.';
+  end;
+
+  raise notice '[storage] Attempted: rls=% buckets=% policies=%',
+    attempted_rls, attempted_buckets, attempted_policies;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Storage readiness, read back from the catalogue.
+--
+-- Deliberately not a record of what this migration tried to do. It reports what
+-- is true now, so it gives the same answer whether the policies were created
+-- here or by hand in the dashboard afterwards.
+-- ---------------------------------------------------------------------------
+
+create or replace function pcnwatch_storage_readiness()
+returns table (
+  ready boolean,
+  rls_enabled boolean,
+  buckets_present integer,
+  buckets_private boolean,
+  policies_present integer,
+  policies_expected integer,
+  missing text[]
+)
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  with expected as (
+    select unnest(array[
+      'own objects read pcn-documents',
+      'own objects write pcn-documents',
+      'own objects delete pcn-documents',
+      'own objects read pcn-evidence',
+      'own objects write pcn-evidence',
+      'own objects delete pcn-evidence'
+    ]) as policyname
+  ),
+  found as (
+    select p.policyname
+    from pg_policies p
+    where p.schemaname = 'storage' and p.tablename = 'objects'
+  ),
+  rls as (
+    select coalesce(bool_or(c.relrowsecurity), false) as on
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'storage' and c.relname = 'objects'
+  ),
+  buckets as (
+    select count(*)::int as n, coalesce(bool_and(not b.public), false) as all_private
+    from storage.buckets b
+    where b.id in ('pcn-documents', 'pcn-evidence')
+  )
+  select
+    rls.on
+      and buckets.n = 2
+      and buckets.all_private
+      and (select count(*) from expected e join found f on f.policyname = e.policyname) = 6,
+    rls.on,
+    buckets.n,
+    buckets.all_private,
+    (select count(*)::int from expected e join found f on f.policyname = e.policyname),
+    6,
+    coalesce(
+      (select array_agg(e.policyname order by e.policyname)
+         from expected e
+        where not exists (select 1 from found f where f.policyname = e.policyname)),
+      '{}'::text[]
+    )
+  from rls, buckets;
+$$;
+
+comment on function pcnwatch_storage_readiness() is
+  'True state of private document storage: RLS, buckets and the six per-bucket object policies. The application refuses uploads unless ready is true.';
+
+-- Called by the application through the service role only.
+revoke execute on function pcnwatch_storage_readiness() from public, anon, authenticated;
+grant execute on function pcnwatch_storage_readiness() to service_role;
