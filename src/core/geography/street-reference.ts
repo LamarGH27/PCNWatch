@@ -3,8 +3,18 @@
  *
  * There is exactly one implementation today, and it resolves nothing.
  *
- * That is the correct state. Camden's dataset publishes no coordinates, and the
- * options for supplying them are not equal:
+ * That is the correct state, though not for the reason first written here.
+ *
+ * This comment used to say Camden publishes no coordinates. A census of the
+ * whole dataset disproved that: 296,978 of 485,564 rows (61.2%) carry
+ * `latitude`/`longitude`. The earlier belief came from sampling 50 rows, and
+ * Socrata omits null fields per row — so a sample of rows that happen to lack
+ * coordinates is indistinguishable from a dataset that has no such column.
+ *
+ * So roughly two notices in five have no published position, and every notice
+ * on a street that never published one leaves that street unmappable. A
+ * reference is still needed for those; the options for supplying them are not
+ * equal:
  *
  *   - A commercial geocoding API would return a point per street, but the point
  *     is not reproducible (it changes as the provider's index changes), the
@@ -23,6 +33,13 @@
  *
  * Until that reference is loaded, `resolve` returns `NO_STREET_REFERENCE_CONFIGURED`
  * and the map shows nothing for those records, which is the truth.
+ *
+ * One consequence worth stating plainly, because it surprised us on a real run:
+ * a bounded ingestion (`--limit`) fetches rows in the source's own `:id` order,
+ * which is not a sample. A slice can be entirely made up of streets that
+ * published no coordinates, and then 0% of it is mappable while the dataset as
+ * a whole is 61% mappable. Neither figure is wrong; they describe different
+ * sets of rows.
  */
 
 import {
