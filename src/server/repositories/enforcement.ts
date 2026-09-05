@@ -90,6 +90,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
       configuredLive,
       eventCount: 0,
       geolocatedLocationCount: 0,
+      geolocatedEventCount: 0,
       lastSuccessfulIngestionAt: null,
       sourceUnavailable: true,
       isDemoData: false,
@@ -101,6 +102,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
     map_coverage_status: string;
     event_count: string;
     geolocated_location_count: string;
+    geolocated_event_count: string;
     last_ingested_at: string | null;
     is_demo: boolean | null;
   }>(
@@ -114,6 +116,14 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
        (select count(*) from parking_locations l
          where l.authority_id = a.id and l.geom is not null)::text
          as geolocated_location_count,
+       -- How much of the recorded activity can actually be drawn. A source that
+       -- publishes coordinates for only some of its notices makes a map that is
+       -- true about what it shows and silent about the rest, so the share has to
+       -- be stated rather than left for the user to assume.
+       (select count(*) from pcn_events e
+          join parking_locations l on l.id = e.parking_location_id
+         where e.authority_id = a.id and l.geom is not null)::text
+         as geolocated_event_count,
        run.finished_at as last_ingested_at,
        (run.report ->> 'demo')::boolean as is_demo
      from authorities a
@@ -135,6 +145,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
       configuredLive,
       eventCount: 0,
       geolocatedLocationCount: 0,
+      geolocatedEventCount: 0,
       lastSuccessfulIngestionAt: null,
       sourceUnavailable: true,
       isDemoData: false,
@@ -147,6 +158,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
       configuredLive: false,
       eventCount: 0,
       geolocatedLocationCount: 0,
+      geolocatedEventCount: 0,
       lastSuccessfulIngestionAt: null,
       sourceUnavailable: false,
       isDemoData: false,
@@ -157,6 +169,7 @@ export async function getCoverage(authoritySlug: string): Promise<CoverageResult
     configuredLive: configuredLive && row.map_coverage_status === 'LIVE',
     eventCount: Number(row.event_count ?? 0),
     geolocatedLocationCount: Number(row.geolocated_location_count ?? 0),
+    geolocatedEventCount: Number(row.geolocated_event_count ?? 0),
     lastSuccessfulIngestionAt: row.last_ingested_at,
     sourceUnavailable: false,
     isDemoData: row.is_demo === true,

@@ -307,6 +307,64 @@ async function main(): Promise<void> {
       : '\n  No row in the dataset carries a coordinate under any known column name.',
   );
 
+  /* -- Rows that actually carry coordinates --------------------------------- */
+
+  // The decisive check. A census says coordinates exist somewhere in the
+  // dataset; it does not say the adapter can read them. These are rows selected
+  // *because* they have a position, normalised through the real adapter.
+  let geoSample: unknown[] = [];
+  let geoAccepted = 0;
+  let geoGeolocated = 0;
+  if (anyGeography) {
+    console.log('\nROWS THAT CARRY COORDINATES');
+    console.log('─'.repeat(100));
+    const geoUrl = new URL(datasetUrl);
+    geoUrl.searchParams.set('$limit', '25');
+    geoUrl.searchParams.set('$where', 'latitude IS NOT NULL');
+    try {
+      const response = await fetch(geoUrl.toString(), {
+        headers: {
+          accept: 'application/json',
+          ...(process.env.CAMDEN_APP_TOKEN ? { 'X-App-Token': process.env.CAMDEN_APP_TOKEN } : {}),
+        },
+      });
+      geoSample = response.ok ? ((await response.json()) as unknown[]) : [];
+    } catch {
+      geoSample = [];
+    }
+
+    if (geoSample.length === 0) {
+      console.log('  Could not fetch a sample of coordinate-bearing rows.');
+    } else {
+      const first = geoSample[0] as Record<string, unknown>;
+      const extraColumns = Object.keys(first).filter((k) => !names.has(k)).sort();
+      console.log(
+        `  Columns these rows have that the first sample did not: ${
+          extraColumns.length > 0 ? extraColumns.join(', ') : '(none)'
+        }`,
+      );
+      for (const key of ['latitude', 'longitude', 'location', 'spatial_accuracy']) {
+        if (key in first) {
+          console.log(`  ${key.padEnd(18)} ${safeSample(key, first[key])}`);
+        }
+      }
+
+      for (const [i, row] of geoSample.entries()) {
+        const result = normaliseCamdenRow(row, i);
+        if (!result.ok) continue;
+        geoAccepted += 1;
+        if (result.event.longitude !== null) geoGeolocated += 1;
+      }
+      console.log('');
+      console.log(`  accepted        ${geoAccepted}/${geoSample.length}`);
+      console.log(`  geolocated      ${geoGeolocated}/${geoAccepted}`);
+      if (geoAccepted > 0 && geoGeolocated === 0) {
+        console.log('  ✗ These rows have coordinates and the adapter read none of them.');
+        console.log('    That is an adapter bug, not a property of the source.');
+      }
+    }
+  }
+
   /* -- Dry normalisation --------------------------------------------------- */
 
   console.log('\nNORMALISATION OF THE SAMPLE');
@@ -362,6 +420,19 @@ async function main(): Promise<void> {
   } else if (acceptRate < 0.8) {
     console.log(`  ✗ Only ${Math.round(acceptRate * 100)}% of the sample normalised successfully.`);
     console.log('    Fix the rejections above before attempting a full ingestion.');
+  } else if (anyGeography && geoAccepted > 0 && geoGeolocated === 0) {
+    // The verdict must follow the census, not the first sample. Saying "this
+    // dataset publishes no coordinates" while a count query above reports
+    // hundreds of thousands of rows with them is worse than saying nothing.
+    console.log('  ✗ The dataset carries coordinates on some rows and the adapter read none of');
+    console.log('    them. That is an adapter bug. Fix it before ingesting.');
+  } else if (anyGeography) {
+    console.log('  ✓ The adapter reads this dataset, and it carries coordinates on some rows.');
+    console.log(`    ${Math.round(acceptRate * 100)}% of the first sample normalised. That sample`);
+    console.log('    happens to have no coordinates, which is why its geolocated count is 0 —');
+    console.log(`    rows selected for having them geolocate ${geoGeolocated}/${geoAccepted}.`);
+    console.log('    Only a full ingestion gives the real geolocated percentage.');
+    console.log('\n    Next: npm run ingest:camden -- --dry-run --limit 5000');
   } else if (geolocated === 0) {
     const publishesCoordinates =
       names.has('longitude') || names.has('latitude') || pointColumn !== undefined;
@@ -369,7 +440,7 @@ async function main(): Promise<void> {
       console.log('  ! Rows normalise, but no coordinate could be read from the columns that exist.');
       console.log('    That is an adapter or format problem — fix it before ingesting.');
     } else {
-      console.log('  ! Rows normalise. This dataset publishes no coordinates at all.');
+      console.log('  ! Rows normalise, and no row in the whole dataset carries a coordinate.');
       console.log('    Street names, dates and contravention codes are intact and worth ingesting;');
       console.log('    nothing can be placed on a map until a street-reference dataset is loaded.');
       console.log('    See docs/geography.md. No position will be invented in the meantime.');

@@ -926,6 +926,104 @@ describe('fetching at realistic volume', () => {
   });
 });
 
+describe('the Camden rows that do carry coordinates', () => {
+  // A whole-dataset census found 296,978 rows with latitude, longitude and a
+  // `location` column. Every 50-row probe had shown none, because Socrata omits
+  // null fields per row — so those rows never appeared in a sample. These tests
+  // pin the shapes the source actually uses.
+  const geoBase = {
+    socrata_id: '9001',
+    contravention_code: '11',
+    contravention_code_description: 'Parked without payment of the parking charge',
+    contravention_date: '2025-10-05T09:19:00.000',
+    controlled_parking_zone_area: 'CA-E',
+    street: 'MAPLE STREET W1',
+    ticket_type: 'O/S TMA',
+    ticket_description: 'On Street Contravention',
+    ticket_issued_via_cctv_camera: 'No',
+    spatial_accuracy: 'Unknown',
+    last_uploaded: '2026-08-30T02:30:07.000',
+  };
+
+  it('reads latitude and longitude published as separate string columns', () => {
+    const result = normaliseCamdenRow(
+      { ...geoBase, latitude: '51.5205', longitude: '-0.1401' },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.latitude).toBeCloseTo(51.5205, 4);
+    expect(result.event.longitude).toBeCloseTo(-0.1401, 4);
+    expect(result.event.sourceMetadata['_geometry']).toMatchObject({
+      origin: 'SOURCE_PUBLISHED',
+      precision: 'POINT',
+    });
+  });
+
+  it("reads Socrata's location type, whose latitude and longitude are strings", () => {
+    const result = normaliseCamdenRow(
+      {
+        ...geoBase,
+        location: { latitude: '51.5205', longitude: '-0.1401', human_address: '{"address": ""}' },
+      },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.latitude).toBeCloseTo(51.5205, 4);
+    expect(result.event.longitude).toBeCloseTo(-0.1401, 4);
+  });
+
+  it('reads a GeoJSON point, which orders its pair longitude-first', () => {
+    // Getting this backwards puts every Camden notice in the Indian Ocean.
+    const result = normaliseCamdenRow(
+      { ...geoBase, location: { type: 'Point', coordinates: [-0.1401, 51.5205] } },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeCloseTo(-0.1401, 4);
+    expect(result.event.latitude).toBeCloseTo(51.5205, 4);
+  });
+
+  it('scores a positioned row higher than the same row without a position', () => {
+    const withPosition = normaliseCamdenRow({ ...geoBase, latitude: '51.5205', longitude: '-0.1401' }, 0);
+    const withoutPosition = normaliseCamdenRow(geoBase, 0);
+    expect(withPosition.ok && withoutPosition.ok).toBe(true);
+    if (!withPosition.ok || !withoutPosition.ok) return;
+    expect(withPosition.event.dataConfidence).toBeGreaterThan(
+      withoutPosition.event.dataConfidence,
+    );
+  });
+
+  it('still refuses a coordinate outside the borough rather than plotting it', () => {
+    // Manchester. A real position from the wrong place is worse than none.
+    const result = normaliseCamdenRow({ ...geoBase, latitude: '53.4808', longitude: '-2.2426' }, 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.longitude).toBeNull();
+    expect(result.warnings).toContain('COORDINATES_OUT_OF_RANGE');
+  });
+
+  it('does not retain the human_address blob from a location column', () => {
+    const result = normaliseCamdenRow(
+      {
+        ...geoBase,
+        location: {
+          latitude: '51.5205',
+          longitude: '-0.1401',
+          human_address: '{"address": "12 Maple Street", "city": "London"}',
+        },
+      },
+      0,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(JSON.stringify(result.event)).not.toContain('human_address');
+    expect(JSON.stringify(result.event)).not.toContain('12 Maple Street');
+  });
+});
+
 describe('registration redaction does not eat geography', () => {
   // Found in the live probe: every street sample rendered as
   // "MAPLE STREET [redacted]". The dateless-registration pattern

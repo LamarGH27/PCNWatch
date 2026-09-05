@@ -69,6 +69,7 @@ export default async function MapPage() {
         coverageHeadline={coverage.headline}
         coverageDetail={coverage.detail}
         hasMappableGeography={coverage.hasMappableGeography}
+        mappableEventShare={coverage.mappableEventShare}
       />
     </div>
   );

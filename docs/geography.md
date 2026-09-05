@@ -1,29 +1,28 @@
 # Geography: where a PCN happened, and where we may draw it
 
-Camden's published PCN dataset (`4k7m-4gkk`) contains a street name and a
-`spatial_accuracy` value of `Unknown` — the publisher makes no claim at all about
-how precisely a notice is located.
+Camden's published PCN dataset (`4k7m-4gkk`) publishes coordinates for **some**
+of its notices and not others. A whole-dataset census found **296,978 rows** with
+`latitude`, `longitude` and a Socrata `location` column. Every row carries a
+street name and a `spatial_accuracy` of `Unknown` — the publisher makes no claim
+about how precisely a notice is located, even where it gives a position.
 
-**Whether it contains coordinates is being re-checked.** Every 50-row probe of it
-showed no latitude, longitude or point column, and that was taken as settled.
-Then a full ingestion crashed inside the coordinate-cluster summary, which only
-executes when rows *do* carry coordinates. Socrata omits null fields per row, so
-a column that is null across a 50-row sample never appears in that sample at all
-— a dataset with partial geography is indistinguishable from one with none, if
-you only ever look at 50 rows. `npm run camden:probe` now asks the whole dataset
-directly (`$select=count(*)` with `$where <column> IS NOT NULL`) instead of
-inferring it from a sample.
+**This was got wrong, repeatedly.** Four separate 50-row probes showed no
+coordinate column and the conclusion drawn was that the dataset had none. Socrata
+omits null fields per row, so a column absent from every row of a sample never
+appears in that sample at all: a dataset with partial geography is
+indistinguishable from one with none, if you only ever look at 50 rows. The probe
+now asks the whole dataset directly — `$select=count(*)` with
+`$where <column> IS NOT NULL` per candidate column — and samples rows selected
+*because* they have a position, so the adapter is proven against them rather than
+assumed to handle them.
 
-Nothing below changes either way: the architecture holds whether the source
-publishes coordinates for all, some, or none of its rows.
+The consequence for the product is partial coverage, which has to be stated
+rather than left to be assumed:
 
-Everything below follows from that one fact.
-
-`Unknown` is kept verbatim for traceability but is never read as a precision
-claim (`publisherClaimsPrecision`). Treating it as a weak claim would be worse
-than having no field: it would let a caller believe a claim exists.
-
----
+- The map draws the geolocated subset. It is true about every point it shows and
+  silent about the rest, and on a map silence reads as an absence of enforcement.
+  So the map states the share it is showing and points at hotspots for the whole.
+- Hotspot ranking uses every notice, geolocated or not — ranking is not mapping.
 
 ## The separation
 
@@ -127,9 +126,11 @@ geometry, released quarterly as a single download.
   publisher says `Unknown` — so the claim would rest on the reference dataset,
   which is exactly why its identifier and release must be recorded with it.
 
-**What it would take** (deliberately not built yet — the MVP does not require it,
-and building it before the ticket-type and schema fixes are confirmed against
-live data would be building on unproven ground):
+**What it would take.** Still not built, but the case has changed: it is no
+longer the difference between a map and no map, it is the difference between
+roughly a third of notices being placeable and all of them. That makes it a
+coverage improvement rather than a prerequisite, and it can follow a first real
+ingestion rather than block one.
 
 1. Download the Camden extract of OS Open USRN once; store it in a
    `street_reference` table with `usrn`, normalised name, geometry, release.

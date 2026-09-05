@@ -64,6 +64,7 @@ export function MapExplorer({
   coverageHeadline,
   coverageDetail,
   hasMappableGeography,
+  mappableEventShare,
 }: {
   authoritySlug: string;
   canShowActivity: boolean;
@@ -71,6 +72,8 @@ export function MapExplorer({
   coverageDetail: string;
   /** False when the authority publishes enforcement records without positions. */
   hasMappableGeography: boolean;
+  /** Share of recorded notices that can be placed, 0–1, or null when none are. */
+  mappableEventShare: number | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -504,6 +507,26 @@ export function MapExplorer({
             <span className="fr-numeric">{summary.locations}</span> locations in view
           </StatusPill>
         )}
+        {/*
+          Camden publishes coordinates for some of its notices and not others.
+          A map of the geolocated subset is true about every point it shows and
+          silent about the rest — and on a map, silence reads as an absence of
+          enforcement. Say what is missing, wherever there is anything to see.
+        */}
+        {hasMappableGeography &&
+          mappableEventShare !== null &&
+          mappableEventShare < 0.99 && (
+            <StatusPill>
+              Showing the{' '}
+              <span className="fr-numeric">{Math.round(mappableEventShare * 100)}%</span> of recorded
+              notices the authority published a position for. The rest are recorded against a street
+              with no coordinates and cannot be drawn —{' '}
+              <Link href="/hotspots" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                hotspots
+              </Link>{' '}
+              ranks every notice by street.
+            </StatusPill>
+          )}
       </div>
 
       {/* Legend */}
