@@ -129,7 +129,7 @@ create or replace function assert_case_belongs_to_user()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   owner uuid;
@@ -176,7 +176,7 @@ create or replace function assert_assessment_belongs_to_user()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   owner uuid;
@@ -207,7 +207,33 @@ create trigger assert_assessment_owner
 -- Supabase enables RLS on storage.objects by default, but we never rely on a
 -- platform default for a security boundary: without this the policies below are
 -- decorative and every signed-in user can read every stored document.
-alter table storage.objects enable row level security;
+--
+-- On hosted Supabase that table is owned by supabase_storage_admin, so the role
+-- running these migrations may not be allowed to alter it. Rather than let the
+-- whole migration fail, the attempt is made and then the *outcome* is checked:
+-- if RLS is not enabled by the time we are done, this raises. Tolerating the
+-- privilege error is safe; tolerating an unprotected table is not.
+do $$
+begin
+  begin
+    execute 'alter table storage.objects enable row level security';
+  exception
+    when insufficient_privilege then
+      raise notice 'Could not alter storage.objects (not owner). Checking whether RLS is already on.';
+  end;
+
+  if not exists (
+    select 1 from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'storage' and c.relname = 'objects' and c.relrowsecurity
+  ) then
+    raise exception
+      'Row level security is NOT enabled on storage.objects and this role cannot enable it. '
+      'Every signed-in user would be able to read every stored document. Enable it as an '
+      'owner before continuing.';
+  end if;
+end;
+$$;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values
@@ -223,6 +249,9 @@ declare
 begin
   foreach b in array array['pcn-documents', 'pcn-evidence']
   loop
+    execute format($f$drop policy if exists "own objects read %1$s" on storage.objects$f$, b);
+    execute format($f$drop policy if exists "own objects write %1$s" on storage.objects$f$, b);
+    execute format($f$drop policy if exists "own objects delete %1$s" on storage.objects$f$, b);
     execute format($f$
       create policy "own objects read %1$s" on storage.objects
         for select to authenticated

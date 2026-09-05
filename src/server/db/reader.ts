@@ -120,7 +120,16 @@ export async function callFunction<T>(
   }
 }
 
-/** A plain query, for the few reads that are not function calls. */
+/**
+ * A plain query, for the few reads that are not function calls.
+ *
+ * Postgres only, deliberately: supabase-js cannot run arbitrary SQL, and wrapping
+ * each of these in its own database function to reach it through RPC would be a
+ * larger change than the reads justify. The consequence is that DATABASE_URL is
+ * required even on a hosted Supabase deployment — the coverage banner, the
+ * contravention filter and the authority labels all come through here. That
+ * requirement is surfaced by the `database` entry in `integrationStatuses`.
+ */
 export async function queryRows<T>(sql: string, values: readonly unknown[] = []): Promise<DbResult<T>> {
   const client = getPool();
   if (!client) {

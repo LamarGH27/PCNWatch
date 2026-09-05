@@ -135,7 +135,14 @@ export function __resetServerEnvCache(): void {
 /* Integration readiness                                               */
 /* ------------------------------------------------------------------ */
 
-export type IntegrationName = 'supabase' | 'anthropic' | 'stripe' | 'dtro' | 'camden' | 'posthog';
+export type IntegrationName =
+  | 'supabase'
+  | 'database'
+  | 'anthropic'
+  | 'stripe'
+  | 'dtro'
+  | 'camden'
+  | 'posthog';
 
 export interface IntegrationStatus {
   name: IntegrationName;
@@ -166,6 +173,13 @@ export function integrationStatuses(): IntegrationStatus[] {
       'NEXT_PUBLIC_SUPABASE_ANON_KEY',
       'SUPABASE_SERVICE_ROLE_KEY',
     ]),
+    // Reported separately from Supabase because it is separately required. The
+    // Supabase client can call database functions, but it cannot run the plain
+    // SQL behind the coverage banner, the contravention filter and the authority
+    // contravention labels — those go through `queryRows`, which is Postgres
+    // only. A deployment with Supabase configured and no DATABASE_URL builds,
+    // starts, and then reports "data temporarily unavailable" on every page.
+    statusFor('database', ['DATABASE_URL']),
     statusFor('anthropic', ['ANTHROPIC_API_KEY']),
     statusFor('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']),
     statusFor('dtro', ['DTRO_CLIENT_ID', 'DTRO_CLIENT_SECRET', 'DTRO_BASE_URL']),

@@ -16,7 +16,7 @@ create or replace function pcnwatch_rebuild_aggregates(p_authority_id uuid)
 returns integer
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   affected integer;
@@ -124,7 +124,7 @@ returns table (
 )
 language sql
 security definer
-set search_path = public
+set search_path = public, extensions
 stable
 as $$
   with authority as (
@@ -189,7 +189,7 @@ returns table (
 )
 language sql
 security invoker
-set search_path = public
+set search_path = public, extensions
 stable
 as $$
   with authority as (
@@ -308,7 +308,7 @@ returns table (
 )
 language sql
 security invoker
-set search_path = public
+set search_path = public, extensions
 stable
 as $$
   with authority as (
@@ -424,7 +424,7 @@ returns table (
 )
 language sql
 security invoker
-set search_path = public
+set search_path = public, extensions
 stable
 as $$
   with authority as (
@@ -518,7 +518,7 @@ create or replace function pcnwatch_bump_rate_limit(p_key text, p_window_start t
 returns integer
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   new_count integer;
