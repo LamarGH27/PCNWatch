@@ -605,11 +605,11 @@ describe('live Camden schema', () => {
     expect(result.event.contraventionCode).toBe('29');
     expect((result.event.sourceMetadata as { _contraventionSuffix?: string })._contraventionSuffix).toBe('j');
 
-    // Row 1 carries the same code with no suffix column at all.
+    // Row 1 carries a code with no suffix column at all.
     const noSuffixColumn = normaliseCamdenRow(LIVE_ROWS[1], 1);
     expect(noSuffixColumn.ok).toBe(true);
     if (!noSuffixColumn.ok) return;
-    expect(noSuffixColumn.event.contraventionCode).toBe('29');
+    expect(noSuffixColumn.event.contraventionCode).toBe('99');
     expect(
       (noSuffixColumn.event.sourceMetadata as { _contraventionSuffix?: string | null })
         ._contraventionSuffix,
@@ -620,7 +620,7 @@ describe('live Camden schema', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(JSON.stringify(result.event.sourceMetadata)).toContain('prohibited turn');
+    expect(JSON.stringify(result.event.sourceMetadata)).toContain('one-way restriction');
   });
 
   it('records the controlled parking zone as the locality', () => {
@@ -628,6 +628,34 @@ describe('live Camden schema', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.event.locality).toBe('CA-E');
+  });
+
+  it('reads the postcode district Camden buries inside the street value', () => {
+    // The source has no postcode column, but every live street carries a
+    // district ("MAPLE STREET W1"). Without this the field stays null while the
+    // data plainly contains the single most useful disambiguator for a
+    // street-reference lookup.
+    const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.postcodeDistrict).toBe('W1');
+    // Recorded as derived, so it is never mistaken for a published column.
+    expect(
+      (result.event.sourceMetadata as { _postcodeDistrictSource?: string })._postcodeDistrictSource,
+    ).toBe('DERIVED_FROM_STREET_VALUE');
+  });
+
+  it('keeps the district in the location identity so two streets do not merge', () => {
+    // "MAPLE STREET W1" and "MAPLE STREET NW1" are different streets. Splitting
+    // a street that is sometimes recorded without its district is visible in the
+    // data; silently merging two real streets is not.
+    const w1 = normaliseCamdenRow({ ...LIVE_ROWS[0], street: 'MAPLE STREET W1' }, 0);
+    const nw1 = normaliseCamdenRow({ ...LIVE_ROWS[0], street: 'MAPLE STREET NW1' }, 1);
+    expect(w1.ok && nw1.ok).toBe(true);
+    if (!w1.ok || !nw1.ok) return;
+    expect(w1.event.locationSlug).not.toBe(nw1.event.locationSlug);
+    expect(w1.event.postcodeDistrict).toBe('W1');
+    expect(nw1.event.postcodeDistrict).toBe('NW1');
   });
 
   it('never fabricates coordinates for a dataset that has none', () => {
@@ -689,8 +717,8 @@ describe('live Camden schema', () => {
     const result = normaliseCamdenRow(LIVE_ROWS[0], 0);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.event.streetName).toBe('MAPLE STREET NW1');
-    expect((result.event.sourceMetadata as { street?: string }).street).toBe('MAPLE STREET NW1');
+    expect(result.event.streetName).toBe('MAPLE STREET W1');
+    expect((result.event.sourceMetadata as { street?: string }).street).toBe('MAPLE STREET W1');
     expect(JSON.stringify(result.event)).not.toContain(REDACTION_PLACEHOLDER);
   });
 
@@ -808,6 +836,52 @@ describe('enforcement classification', () => {
     const street = normaliseCamdenRow(LIVE_ROWS[1], 1);
     expect(cctv.ok && (cctv.event.sourceMetadata as { _viaCctv?: boolean })._viaCctv).toBe(true);
     expect(street.ok && (street.event.sourceMetadata as { _viaCctv?: boolean })._viaCctv).toBe(false);
+  });
+
+  it('resolves the live O/S TMA type from the contravention description', () => {
+    // "On Street Contravention" says where the contravention happened, not what
+    // it was. Reading "on street" as "parking" would be our inference, not
+    // Camden's statement — so the class comes from Camden's own description of
+    // what the driver did, and the basis is recorded so it can be audited.
+    const parking = normaliseCamdenRow(LIVE_ROWS[2], 2);
+    expect(parking.ok).toBe(true);
+    if (!parking.ok) return;
+    expect(parking.event.enforcementType).toBe('PARKING');
+    expect(
+      (parking.event.sourceMetadata as { _enforcementClassBasis?: string })._enforcementClassBasis,
+    ).toBe('CONTRAVENTION_DESCRIPTION');
+  });
+
+  it('leaves O/S TMA unclassified when the contravention description says nothing decisive', () => {
+    const opaque = normaliseCamdenRow(LIVE_ROWS[1], 1);
+    expect(opaque.ok).toBe(true);
+    if (!opaque.ok) return;
+    expect(opaque.event.enforcementType).toBe('UNKNOWN');
+    expect(opaque.event.enforcementType).not.toBe('PARKING');
+    expect(
+      (opaque.event.sourceMetadata as { _enforcementClassBasis?: string })._enforcementClassBasis,
+    ).toBe('NONE');
+    expect(JSON.stringify(opaque.event.sourceMetadata)).toContain('O/S TMA');
+  });
+
+  it('classifies the bus lane rows the live sample contains', () => {
+    const bus = normaliseCamdenRow(LIVE_ROWS[5], 5);
+    expect(bus.ok).toBe(true);
+    if (!bus.ok) return;
+    expect(bus.event.enforcementType).toBe('BUS_LANE');
+  });
+
+  it('lets an explicit ticket type outrank the contravention description', () => {
+    // A code the source uses deliberately is stronger evidence than prose.
+    const c = classifyEnforcement('MTC', 'Moving Traffic Contravention', 'Yes', 'Parked in a bay');
+    expect(c.enforcementClass).toBe('MOVING_TRAFFIC');
+    expect(c.basis).toBe('TICKET_TYPE');
+  });
+
+  it('never lets an unrecognised description become parking', () => {
+    const c = classifyEnforcement('O/S TMA', 'On Street Contravention', 'No', 'Contravention of an order');
+    expect(c.enforcementClass).toBe('UNKNOWN');
+    expect(c.basis).toBe('NONE');
   });
 
   it('classifies exactly, so a code is not matched by a stray substring', () => {

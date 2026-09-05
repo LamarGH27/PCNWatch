@@ -26,7 +26,24 @@ export interface EnforcementClassification {
   readonly viaCctv: boolean | null;
   /** Whether the class was recognised or defaulted. */
   readonly recognised: boolean;
+  /** Which signal decided the class, so a classification can be audited. */
+  readonly basis: ClassificationBasis;
 }
+
+/**
+ * Where a classification came from, in the order the evidence is trusted.
+ *
+ * `TICKET_TYPE` is a code the source uses deliberately. `TICKET_DESCRIPTION` is
+ * the source's label for that code. `CONTRAVENTION_DESCRIPTION` is the source's
+ * own words for what the driver actually did, which is the most specific
+ * evidence available and the only thing that resolves a ticket type whose
+ * meaning the source does not spell out.
+ */
+export type ClassificationBasis =
+  | 'TICKET_TYPE'
+  | 'TICKET_DESCRIPTION'
+  | 'CONTRAVENTION_DESCRIPTION'
+  | 'NONE';
 
 /**
  * Exact ticket-type codes, matched case-insensitively on the trimmed value.
@@ -66,15 +83,71 @@ const SUBSTRING_RULES: readonly { pattern: string; result: EnforcementClass }[] 
   { pattern: 'parking', result: 'PARKING' },
 ];
 
+/**
+ * Phrases from the authority's own contravention description.
+ *
+ * The live sample forced this: `ticket_type = "O/S TMA"` with
+ * `ticket_description = "On Street Contravention"` says *where* the contravention
+ * happened, not *what* it was. Reading "on street" as "parking" would be my
+ * inference, not Camden's statement. The contravention description is Camden's
+ * own words for what the driver actually did, so it is what decides.
+ *
+ * Ordered most-specific first, and only phrases that mean one thing are listed:
+ * a description that matches nothing here stays UNKNOWN rather than being
+ * pushed into the nearest class.
+ */
+const CONTRAVENTION_PHRASES: readonly { pattern: string; result: EnforcementClass }[] = [
+  { pattern: 'bus lane', result: 'BUS_LANE' },
+  { pattern: 'bus gate', result: 'BUS_LANE' },
+
+  { pattern: 'moving traffic', result: 'MOVING_TRAFFIC' },
+  { pattern: 'one-way', result: 'MOVING_TRAFFIC' },
+  { pattern: 'one way', result: 'MOVING_TRAFFIC' },
+  { pattern: 'prohibited turn', result: 'MOVING_TRAFFIC' },
+  { pattern: 'banned turn', result: 'MOVING_TRAFFIC' },
+  { pattern: 'no entry', result: 'MOVING_TRAFFIC' },
+  { pattern: 'box junction', result: 'MOVING_TRAFFIC' },
+  { pattern: 'yellow box', result: 'MOVING_TRAFFIC' },
+  { pattern: 'motor vehicles prohibited', result: 'MOVING_TRAFFIC' },
+
+  { pattern: 'parked', result: 'PARKING' },
+  { pattern: 'parking', result: 'PARKING' },
+  { pattern: 'waiting restriction', result: 'PARKING' },
+  { pattern: 'loading', result: 'PARKING' },
+  { pattern: 'pay and display', result: 'PARKING' },
+  { pattern: 'permit', result: 'PARKING' },
+  { pattern: 'meter', result: 'PARKING' },
+  { pattern: 'bay', result: 'PARKING' },
+];
+
 export function classifyEnforcement(
   rawTicketType: unknown,
   rawDescription?: unknown,
   rawCctvFlag?: unknown,
+  rawContraventionDescription?: unknown,
 ): EnforcementClassification {
   const viaCctv = parseBoolean(rawCctvFlag);
+  const contraventionText =
+    typeof rawContraventionDescription === 'string' ? rawContraventionDescription.toLowerCase() : '';
+
+  const fromContravention = (raw: string | null): EnforcementClassification => {
+    for (const rule of CONTRAVENTION_PHRASES) {
+      if (contraventionText.includes(rule.pattern)) {
+        return {
+          enforcementClass: rule.result,
+          rawTicketType: raw,
+          viaCctv,
+          recognised: true,
+          basis: 'CONTRAVENTION_DESCRIPTION',
+        };
+      }
+    }
+    // Unrecognised. Never guessed at, never defaulted to parking.
+    return { enforcementClass: 'UNKNOWN', rawTicketType: raw, viaCctv, recognised: false, basis: 'NONE' };
+  };
 
   if (typeof rawTicketType !== 'string' || rawTicketType.trim() === '') {
-    return { enforcementClass: 'UNKNOWN', rawTicketType: null, viaCctv, recognised: false };
+    return fromContravention(null);
   }
 
   const raw = rawTicketType.trim();
@@ -82,19 +155,25 @@ export function classifyEnforcement(
 
   const exact = EXACT_TICKET_TYPES[key];
   if (exact) {
-    return { enforcementClass: exact, rawTicketType: raw, viaCctv, recognised: true };
+    return { enforcementClass: exact, rawTicketType: raw, viaCctv, recognised: true, basis: 'TICKET_TYPE' };
   }
 
-  // The description may disambiguate where the code alone does not.
+  // The ticket description may disambiguate where the code alone does not.
   const haystack = `${raw} ${typeof rawDescription === 'string' ? rawDescription : ''}`.toLowerCase();
   for (const rule of SUBSTRING_RULES) {
     if (haystack.includes(rule.pattern)) {
-      return { enforcementClass: rule.result, rawTicketType: raw, viaCctv, recognised: true };
+      return {
+        enforcementClass: rule.result,
+        rawTicketType: raw,
+        viaCctv,
+        recognised: true,
+        basis: 'TICKET_DESCRIPTION',
+      };
     }
   }
 
-  // Unrecognised. Never guessed at, never defaulted to parking.
-  return { enforcementClass: 'UNKNOWN', rawTicketType: raw, viaCctv, recognised: false };
+  // Last resort: what the authority says the driver actually did.
+  return fromContravention(raw);
 }
 
 function parseBoolean(value: unknown): boolean | null {

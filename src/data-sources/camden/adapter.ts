@@ -3,6 +3,7 @@ import {
   parseCoordinates,
   parseContraventionCode,
   parsePostcodeDistrict,
+  parseTrailingPostcodeDistrict,
   parseSourceTime,
   parseSourceTimestamp,
   rowHash,
@@ -331,10 +332,16 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
   // Enforcement class. An unrecognised ticket type becomes UNKNOWN and is
   // counted separately; it is never assumed to be parking.
   const enforcementTypeField = resolveField(raw, 'enforcementType');
+  // The two descriptions are different evidence and are passed separately:
+  // `ticket_description` labels the enforcement regime ("On Street
+  // Contravention"), `contravention_code_description` says what the driver
+  // actually did ("Parked in a residents' bay"). Only the second can resolve a
+  // ticket type whose meaning the source does not spell out.
   const classification = classifyEnforcement(
     enforcementTypeField?.value,
-    descriptionField?.value ?? raw.ticket_description,
+    raw.ticket_description,
     raw.ticket_issued_via_cctv_camera,
+    descriptionField?.value,
   );
   const enforcementType = classification.enforcementClass;
   if (!classification.recognised) {
@@ -353,7 +360,13 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
     streetName,
     streetNameNormalised,
     locality: localityField ? String(localityField.value).trim() : null,
-    postcodeDistrict: postcodeField ? parsePostcodeDistrict(postcodeField.value) : null,
+    // The source has no postcode column; Camden puts the district inside the
+    // street value. Reading it out is a derivation from the source's own text,
+    // not an external lookup, so it is A-side information — but it is recorded
+    // as derived so nobody mistakes it for a published field.
+    postcodeDistrict: postcodeField
+      ? parsePostcodeDistrict(postcodeField.value)
+      : parseTrailingPostcodeDistrict(streetName),
     publisherSpatialAccuracy:
       typeof raw.spatial_accuracy === 'string' && raw.spatial_accuracy.trim() !== ''
         ? raw.spatial_accuracy.trim()
@@ -422,8 +435,15 @@ export function normaliseCamdenRow(row: unknown, rowNumber: number): Normalisati
           ...(hasGeometry(geometry) ? {} : { reason: geometry.reason }),
         },
         _publisherSpatialAccuracy: sourceLocation.publisherSpatialAccuracy,
+        _postcodeDistrictSource:
+          sourceLocation.postcodeDistrict === null
+            ? null
+            : postcodeField
+              ? 'PUBLISHED_COLUMN'
+              : 'DERIVED_FROM_STREET_VALUE',
         _enforcementClass: enforcementType,
         _enforcementClassRecognised: classification.recognised,
+        _enforcementClassBasis: classification.basis,
         _viaCctv: classification.viaCctv,
         _droppedFieldCount: sanitised.droppedFields.length,
       },

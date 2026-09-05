@@ -170,15 +170,65 @@ async function main(): Promise<void> {
   } else {
     for (const [key, entry] of sortedPairs(pairs)) {
       void key;
-      const c = classifyEnforcement(entry.type, entry.description, undefined);
+      // Classified the way the adapter classifies, including the contravention
+      // description, so the probe cannot report a class the pipeline would not.
+      // Counted per row rather than from one representative: a ticket type whose
+      // rows resolve to different classes must not be summarised as one class.
+      const classCounts = new Map<string, number>();
+      for (const row of payload) {
+        if (typeof row !== 'object' || row === null) continue;
+        const record = row as Record<string, unknown>;
+        if (String(record['ticket_type'] ?? '').trim() !== entry.type) continue;
+        const cls = classifyEnforcement(
+          entry.type,
+          entry.description,
+          undefined,
+          record['contravention_code_description'],
+        ).enforcementClass;
+        classCounts.set(cls, (classCounts.get(cls) ?? 0) + 1);
+      }
+      const classes = new Set(classCounts.keys());
+      const unresolved = classCounts.get('UNKNOWN') ?? 0;
+      const summary = sortedByCount(classCounts)
+        .map(([cls, n]) => `${cls} ${n}`)
+        .join(', ');
       console.log(
-        `  ${entry.type.padEnd(14)} ${String(entry.count).padStart(4)}  → ${c.enforcementClass}${
-          c.recognised ? '' : '  ✗ UNRECOGNISED — classify before ingesting'
+        `  ${entry.type.padEnd(14)} ${String(entry.count).padStart(4)}  → ${summary}${
+          unresolved > 0 ? `  ✗ ${unresolved} UNRESOLVED — classify before ingesting` : ''
         }`,
       );
       console.log(
         `    description: ${entry.description === null ? '(none)' : JSON.stringify(entry.description)}`,
       );
+      if (classes.size > 1) {
+        console.log(
+          "    ! rows of this type do not all mean the same thing — the class comes from",
+        );
+        console.log("      each row's contravention description, not from the type.");
+      }
+    }
+  }
+
+  // The contravention description is what resolves a ticket type the source does
+  // not spell out, so show it grouped by type: the classification above should be
+  // readable straight off these rows rather than taken on trust.
+  console.log('\n  Contravention descriptions behind each ticket type:');
+  const byType = new Map<string, Map<string, number>>();
+  for (const row of payload) {
+    if (typeof row !== 'object' || row === null) continue;
+    const record = row as Record<string, unknown>;
+    const type = String(record['ticket_type'] ?? '(none)').trim() || '(none)';
+    const code = String(record['contravention_code'] ?? '?').trim();
+    const description = String(record['contravention_code_description'] ?? '').trim();
+    const label = `${code} — ${description || '(no description)'}`;
+    const inner = byType.get(type) ?? new Map<string, number>();
+    inner.set(label, (inner.get(label) ?? 0) + 1);
+    byType.set(type, inner);
+  }
+  for (const [type, inner] of [...byType.entries()].sort()) {
+    console.log(`    ${type}`);
+    for (const [label, count] of sortedByCount(inner).slice(0, 8)) {
+      console.log(`      ${String(count).padStart(3)}  ${label.slice(0, 78)}`);
     }
   }
 

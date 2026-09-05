@@ -19,8 +19,16 @@ Two things are kept apart permanently, in the type system
 showing a made-up position as if the council had published it.
 
 **A. Source location** — `SourceLocation`. What the authority actually published:
-street name, controlled parking zone, postcode district where present, and the
-publisher's own precision claim, verbatim. We never alter this.
+street name, controlled parking zone, postcode district, and the publisher's own
+precision claim, verbatim. We never alter this.
+
+Camden publishes no postcode column — the district is inside the street value
+(`MAPLE STREET W1`). Reading it out is a derivation from the source's own text,
+not an external lookup, so it stays A-side; it is stamped
+`_postcodeDistrictSource: DERIVED_FROM_STREET_VALUE` so it is never mistaken for
+a published field. The district also stays in the location identity: splitting a
+street sometimes recorded without its district is visible in the data, whereas
+silently merging two real streets of the same name is not.
 
 **B. Derived geometry** — `DerivedGeometry`. A coordinate. It exists only with
 provenance attached:
