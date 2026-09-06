@@ -219,3 +219,160 @@ describe('stage mapping', () => {
     }
   });
 });
+
+describe('who issued the notice decides the category, not who we hold data for', () => {
+  /**
+   * A real Westminster PCN was told it was an unidentifiable document.
+   * Camden's enforcement history is the only borough data PCNWatch holds, and
+   * that must never decide whether somebody else's notice is a notice.
+   */
+
+  it.each([
+    ['London Borough of Camden', 'camden'],
+    ['Westminster City Council', 'westminster'],
+    ['Royal Borough of Kensington and Chelsea', 'kensington-chelsea'],
+  ])('%s is a local-authority PCN', (authorityName, slug) => {
+    const result = assessVerifiedNotice(facts({ authorityName }));
+    expect(result.supported).toBe(true);
+    expect(result.authority.recognised).toBe(true);
+    expect(result.authority.slug).toBe(slug);
+  });
+
+  it.each([
+    'Manchester City Council',
+    'Birmingham City Council',
+    'Cornwall Council',
+    'Transport for London',
+  ])('%s is a local-authority PCN even though we list no record for it', (authorityName) => {
+    const result = assessVerifiedNotice(facts({ authorityName }));
+    expect(result.supported).toBe(true);
+    expect(result.authority.recognised).toBe(true);
+    expect(result.assessment.outOfScope).toBe(false);
+  });
+
+  it('stays supported when the reader could not determine the notice type', () => {
+    // The exact production failure: a genuine council PCN whose type read as
+    // UNKNOWN was taken out of scope entirely.
+    const result = assessVerifiedNotice(
+      facts({ authorityName: 'Westminster City Council', noticeType: 'UNKNOWN' }),
+    );
+    expect(result.supported).toBe(true);
+    expect(result.unsupportedMessage).toBeNull();
+  });
+
+  it('is still UNKNOWN when neither the authority nor the type identifies it', () => {
+    const result = assessVerifiedNotice(
+      facts({ authorityName: 'Acme Retail Park', noticeType: 'UNKNOWN' }),
+    );
+    expect(result.supported).toBe(false);
+    expect(result.unsupportedMessage).toBeTruthy();
+  });
+
+  it.each(['ParkingEye Ltd', 'Total Parking Solutions Ltd', 'Britannia Parking Group Limited'])(
+    '%s is a private operator, whatever the notice type says',
+    (authorityName) => {
+      const result = assessVerifiedNotice(facts({ authorityName, noticeType: 'PCN_POSTAL' }));
+      expect(result.supported).toBe(false);
+      expect(result.assessment.outOfScope).toBe(true);
+      expect(result.calculatedDeadlines).toHaveLength(0);
+    },
+  );
+
+  it('does not let a company called something borough-ish pass as a council', () => {
+    const result = assessVerifiedNotice(facts({ authorityName: 'Borough Parking Ltd' }));
+    expect(result.supported).toBe(false);
+  });
+});
+
+describe('coverage is reported separately from support', () => {
+  it('marks Camden as reviewed', () => {
+    const result = assessVerifiedNotice(facts({ authorityName: 'London Borough of Camden' }));
+    expect(result.authority.coverage).toBe('REVIEWED');
+    expect(result.authority.coverageNote).toBeNull();
+  });
+
+  it('gives a non-Camden council a full assessment with a limited-coverage note', () => {
+    const result = assessVerifiedNotice(
+      facts({ authorityName: 'Westminster City Council', issueDate: '2026-08-14' }),
+    );
+
+    expect(result.supported).toBe(true);
+    expect(result.authority.coverage).toBe('LIMITED');
+    expect(result.authority.coverageNote).toBeTruthy();
+
+    // Limited coverage must not mean a degraded assessment: the national rules
+    // still run, and the deadlines are still worked out.
+    expect(result.calculatedDeadlines.length).toBeGreaterThan(0);
+    expect(result.assessment.basis).toBeTruthy();
+    expect(result.stageIsKnown).toBe(true);
+  });
+
+  it('says what is missing without implying the notice is unsupported', () => {
+    const note = assessVerifiedNotice(
+      facts({ authorityName: 'Manchester City Council' }),
+    ).authority.coverageNote!;
+    expect(note.toLowerCase()).toContain('does not yet hold');
+    for (const forbidden of ['unsupported', 'cannot help', 'outside what pcnwatch supports']) {
+      expect(note.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+});
+
+describe('the verified facts carry the notice type from the read', () => {
+  /**
+   * The production bug. `collectVerifiedFacts` looked for the notice type
+   * among the editable field views, and `FIELD_LABELS` has no entry for it —
+   * so `.find()` returned undefined and every notice, of every authority,
+   * reached the assessment as UNKNOWN. Camden's would have too; that journey
+   * had never got past "Case saved" before.
+   */
+
+  it('is not one of the editable fields, so it cannot be read back from them', async () => {
+    const { toFieldViews } = await import('@/server/cases/extraction');
+    const field = (value: unknown) => ({ value, confidence: 0.95, sourceHint: null });
+    const views = toFieldViews({
+      authorityName: field('Westminster City Council'),
+      pcnNumber: field('WM123'),
+      vehicleRegistration: field('AB12 CDE'),
+      noticeType: field('PCN_POSTAL'),
+      contraventionCode: field('12'),
+      contraventionDescription: field('x'),
+      incidentDate: field('2026-08-11'),
+      incidentTime: field('14:35'),
+      issueDate: field('2026-08-14'),
+      location: field('STRAND'),
+      fullAmountPence: field(13_000),
+      discountedAmountPence: field(6_500),
+      discountDeadlinePrinted: field(null),
+      representationDeadlinePrinted: field(null),
+      proceduralStageIndicated: field('NEW'),
+      unreadableRegions: [],
+      overallLegibility: 'CLEAR',
+    } as never);
+
+    // This is the fact that broke it: no field view carries the notice type.
+    expect(views.map((v) => v.key)).not.toContain('noticeType');
+  });
+
+  it('takes the notice type as an argument instead', async () => {
+    const { collectVerifiedFacts } = await import('@/app/analyse/AnalyseFlow');
+    const values = { authorityName: 'Westminster City Council', issueDate: '2026-08-14' };
+    const confirmed = { authorityName: true, issueDate: true };
+
+    const carried = collectVerifiedFacts(values, confirmed, 'PCN_POSTAL');
+    expect(carried.noticeType).toBe('PCN_POSTAL');
+    expect(assessVerifiedNotice(carried).supported).toBe(true);
+  });
+
+  it('omits a field the user edited but did not confirm', async () => {
+    const { collectVerifiedFacts } = await import('@/app/analyse/AnalyseFlow');
+    const collected = collectVerifiedFacts(
+      { pcnNumber: 'WM123', issueDate: '2026-08-14' },
+      { pcnNumber: true },
+      'PCN_POSTAL',
+    );
+    expect(collected.pcnNumber).toBe('WM123');
+    // Typed but never ticked, so it must not become a fact.
+    expect(collected.issueDate).toBeUndefined();
+  });
+});

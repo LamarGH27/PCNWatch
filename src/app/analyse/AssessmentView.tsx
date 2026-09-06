@@ -109,6 +109,22 @@ export function AssessmentView({
         </p>
       </div>
 
+      {result.authority.coverageNote && (
+        <div
+          style={{
+            marginTop: 14,
+            padding: '12px 14px',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--radius-md)',
+            fontSize: 13.5,
+            lineHeight: 1.5,
+            color: 'var(--text-muted)',
+          }}
+        >
+          {result.authority.coverageNote}
+        </div>
+      )}
+
       <Section title="Your PCN">
         <div>
           {facts.authorityName && <Row label="Issuing authority" value={facts.authorityName} />}
