@@ -77,6 +77,53 @@ describe.runIf(gitAvailable)('the repository contains what it is built from', ()
 });
 
 /**
+ * What the user says and what PCNWatch holds must stay apart.
+ *
+ * This is one line of code away from being wrong at any time. The moment a
+ * declaration of "I have a permit" is written into `evidenceProvided`, the
+ * evidence basis starts rising on documents nobody has seen, and a user submits
+ * a challenge believing it is evidenced when it rests on their own say-so. The
+ * behaviour is covered by tests; this guards the shape, because the tempting
+ * edit is a one-liner in exactly one place.
+ */
+describe('declared evidence is never counted as held evidence', () => {
+  const ASSESS = resolve(ROOT, 'src/server/cases/assess-verified.ts');
+
+  it('passes an empty evidenceProvided to the engine', () => {
+    const source = readFileSync(ASSESS, 'utf8');
+    const start = source.indexOf('assessCase({');
+    expect(start, 'assessCase call not found').toBeGreaterThan(-1);
+    const call = source.slice(start, source.indexOf('});', start));
+
+    expect(call, 'assessCase is no longer given the fields this guard reads').toContain(
+      'assertedGroundKeys',
+    );
+    // Nothing is uploaded in this flow, so the only correct value is empty.
+    expect(call).toMatch(/evidenceProvided:\s*\{\}/);
+    // And in particular, not derived from what the user declared.
+    expect(call).not.toMatch(/evidenceProvided:[^,]*declaredEvidence/);
+  });
+
+  it('never asserts a statutory ground from an answer', () => {
+    const source = readFileSync(ASSESS, 'utf8');
+    const start = source.indexOf('assessCase({');
+    const call = source.slice(start, source.indexOf('});', start));
+
+    // A ground is something the user chooses to rely on, not something an
+    // answer of "yes" produces on their behalf.
+    expect(call).toMatch(/assertedGroundKeys:\s*\[\]/);
+  });
+
+  it('keeps the narrative out of the request schema', () => {
+    // The account stays in the browser. A `narrative` string field on the wire
+    // schema would be the first step to it reaching a log or a table.
+    const route = readFileSync(resolve(ROOT, 'src/app/api/cases/assess/route.ts'), 'utf8');
+    expect(route).not.toMatch(/narrative:\s*z\.string/);
+    expect(route).toContain('narrativeProvided: z.boolean()');
+  });
+});
+
+/**
  * `next build` must not need a database.
  *
  * A prerendered route that reads live data freezes whatever the database said at

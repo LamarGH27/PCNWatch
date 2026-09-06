@@ -1,5 +1,8 @@
 import { buildEvidenceChecklist } from '../evidence/checklist';
 import type { EvidenceType } from '../evidence/types';
+import { EVIDENCE_DEFINITIONS } from '../evidence/definitions';
+import type { AnswerValue, UserContext } from '../context/types';
+import { isMitigationQuestion, resolveQuestionPrompt } from '../context/questions';
 import { PRIVATE_PARKING_MESSAGE } from '../notices/classify-notice';
 import { citationsFor, getContravention, getReference, toCitation } from '../reference/store';
 import type { ProceduralStage, ReferenceCitation } from '../reference/types';
@@ -23,6 +26,16 @@ export interface AssessmentInput {
   readonly evidenceProvided: Partial<Record<EvidenceType, number>>;
   /** The user's own account, used only to decide which questions remain open. */
   readonly userNarrativeProvided: boolean;
+  /**
+   * The user's answers and what they say they can produce.
+   *
+   * Deliberately separate from `evidenceProvided`. That field means evidence we
+   * actually hold; this one means evidence the user tells us exists. A claim to
+   * hold a permit is not a permit, and the two must never be added together —
+   * see `determineBasis`, which will not let a declaration reach a basis that
+   * held evidence has to earn.
+   */
+  readonly userContext?: UserContext;
   /** Fields the user has verified from the notice. */
   readonly verifiedFields: {
     readonly pcnNumber: boolean;
@@ -154,6 +167,118 @@ export function assessCase(input: AssessmentInput): Assessment {
     });
   }
 
+  /* ---- What the user told us ----------------------------------------------- */
+
+  /*
+   * The user's answers, kept visibly separate from anything PCNWatch concluded.
+   *
+   * Two rules shape this section, and both exist to stop a product like this
+   * inventing a defence out of an answer:
+   *
+   *  - Answers are reported, never interpreted. "Did you hold a permit?" is a
+   *    question whose helpful answer is yes; "were the yellow lines clearly
+   *    visible?" is a question whose helpful answer is no. Deciding which way
+   *    each one cuts is a legal judgement about reference content, so this code
+   *    does not make it. It records what was said and shows what would
+   *    corroborate it.
+   *  - The wording comes from the reference store, resolved from the question
+   *    id, never from the request. A caller cannot put words in a finding.
+   */
+  const context = input.userContext;
+  const answered = (context?.answers ?? [])
+    .map((answer) => ({ ...answer, prompt: resolveQuestionPrompt(answer.questionId) }))
+    // An id we cannot account for is dropped rather than displayed. It means a
+    // stale client or a hand-made request, and neither should reach a finding.
+    .filter((answer): answer is typeof answer & { prompt: string } => answer.prompt !== null);
+
+  const substantive = answered.filter((a) => !isMitigationQuestion(a.questionId));
+
+  if (substantive.length > 0) {
+    const relatedEvidence = dedupeEvidence(
+      substantive.flatMap((a) => evidenceForQuestion(a.questionId, input.contraventionCode)),
+    );
+    findings.push({
+      id: 'context-user-account',
+      category: 'FACTUAL_DISPUTE',
+      issue: 'What you have told us about what happened',
+      whyItMayMatter:
+        'This is your account, not a finding of ours, and an authority will want it corroborated. ' +
+        `You told us: ${substantive.map((a) => `${a.prompt} — ${ANSWER_WORDS[a.answer]}`).join(' ')} ` +
+        'The evidence listed here is what would support that account.',
+      evidenceNeeded: relatedEvidence,
+      evidenceAvailable: availableFrom(relatedEvidence),
+      // Cited against the contravention record the questions came from, when
+      // there is one. Nothing here asserts law.
+      citations: contravention ? [toCitation(contravention)] : [],
+      // Low by construction: an account rests on the user's say-so until
+      // something corroborates it, and this finding never sees held evidence.
+      confidence: 'LOW',
+      groundKey: null,
+    });
+  }
+
+  // Not knowing cuts the same way whatever the question, so an "unsure" is the
+  // one answer this engine can act on without a judgement about polarity.
+  for (const answer of answered) {
+    if (answer.answer === 'UNSURE') {
+      missingInformation.push(
+        `You were not sure: ${answer.prompt} Finding out would let us say more.`,
+      );
+    }
+  }
+
+  /*
+   * Mitigation is a separate category on purpose.
+   *
+   * An authority may cancel a penalty at its discretion even where the
+   * contravention did occur, and an adjudicator's powers are narrower than
+   * that. Presenting "there was a medical emergency" beside a statutory ground
+   * would tell the user the two carry the same weight. They do not.
+   */
+  const mitigation = answered.find((a) => isMitigationQuestion(a.questionId) && a.answer === 'YES');
+  const discretionRecord = getReference('GUIDANCE-DISCRETION');
+  if (mitigation && discretionRecord) {
+    const caution = (discretionRecord.content as { caution?: string }).caution;
+    findings.push({
+      id: 'context-mitigation',
+      category: 'DISCRETIONARY',
+      issue: 'You have told us there were exceptional circumstances',
+      whyItMayMatter:
+        `${discretionRecord.summary} ${caution ?? ''} `.trim() +
+        ' Evidence of the circumstances themselves is what makes this worth raising.',
+      evidenceNeeded: ['BREAKDOWN_EVIDENCE', 'CORRESPONDENCE', 'OTHER'],
+      evidenceAvailable: availableFrom(['BREAKDOWN_EVIDENCE', 'CORRESPONDENCE', 'OTHER']),
+      citations: [toCitation(discretionRecord)],
+      confidence: 'LOW',
+      groundKey: null,
+    });
+  }
+
+  /*
+   * Evidence the user says they hold but has not given us.
+   *
+   * This is missing information, not evidence. It is the single most likely
+   * place for a product like this to flatter a user: they say they have the
+   * permit, the basis rises, and they submit a challenge resting on a document
+   * nobody has looked at. So a declaration lands here and nowhere else, and
+   * `determineBasis` is told about it separately precisely so it can refuse to
+   * count it.
+   */
+  for (const declared of context?.declaredEvidence ?? []) {
+    const definition = EVIDENCE_DEFINITIONS[declared.type];
+    if (!definition) continue;
+    if (declared.held === 'HAVE' && (input.evidenceProvided[declared.type] ?? 0) === 0) {
+      missingInformation.push(
+        `You said you can produce ${lowerFirst(definition.label)}. We have not seen it, so it is not yet supporting your case.`,
+      );
+    }
+    if (declared.held === 'NOT_SURE') {
+      missingInformation.push(
+        `You were not sure whether you have ${lowerFirst(definition.label)}. ${definition.whyItMatters}`,
+      );
+    }
+  }
+
   /* ---- Procedural checks --------------------------------------------------- */
 
   if (input.amountCheck) {
@@ -241,10 +366,57 @@ function determineBasis(
 
   const groundFindings = findings.filter((f) => f.category === 'STATUTORY_GROUND');
   if (groundFindings.length === 0) {
+    /*
+     * No ground has been chosen. In the free assessment nobody has chosen one
+     * yet — choosing is a later, deliberate act — but the user has confirmed
+     * their notice and told us what happened, so we can still describe how well
+     * evidenced their account is against what this contravention normally turns
+     * on. Saying nothing at that point is not caution, it is unhelpfulness.
+     *
+     * The ceiling is the point of this branch. Without a ground the evidence has
+     * nothing specific to cover, so MODERATE is as far as it can go, and it gets
+     * there only on evidence we actually hold.
+     */
+    const engaged =
+      (input.userContext?.answers.length ?? 0) > 0 ||
+      (input.userContext?.declaredEvidence.length ?? 0) > 0;
+
+    if (!engaged) {
+      return {
+        basis: 'INSUFFICIENT_INFORMATION',
+        explanation:
+          'You have not yet identified a ground to rely on, so there is nothing for us to assess the evidence against.',
+      };
+    }
+
+    /*
+     * Held, not declared.
+     *
+     * `evidenceProvided` counts documents PCNWatch has. A declaration that one
+     * exists is deliberately not consulted here: if it were, a user could reach
+     * a moderate basis by ticking boxes about documents nobody has seen, and
+     * they would submit a challenge believing it was evidenced when it was not.
+     */
+    const heldCount = Object.values(input.evidenceProvided).filter((n) => (n ?? 0) > 0).length;
+    const claimed = (input.userContext?.declaredEvidence ?? []).filter((d) => d.held === 'HAVE');
+
+    if (heldCount === 0) {
+      return {
+        basis: 'WEAK_EVIDENCE_BASIS',
+        explanation:
+          (claimed.length > 0
+            ? `You have told us about ${claimed.length} item${claimed.length === 1 ? '' : 's'} of supporting evidence, but we have not seen ${claimed.length === 1 ? 'it' : 'them'}. `
+            : 'You have not told us about any supporting evidence yet. ') +
+          'As things stand your case would rest on your account alone. ' +
+          'This describes how well your case is evidenced. It is not a prediction of the outcome.',
+      };
+    }
     return {
-      basis: 'INSUFFICIENT_INFORMATION',
+      basis:
+        missingEssentialCount === 0 ? 'MODERATE_EVIDENCE_BASIS' : 'WEAK_EVIDENCE_BASIS',
       explanation:
-        'You have not yet identified a ground to rely on, so there is nothing for us to assess the evidence against.',
+        'You have supporting evidence and have told us what happened. Until you decide which ground you are relying on we cannot say how completely that evidence covers it. ' +
+        'This describes how well your case is evidenced. It is not a prediction of the outcome.',
     };
   }
 
@@ -309,6 +481,39 @@ function dedupeCitations(citations: readonly ReferenceCitation[]): ReferenceCita
   const seen = new Map<string, ReferenceCitation>();
   for (const c of citations) seen.set(`${c.key}@${c.version}`, c);
   return [...seen.values()];
+}
+
+const ANSWER_WORDS: Record<AnswerValue, string> = {
+  YES: 'yes.',
+  NO: 'no.',
+  UNSURE: 'not sure.',
+};
+
+/**
+ * What a question implicates, resolved from the store rather than the request.
+ * A general question falls back to the contravention's own evidence list.
+ */
+function evidenceForQuestion(
+  questionId: string,
+  contraventionCode: string | null,
+): readonly EvidenceType[] {
+  const [prefix] = questionId.split('#');
+  const record = prefix === 'GENERAL'
+    ? contraventionCode
+      ? getContravention(contraventionCode)
+      : undefined
+    : getReference(prefix as string);
+  if (!record) return [];
+  const raw = (record.content as { relevantEvidence?: readonly string[] }).relevantEvidence ?? [];
+  return raw.filter((v): v is EvidenceType => v in EVIDENCE_DEFINITIONS);
+}
+
+function dedupeEvidence(types: readonly EvidenceType[]): EvidenceType[] {
+  return [...new Set(types)];
+}
+
+function lowerFirst(text: string): string {
+  return text.length === 0 ? text : text[0]!.toLowerCase() + text.slice(1);
 }
 
 export function formatPence(pence: number): string {

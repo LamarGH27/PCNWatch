@@ -59,14 +59,33 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * Where a line on this page came from.
+ *
+ * Three things sit side by side in the findings list and a reader must never
+ * have to guess which is which: an account the user gave us, evidence somebody
+ * holds, and a conclusion PCNWatch reached from the rules. The last carries
+ * weight the first two do not, and an unlabelled list quietly lends PCNWatch's
+ * authority to whatever the user typed.
+ */
+function provenanceOf(findingId: string): { label: string; tone: 'USER' | 'PCNWATCH' } {
+  return findingId.startsWith('context-')
+    ? { label: 'You told us', tone: 'USER' }
+    : { label: 'PCNWatch finding', tone: 'PCNWATCH' };
+}
+
 export function AssessmentView({
   result,
   facts,
   onEdit,
+  onEditContext,
+  contextAnswered,
 }: {
   result: VerifiedAssessment;
   facts: VerifiedFacts;
   onEdit: () => void;
+  onEditContext?: () => void;
+  contextAnswered?: boolean;
 }) {
   const { assessment } = result;
 
@@ -238,14 +257,33 @@ export function AssessmentView({
             These are questions to answer, not grounds you already have. Whether any of them helps
             depends on evidence you have not gathered yet.
           </p>
-          {assessment.findings.map((finding) => (
-            <div key={finding.id} style={{ ...deadlineCard, marginTop: 10 }}>
-              <strong style={{ fontSize: 15 }}>{finding.issue}</strong>
-              <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--text-muted)' }}>
-                {finding.whyItMayMatter}
-              </p>
-            </div>
-          ))}
+          {assessment.findings.map((finding) => {
+            const provenance = provenanceOf(finding.id);
+            return (
+              <div key={finding.id} style={{ ...deadlineCard, marginTop: 10 }}>
+                <span
+                  style={{
+                    display: 'inline-block',
+                    marginBottom: 6,
+                    padding: '2px 8px',
+                    borderRadius: 999,
+                    fontSize: 11,
+                    fontWeight: 620,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    border: '1px solid var(--border-strong)',
+                    color: provenance.tone === 'USER' ? 'var(--text-muted)' : 'var(--text)',
+                  }}
+                >
+                  {provenance.label}
+                </span>
+                <strong style={{ fontSize: 15, display: 'block' }}>{finding.issue}</strong>
+                <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--text-muted)' }}>
+                  {finding.whyItMayMatter}
+                </p>
+              </div>
+            );
+          })}
         </Section>
       )}
 
@@ -283,6 +321,20 @@ export function AssessmentView({
         </Section>
       )}
 
+      {onEditContext && !contextAnswered && (
+        <div className="fr-panel" style={{ padding: '14px 16px', marginTop: 22 }}>
+          <strong style={{ fontSize: 15 }}>This assessment only knows what your notice says.</strong>
+          <p style={{ margin: '6px 0 10px', fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            You have not told us what actually happened, so everything above is drawn from the
+            authority&rsquo;s side of it. A few sentences about your own case is the single thing
+            that would improve this most.
+          </p>
+          <button type="button" onClick={onEditContext} className="fr-touch" style={secondaryAction}>
+            Tell us what happened
+          </button>
+        </div>
+      )}
+
       <p
         style={{
           marginTop: 24,
@@ -308,6 +360,16 @@ export function AssessmentView({
         <button type="button" onClick={onEdit} className="fr-touch" style={secondaryAction}>
           Edit verified details
         </button>
+        {onEditContext && (
+          <button
+            type="button"
+            onClick={onEditContext}
+            className="fr-touch"
+            style={secondaryAction}
+          >
+            {contextAnswered ? 'Change what you told us' : 'Tell us what happened'}
+          </button>
+        )}
         {facts.location && (
           <Link href="/map" className="fr-touch" style={{ ...secondaryAction, textDecoration: 'none' }}>
             Check this location on the map
