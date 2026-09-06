@@ -1,11 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { selectContextQuestions } from '@/core/context/questions';
-import type {
-  AnswerValue,
-  EvidenceHeld,
-  UserContext,
+import {
+  ASSERTION_LABELS,
+  type AnswerValue,
+  type ConfirmedAssertion,
+  type EvidenceHeld,
+  type NarrativeAssertion,
+  type NarrativeStance,
+  type UserContext,
 } from '@/core/context/types';
 import type { EvidenceType } from '@/core/evidence/types';
 import type { NoticeType, ProceduralStage } from '@/core/reference/types';
@@ -48,9 +52,34 @@ export interface ContextDraft {
   narrative: string;
   answers: Record<string, AnswerValue>;
   evidence: Partial<Record<EvidenceType, EvidenceHeld>>;
+  /**
+   * Our reading of the account, and what the user has since said about it.
+   *
+   * `extracted` is what came back from the reader and means nothing on its own.
+   * `decisions` is what the user did with each one, keyed by assertion kind.
+   * Only the second reaches the assessment, and an assertion absent from
+   * `decisions` has not been confirmed and therefore does not count.
+   */
+  extracted: readonly NarrativeAssertion[];
+  decisions: Record<string, AssertionDecision>;
 }
 
-export const EMPTY_CONTEXT_DRAFT: ContextDraft = { narrative: '', answers: {}, evidence: {} };
+/**
+ * What a user did with one thing we said we understood.
+ *
+ * "Not what I meant" is a first-class option, not a hidden one. A confirmation
+ * screen where the only real button is "yes that's right" is not a confirmation
+ * screen.
+ */
+export type AssertionDecision = { confirmed: true; stance: NarrativeStance } | { confirmed: false };
+
+export const EMPTY_CONTEXT_DRAFT: ContextDraft = {
+  narrative: '',
+  answers: {},
+  evidence: {},
+  extracted: [],
+  decisions: {},
+};
 
 /**
  * Turns what the user filled in into what the server is allowed to see.
@@ -67,7 +96,25 @@ export function toUserContext(draft: ContextDraft): UserContext {
       type: type as EvidenceType,
       held: held as EvidenceHeld,
     })),
+    confirmedAssertions: confirmedAssertionsOf(draft),
   };
+}
+
+/**
+ * The assertions the user actually confirmed.
+ *
+ * Built by walking what the user decided, not by filtering what the model
+ * returned: an extraction with no decision recorded against it simply has no
+ * way into the result. Nothing the model wrote survives this — only the kind
+ * and the stance, both from our own vocabulary.
+ */
+export function confirmedAssertionsOf(draft: ContextDraft): ConfirmedAssertion[] {
+  return Object.entries(draft.decisions)
+    .filter(([, decision]) => decision.confirmed)
+    .map(([kind, decision]) => ({
+      kind: kind as ConfirmedAssertion['kind'],
+      stance: (decision as { confirmed: true; stance: NarrativeStance }).stance,
+    }));
 }
 
 export function ContextStage({
@@ -91,8 +138,64 @@ export function ContextStage({
 }) {
   // Two panels rather than one long form: the open question first, then the
   // specifics. On a phone the whole of step one fits above the fold.
-  const [panel, setPanel] = useState<'ACCOUNT' | 'DETAIL'>('ACCOUNT');
+  const [panel, setPanel] = useState<'ACCOUNT' | 'UNDERSTOOD' | 'DETAIL'>('ACCOUNT');
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [readingProblem, setReadingProblem] = useState<string | null>(null);
+
+  /**
+   * Sends the account to be read, then shows what we understood.
+   *
+   * The account leaves the browser here and nowhere else, and it is not kept
+   * anywhere on the way: the request body is built inline, the response carries
+   * assertions rather than an echo of the text, and a failure moves the user on
+   * rather than blocking them — an account we could not read is a smaller
+   * problem than a journey that dead-ends because a model was unavailable.
+   */
+  const readAccount = useCallback(async () => {
+    const narrative = draft.narrative.trim();
+    if (narrative === '') {
+      setPanel('DETAIL');
+      return;
+    }
+
+    setReading(true);
+    setReadingProblem(null);
+    try {
+      const response = await fetch('/api/cases/narrative', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ narrative }),
+      });
+      const body = (await response.json()) as
+        | { ok: true; assertions: NarrativeAssertion[] }
+        | { ok: false; reason: string };
+
+      if (!body.ok) {
+        setReadingProblem(
+          body.reason === 'NOT_CONFIGURED'
+            ? 'This deployment cannot read written accounts, so we have not tried. Everything else still works, and the questions below cover the same ground.'
+            : body.reason === 'RATE_LIMITED'
+              ? 'We have read several accounts from here in a short time. Your words are safe — wait a moment and try again, or carry on with the questions below.'
+              : 'We could not read your account just now. Nothing was lost, and the questions below cover much of the same ground.',
+        );
+        onChange({ ...draft, extracted: [], decisions: {} });
+        setPanel('UNDERSTOOD');
+        return;
+      }
+
+      onChange({ ...draft, extracted: body.assertions, decisions: {} });
+      setPanel('UNDERSTOOD');
+    } catch {
+      setReadingProblem(
+        'We could not reach the service that reads accounts. Nothing was lost, and the questions below cover much of the same ground.',
+      );
+      onChange({ ...draft, extracted: [], decisions: {} });
+      setPanel('UNDERSTOOD');
+    } finally {
+      setReading(false);
+    }
+  }, [draft, onChange]);
 
   const questionSet = useMemo(
     () => selectContextQuestions({ contraventionCode, noticeType, proceduralStage }),
@@ -144,17 +247,144 @@ export function ContextStage({
           <button
             type="button"
             className="fr-touch"
-            onClick={() => setPanel('DETAIL')}
-            style={primary(true)}
+            onClick={() => void readAccount()}
+            disabled={reading}
+            style={primary(!reading)}
           >
-            Continue
+            {reading ? 'Reading what you wrote…' : 'Continue'}
           </button>
+          {reading && (
+            <p role="status" aria-live="polite" style={{ margin: 0, fontSize: 12.5, color: 'var(--text-faint)' }}>
+              We are turning your account into a short list of facts for you to check. Nothing is
+              being saved.
+            </p>
+          )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button type="button" className="fr-touch" onClick={onBack} style={secondary}>
               Back to your details
             </button>
             <button type="button" className="fr-touch" onClick={onSkip} style={secondary}>
               Skip for now
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (panel === 'UNDERSTOOD') {
+    const confirmedCount = confirmedAssertionsOf(draft).length;
+
+    return (
+      <div style={{ marginTop: 28 }}>
+        <div className="fr-eyebrow" style={{ marginBottom: 6 }}>
+          Step 3 of 4 — checking we understood
+        </div>
+        <h2 style={{ fontSize: 20, fontWeight: 640, margin: '0 0 8px' }}>
+          We understood your account as follows
+        </h2>
+        <p style={{ margin: '0 0 4px', fontSize: 14.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          This is our reading of what you wrote, not a decision about your case. Confirm anything
+          we got right and correct anything we did not.
+        </p>
+        <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+          Nothing here counts until you confirm it. Anything you leave alone is ignored
+          completely.
+        </p>
+
+        {readingProblem && <div style={noteBox}>{readingProblem}</div>}
+
+        {!readingProblem && draft.extracted.length === 0 && (
+          <div style={noteBox}>
+            We did not find any specific factual claims in what you wrote. That is common and it is
+            not a problem — plenty of accounts are about how something felt rather than about
+            permits and payments. The questions on the next screen cover the specifics.
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gap: 12 }}>
+          {draft.extracted.map((assertion) => {
+            const decision = draft.decisions[assertion.kind];
+            const setDecision = (next: AssertionDecision) =>
+              onChange({ ...draft, decisions: { ...draft.decisions, [assertion.kind]: next } });
+
+            return (
+              <fieldset key={assertion.kind} style={card}>
+                <legend style={{ fontSize: 14.5, fontWeight: 550, padding: 0, lineHeight: 1.45 }}>
+                  {ASSERTION_LABELS[assertion.kind]}
+                </legend>
+                {/*
+                  The model's own words, clearly marked as a restatement of the
+                  user's account rather than as anything PCNWatch has concluded.
+                */}
+                <p style={{ margin: '4px 0 0', fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  From what you wrote: {assertion.summary}
+                </p>
+                {assertion.kind === 'OTHER_REQUIRES_REVIEW' && (
+                  <p style={{ margin: '6px 0 0', fontSize: 12.5, color: 'var(--text-faint)' }}>
+                    This did not fit any of the checks we run automatically. We would rather tell
+                    you that than file it under something it is not.
+                  </p>
+                )}
+                <div style={choiceRow}>
+                  <Choice
+                    name={`assertion-${assertion.kind}`}
+                    label="Yes, that is right"
+                    selected={decision?.confirmed === true && decision.stance === 'ASSERTED'}
+                    onSelect={() => setDecision({ confirmed: true, stance: 'ASSERTED' })}
+                  />
+                  <Choice
+                    name={`assertion-${assertion.kind}`}
+                    label="No, the opposite"
+                    selected={decision?.confirmed === true && decision.stance === 'DENIED'}
+                    onSelect={() => setDecision({ confirmed: true, stance: 'DENIED' })}
+                  />
+                  <Choice
+                    name={`assertion-${assertion.kind}`}
+                    label="Not what I meant"
+                    selected={decision?.confirmed === false}
+                    onSelect={() => setDecision({ confirmed: false })}
+                  />
+                </div>
+              </fieldset>
+            );
+          })}
+        </div>
+
+        <div
+          style={{
+            position: 'sticky',
+            bottom: 0,
+            background: 'var(--surface)',
+            borderTop: '1px solid var(--border)',
+            paddingTop: 14,
+            paddingBottom: 14,
+            marginTop: 18,
+            display: 'grid',
+            gap: 10,
+          }}
+        >
+          <button
+            type="button"
+            className="fr-touch"
+            onClick={() => setPanel('DETAIL')}
+            style={primary(true)}
+          >
+            Continue
+          </button>
+          <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-faint)' }}>
+            {draft.extracted.length === 0
+              ? 'Nothing to confirm here.'
+              : `${confirmedCount} of ${draft.extracted.length} confirmed. Anything unconfirmed is left out of your assessment.`}
+          </p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="fr-touch"
+              onClick={() => setPanel('ACCOUNT')}
+              style={secondary}
+            >
+              Change what you wrote
             </button>
           </div>
         </div>

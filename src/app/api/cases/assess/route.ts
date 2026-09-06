@@ -5,7 +5,11 @@ import { rateLimit } from '@/server/rate-limit';
 import { assessVerifiedNotice, type VerifiedFacts } from '@/server/cases/assess-verified';
 import { NOTICE_TYPES } from '@/server/ai/schemas';
 import { EVIDENCE_TYPES } from '@/core/evidence/types';
-import type { UserContext } from '@/core/context/types';
+import {
+  NARRATIVE_ASSERTION_KINDS,
+  NARRATIVE_STANCES,
+  type UserContext,
+} from '@/core/context/types';
 
 /**
  * The free assessment for a set of confirmed facts.
@@ -80,6 +84,29 @@ const bodySchema = z.object({
           }),
         )
         .max(40)
+        .default([]),
+
+      /*
+       * Facts read out of the user's account that the user then confirmed.
+       *
+       * Note what this accepts: a kind and a stance, both from closed lists.
+       * Not a summary, not a confidence, not a flag saying "confirmed: true".
+       * A caller cannot send an unconfirmed assertion here because there is no
+       * way to express one — the confirmed and unconfirmed forms are different
+       * shapes, and only the confirmed shape has a route to the engine.
+       *
+       * The model's own words never travel this way either. Summaries are for
+       * the confirmation screen; what reaches the assessment is which fact was
+       * confirmed, in our vocabulary, and nothing the model wrote.
+       */
+      confirmedAssertions: z
+        .array(
+          z.object({
+            kind: z.enum(NARRATIVE_ASSERTION_KINDS),
+            stance: z.enum(NARRATIVE_STANCES),
+          }),
+        )
+        .max(20)
         .default([]),
     })
     .optional(),

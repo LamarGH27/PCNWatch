@@ -114,12 +114,75 @@ describe('declared evidence is never counted as held evidence', () => {
     expect(call).toMatch(/assertedGroundKeys:\s*\[\]/);
   });
 
-  it('keeps the narrative out of the request schema', () => {
-    // The account stays in the browser. A `narrative` string field on the wire
-    // schema would be the first step to it reaching a log or a table.
+  it('keeps the narrative out of the assessment request schema', () => {
+    // The account reaches exactly one endpoint. A `narrative` string field on
+    // the assessment schema would be a second door into the rest of the system.
     const route = readFileSync(resolve(ROOT, 'src/app/api/cases/assess/route.ts'), 'utf8');
     expect(route).not.toMatch(/narrative:\s*z\.string/);
     expect(route).toContain('narrativeProvided: z.boolean()');
+  });
+
+  it('accepts only confirmed assertions, in a shape an unconfirmed one cannot take', () => {
+    const route = readFileSync(resolve(ROOT, 'src/app/api/cases/assess/route.ts'), 'utf8');
+    const start = route.indexOf('confirmedAssertions:');
+    expect(start, 'confirmedAssertions is no longer on the schema').toBeGreaterThan(-1);
+    const block = route.slice(start, route.indexOf('.max(20)', start));
+
+    // A kind and a stance, both closed. Nothing else — a summary or a
+    // confidence here would mean the model's own words travelling to the
+    // engine, and a `confirmed` flag would mean unconfirmed ones travelling
+    // alongside them, relying on something downstream to filter them out.
+    expect(block).toContain('z.enum(NARRATIVE_ASSERTION_KINDS)');
+    expect(block).toContain('z.enum(NARRATIVE_STANCES)');
+    expect(block).not.toMatch(/summary/);
+    expect(block).not.toMatch(/confidence/);
+    expect(block).not.toMatch(/confirmed:\s*z\./);
+  });
+});
+
+/**
+ * What happens to something a user wrote about their own life.
+ *
+ * Every rule here is one line of code from being wrong, and none of them fails
+ * loudly when it breaks — a narrative in a log or an audit row looks exactly
+ * like a working feature. The behaviour is covered by tests; this guards the
+ * shape, at the two places the shape is decided.
+ */
+describe('a written account is not kept anywhere', () => {
+  const CLIENT = resolve(ROOT, 'src/server/ai/client.ts');
+
+  it('marks narrative extraction as a private-input job', () => {
+    const source = readFileSync(CLIENT, 'utf8');
+    const start = source.indexOf('const PRIVATE_INPUT_JOBS');
+    expect(start, 'the private-input policy is gone').toBeGreaterThan(-1);
+    expect(source.slice(start, source.indexOf(';', start))).toContain('NARRATIVE_EXTRACTION');
+  });
+
+  it('does not persist the output of a private-input job', () => {
+    const source = readFileSync(CLIENT, 'utf8');
+    // The summaries are drawn from the account and can restate it nearly word
+    // for word, so storing them stores the account under another name.
+    expect(source).toMatch(/output:\s*isPrivateInput\s*\?\s*null\s*:\s*raw/);
+  });
+
+  it('does not fingerprint a private-input job by its content', () => {
+    const source = readFileSync(CLIENT, 'utf8');
+    expect(source).toMatch(/hashText:\s*!isPrivateInput/);
+  });
+
+  it('reads accounts from exactly one endpoint', () => {
+    // Grepped rather than assumed: a second caller of readNarrative would be a
+    // second place these rules have to hold, and it would not announce itself.
+    const callers = execFileSync(
+      'git',
+      ['grep', '-l', 'readNarrative', '--', 'src/'],
+      { cwd: ROOT, encoding: 'utf8' },
+    )
+      .trim()
+      .split('\n')
+      .filter((f) => f !== 'src/server/cases/read-narrative.ts');
+
+    expect(callers).toEqual(['src/app/api/cases/narrative/route.ts']);
   });
 });
 

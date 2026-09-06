@@ -7,7 +7,11 @@ import {
   referencesByCategory,
 } from '../reference/store';
 import type { NoticeType, ProceduralStage } from '../reference/types';
-import type { ContextQuestion, EvidenceQuestion } from './types';
+import type {
+  ContextQuestion,
+  EvidenceQuestion,
+  NarrativeAssertionKind,
+} from './types';
 
 /**
  * Which questions to ask this user about this notice.
@@ -233,3 +237,58 @@ function splitQuestionId(id: string): [string | null, string | null] {
   return [id.slice(0, at), id.slice(at + 1)];
 }
 
+
+
+/* ------------------------------------------------------------------ */
+/* What a confirmed assertion implies                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The evidence that would corroborate each factual claim.
+ *
+ * A factual mapping, not a legal one: it answers "what document would show
+ * this?", never "does this help?". Saying that a permit claim is corroborated
+ * by a permit asserts nothing about whether holding one defeats the
+ * contravention — that question belongs to the reference store and is not
+ * answered anywhere in this file.
+ *
+ * OTHER_REQUIRES_REVIEW maps to nothing on purpose. We do not know what the
+ * user described, so we do not know what would support it, and guessing would
+ * put words in their mouth in the one case where we already know the schema
+ * failed to capture them.
+ */
+const EVIDENCE_FOR_ASSERTION: Record<NarrativeAssertionKind, readonly EvidenceType[]> = {
+  HELD_PERMIT: ['PERMIT'],
+  PERMIT_VALID: ['PERMIT'],
+  PAYMENT_MADE: ['PAYMENT_RECEIPT'],
+  PAYMENT_BY_APP: ['PARKING_APP_RECEIPT'],
+  WRONG_VRM_POSSIBLE: ['PARKING_APP_RECEIPT', 'PAYMENT_RECEIPT'],
+  LOADING_OR_UNLOADING: ['LOADING_EVIDENCE', 'COUNCIL_PHOTOGRAPHS'],
+  SIGNAGE_UNCLEAR_OR_NOT_SEEN: ['PARKING_SIGN'],
+  BAY_MARKINGS_UNCLEAR: ['ROAD_MARKINGS'],
+  VEHICLE_BROKE_DOWN: ['BREAKDOWN_EVIDENCE'],
+  BLUE_BADGE_PRESENT: ['BLUE_BADGE'],
+  AUTHORITY_PHOTOGRAPHS_REVIEWED: ['COUNCIL_PHOTOGRAPHS'],
+  MITIGATING_CIRCUMSTANCES: ['OTHER'],
+  OTHER_REQUIRES_REVIEW: [],
+};
+
+export function evidenceForAssertion(kind: NarrativeAssertionKind): readonly EvidenceType[] {
+  return EVIDENCE_FOR_ASSERTION[kind] ?? [];
+}
+
+/**
+ * Assertions that describe a reason rather than a dispute about the facts.
+ *
+ * These are shown as mitigation, which asks an authority to exercise its
+ * discretion and does not say the contravention did not happen. Keeping them
+ * apart is the same boundary the mitigation question already draws.
+ */
+const MITIGATION_ASSERTIONS: ReadonlySet<NarrativeAssertionKind> = new Set([
+  'VEHICLE_BROKE_DOWN',
+  'MITIGATING_CIRCUMSTANCES',
+]);
+
+export function isMitigationAssertion(kind: NarrativeAssertionKind): boolean {
+  return MITIGATION_ASSERTIONS.has(kind);
+}

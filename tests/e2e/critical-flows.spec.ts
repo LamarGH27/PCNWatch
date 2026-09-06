@@ -517,6 +517,14 @@ test.describe('tell us what happened', () => {
       .fill('I had a resident permit for that bay and had renewed it that morning.');
     await page.getByRole('button', { name: /^continue$/i }).click();
 
+    // An account now goes through the confirmation screen on its way to the
+    // questions. This build has no reader configured, so there is nothing to
+    // confirm — which is itself the path most deployments without a key take.
+    await expect(
+      page.getByRole('heading', { name: /we understood your account as follows/i }),
+    ).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: /^continue$/i }).click();
+
     // Answer the permit question yes.
     const permit = page.getByRole('group').filter({ hasText: /did you hold a valid permit/i });
     await permit.getByRole('radio', { name: /^yes$/i }).check();
@@ -591,5 +599,203 @@ test.describe('tell us what happened', () => {
       const box = await radios.nth(i).locator('xpath=ancestor::label[1]').boundingBox();
       expect(box!.height, 'an answer control is too small to tap').toBeGreaterThanOrEqual(44);
     }
+  });
+});
+
+test.describe('we understood your account as follows', () => {
+  const VALUES = [
+    'Westminster City Council',
+    'WM12345678',
+    '12',
+    '2026-08-11',
+    '2026-08-14',
+    'STRAND',
+    '13000',
+  ];
+
+  async function reachAccountPanel(page: import('@playwright/test').Page) {
+    await page.goto('/analyse');
+    await page.getByRole('button', { name: /enter the details/i }).click();
+
+    const boxes = page.getByRole('textbox');
+    const ticks = page.getByRole('checkbox');
+    await expect(boxes).toHaveCount(VALUES.length);
+    for (let i = 0; i < VALUES.length; i++) {
+      await boxes.nth(i).fill(VALUES[i]!);
+      await ticks.nth(i).check();
+    }
+    await page.getByRole('button', { name: /confirm and continue/i }).click();
+    await expect(page.getByRole('heading', { name: /what happened/i })).toBeVisible({
+      timeout: 20_000,
+    });
+  }
+
+  /**
+   * Stands in for the reader.
+   *
+   * The build under test has no model configured, which is itself one of the
+   * cases below. For the rest, the endpoint is intercepted so the confirmation
+   * screen can be driven with a known reading — the browser test is about what
+   * a user is shown and what leaves the page, not about what a model returns.
+   */
+  async function stubReader(
+    page: import('@playwright/test').Page,
+    assertions: unknown[],
+  ) {
+    await page.route('**/api/cases/narrative', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, assertions }),
+      });
+    });
+  }
+
+  const PERMIT = {
+    kind: 'HELD_PERMIT',
+    stance: 'ASSERTED',
+    confidence: 0.9,
+    summary: 'Says a resident permit was held for that bay.',
+    source: 'USER_ACCOUNT',
+  };
+
+  test('shows what we understood before anything counts', async ({ page }) => {
+    await stubReader(page, [PERMIT]);
+    await reachAccountPanel(page);
+
+    await page.getByRole('textbox', { name: /what happened/i }).fill('I had a resident permit.');
+    await page.getByRole('button', { name: /^continue$/i }).click();
+
+    await expect(
+      page.getByRole('heading', { name: /we understood your account as follows/i }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/says a resident permit was held/i)).toBeVisible();
+    // Stated plainly, because it is the whole point of the screen.
+    await expect(page.getByText(/nothing here counts until you confirm it/i)).toBeVisible();
+    // And it is a reading, not a decision.
+    await expect(page.getByText(/not a decision about your case/i)).toBeVisible();
+  });
+
+  test('lets the user disagree with our reading', async ({ page }) => {
+    await stubReader(page, [PERMIT]);
+    await reachAccountPanel(page);
+    await page.getByRole('textbox', { name: /what happened/i }).fill('I had a resident permit.');
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await expect(
+      page.getByRole('heading', { name: /we understood your account as follows/i }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    // Disagreeing is a real option on the screen, not something buried.
+    await expect(page.getByRole('radio', { name: /not what i meant/i })).toBeVisible();
+    await expect(page.getByRole('radio', { name: /no, the opposite/i })).toBeVisible();
+  });
+
+  test('sends only confirmed assertions to the assessment', async ({ page }) => {
+    await stubReader(page, [
+      PERMIT,
+      {
+        kind: 'PAYMENT_BY_APP',
+        stance: 'ASSERTED',
+        confidence: 0.8,
+        summary: 'Says payment was made by app.',
+        source: 'USER_ACCOUNT',
+      },
+    ]);
+
+    const sent: string[] = [];
+    await page.route('**/api/cases/assess', async (route) => {
+      sent.push(route.request().postData() ?? '');
+      await route.continue();
+    });
+
+    await reachAccountPanel(page);
+    await page
+      .getByRole('textbox', { name: /what happened/i })
+      .fill('I had a resident permit and I paid by app.');
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await expect(
+      page.getByRole('heading', { name: /we understood your account as follows/i }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    /*
+     * Confirm one and leave the other alone — which is what people actually do.
+     * An explicit "not what I meant" is the easy case; the one that matters is
+     * the assertion nobody looked at, because a default of "confirmed unless
+     * rejected" would sail through a test that decides every row.
+     */
+    const permit = page.getByRole('group').filter({ hasText: /you held a permit/i });
+    await permit.getByRole('radio', { name: /yes, that is right/i }).check();
+
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    const body = sent.join(' ');
+    expect(body, 'the confirmed assertion was not sent').toContain('HELD_PERMIT');
+    expect(body, 'an assertion the user never confirmed was sent anyway').not.toContain(
+      'PAYMENT_BY_APP',
+    );
+    // And none of the model's words travelled with it.
+    expect(body).not.toContain('Says a resident permit was held');
+  });
+
+  test('never sends the account itself to the assessment', async ({ page }) => {
+    await stubReader(page, [PERMIT]);
+    const sent: string[] = [];
+    await page.route('**/api/cases/assess', async (route) => {
+      sent.push(route.request().postData() ?? '');
+      await route.continue();
+    });
+
+    await reachAccountPanel(page);
+    await page
+      .getByRole('textbox', { name: /what happened/i })
+      .fill('My name is Jane Smith of 12 Acacia Avenue and I was at St Thomas Hospital.');
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await expect(
+      page.getByRole('heading', { name: /we understood your account as follows/i }),
+    ).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    const body = sent.join(' ');
+    for (const secret of ['Jane Smith', 'Acacia Avenue', 'St Thomas']) {
+      expect(body, `${secret} was sent to the assessment endpoint`).not.toContain(secret);
+    }
+    expect(body).toContain('narrativeProvided');
+  });
+
+  test('carries on when the account cannot be read', async ({ page }) => {
+    // This build has no model configured, so the reader genuinely fails. A
+    // journey that dead-ends here would be worse than one that says so.
+    await reachAccountPanel(page);
+    await page.getByRole('textbox', { name: /what happened/i }).fill('I had a resident permit.');
+    await page.getByRole('button', { name: /^continue$/i }).click();
+
+    await expect(
+      page.getByRole('heading', { name: /we understood your account as follows/i }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/cannot read written accounts|could not read your account/i)).toBeVisible();
+
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('works at mobile width', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    await stubReader(page, [PERMIT]);
+    await reachAccountPanel(page);
+    await page.getByRole('textbox', { name: /what happened/i }).fill('I had a resident permit.');
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await expect(
+      page.getByRole('heading', { name: /we understood your account as follows/i }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow, 'the confirmation screen pushes the page sideways').toBeLessThanOrEqual(1);
   });
 });
