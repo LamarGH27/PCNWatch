@@ -290,9 +290,29 @@ test.describe('the analyse journey does not dead-end', () => {
     // A basis, a stage, and dates worked out from the confirmed issue date.
     expect(body.assessment.assessment.basis).toBeTruthy();
     expect(body.assessment.stage).toBe('NEW');
-    expect(body.assessment.calculatedDeadlines.length).toBeGreaterThan(0);
-    for (const deadline of body.assessment.calculatedDeadlines) {
+
+    /*
+     * Every deadline is accounted for, which is the part that used to go
+     * nowhere. Accounted for means one of two things, and never silence: a
+     * date we are willing to stand behind, or a named refusal saying why we
+     * will not give one. This deliberately does not require a calculated
+     * date. Timing rules awaiting legal review are withheld on the server,
+     * so an endpoint that returned nothing but refusals here would still be
+     * behaving correctly -- what it may never do is say nothing at all.
+     */
+    const { calculatedDeadlines, refusedDeadlines } = body.assessment;
+    expect(calculatedDeadlines.length + refusedDeadlines.length).toBeGreaterThan(0);
+
+    for (const deadline of calculatedDeadlines) {
       expect(deadline.source).toBe('CALCULATED_BY_PCNWATCH');
+      expect(deadline.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    for (const refusal of refusedDeadlines) {
+      // A refusal names the deadline and the reason, and carries no date for
+      // the user to act on.
+      expect(refusal.label).toBeTruthy();
+      expect(refusal.reason).toBeTruthy();
+      expect(refusal.message).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     }
   });
 
