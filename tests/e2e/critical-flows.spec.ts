@@ -266,3 +266,61 @@ test.describe('accessibility basics', () => {
     expect(hasMap + hasNotice).toBeGreaterThan(0);
   });
 });
+
+test.describe('the analyse journey does not dead-end', () => {
+  // Runs against a build with no credentials, so extraction is unavailable and
+  // the flow offers manual entry. That path reaches the same verification step
+  // and the same assessment, which is the part that used to go nowhere.
+
+  test('the assessment endpoint answers from verified facts alone', async ({ request }) => {
+    const response = await request.post('/api/cases/assess', {
+      data: {
+        noticeType: 'PCN_POSTAL',
+        contraventionCode: '12',
+        issueDate: '2026-08-14',
+        incidentDate: '2026-08-11',
+        fullAmountPence: 13000,
+      },
+    });
+    expect(response.status()).toBe(200);
+
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.assessment.supported).toBe(true);
+    // A basis, a stage, and dates worked out from the confirmed issue date.
+    expect(body.assessment.assessment.basis).toBeTruthy();
+    expect(body.assessment.stage).toBe('NEW');
+    expect(body.assessment.calculatedDeadlines.length).toBeGreaterThan(0);
+    for (const deadline of body.assessment.calculatedDeadlines) {
+      expect(deadline.source).toBe('CALCULATED_BY_PCNWATCH');
+    }
+  });
+
+  test('a private parking charge is refused council logic', async ({ request }) => {
+    const response = await request.post('/api/cases/assess', {
+      data: { noticeType: 'PRIVATE_PARKING_CHARGE', issueDate: '2026-08-14' },
+    });
+    const body = await response.json();
+
+    expect(body.assessment.supported).toBe(false);
+    expect(body.assessment.unsupportedMessage).toBeTruthy();
+    expect(body.assessment.calculatedDeadlines).toHaveLength(0);
+  });
+
+  test('the old dead-end wording is gone from the flow', async ({ page }) => {
+    await page.goto('/analyse');
+    await expect(page.getByText('Your notice details are stored privately')).toHaveCount(0);
+  });
+
+  test('the analyse page works at mobile width', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    await page.goto('/analyse');
+
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    // Nothing may push the page sideways on a phone.
+    const overflows = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    );
+    expect(overflows).toBe(false);
+  });
+});
