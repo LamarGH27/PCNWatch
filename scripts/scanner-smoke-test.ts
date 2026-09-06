@@ -80,24 +80,21 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const useText = process.argv.includes('--text');
   console.log(`\nSYNTHETIC PCN EXTRACTION  (model: ${serverEnv().ANTHROPIC_MODEL})`);
   console.log('─'.repeat(96));
   console.log(`  ${SYNTHETIC_MARKER}`);
-  console.log(`  input: ${useText ? 'text' : 'rendered PNG'}\n`);
+  console.log('  input: rendered PNG\n');
 
+  // Always a rendered image. A `--text` mode existed briefly and was a lie: it
+  // base64-encoded the notice text and labelled it `image/png`, which no model
+  // could read. A photograph is what a user uploads, so a photograph is what is
+  // tested.
   const startedAt = Date.now();
-  const outcome = useText
-    ? await extractNotice({
-        data: Buffer.from(SYNTHETIC_PCN_TEXT).toString('base64'),
-        mediaType: 'image/png',
-        extractedText: SYNTHETIC_PCN_TEXT,
-      })
-    : await extractNotice({
-        data: await renderNotice(),
-        mediaType: 'image/png',
-        extractedText: SYNTHETIC_PCN_TEXT,
-      });
+  const outcome = await extractNotice({
+    data: await renderNotice(),
+    mediaType: 'image/png',
+    extractedText: SYNTHETIC_PCN_TEXT,
+  });
   const latencyMs = Date.now() - startedAt;
 
   console.log(`  latency: ${(latencyMs / 1000).toFixed(1)}s\n`);

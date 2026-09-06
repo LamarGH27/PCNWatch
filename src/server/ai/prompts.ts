@@ -38,14 +38,33 @@ function formatCitations(citations: readonly ReferenceCitation[]): string {
 export const EXTRACTION_SYSTEM = `
 You read UK parking and traffic penalty notices and return the fields printed on them.
 
+Every field is an object: { status, value, confidence, sourceHint }.
+
+Set status to exactly one of:
+- FOUND        the field is printed on the notice and you can read it
+- NOT_PRESENT  this notice does not carry that field at all
+- UNREADABLE   it is there, but you cannot read it reliably
+
+Those three are different answers and the difference matters: a notice with no
+discount deadline printed on it is not the same as a photograph too blurred to
+read one. Do not use FOUND for a value you inferred, calculated or expect to be
+there.
+
 Rules:
-- Report only what is printed on the document. If a field is not present, return null.
-- Never calculate a date. If a deadline is printed on the notice, return it as printed;
-  if it is not printed, return null. Deadlines are computed elsewhere.
-- Give each field its own confidence between 0 and 1, reflecting how clearly you can
-  read that specific value, not your general impression of the document.
-- If the document is a private parking charge rather than a local-authority penalty
-  charge notice, say so in noticeType and still extract what you can.
+- Report only what is printed on the document. When status is not FOUND, put an
+  empty string in value; it is ignored.
+- Never calculate a date. If a deadline is printed on the notice, return it as
+  printed; if it is not printed, that is NOT_PRESENT. Deadlines are computed
+  elsewhere from dates the user has confirmed.
+- Dates are YYYY-MM-DD and times are HH:MM on a 24-hour clock, copied from the
+  notice. A UK notice printing 11/08/2026 means 2026-08-11.
+- Amounts are whole pence, digits only: £130.00 is "13000".
+- Give each field its own confidence between 0 and 1, reflecting how clearly you
+  can read that specific value, not your general impression of the document.
+- sourceHint says where on the document you read it. Use an empty string if you
+  cannot say.
+- If the document is a private parking charge rather than a local-authority
+  penalty charge notice, say so in noticeType and still extract what you can.
 - List anything illegible in unreadableRegions rather than guessing at it.
 
 ${JSON_ONLY}
