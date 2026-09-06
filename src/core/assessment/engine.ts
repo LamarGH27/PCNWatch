@@ -8,6 +8,7 @@ import {
   isMitigationQuestion,
   resolveQuestionPrompt,
 } from '../context/questions';
+import { reconcileContext } from '../context/reconcile';
 import { ASSERTION_LABELS } from '../context/types';
 import { PRIVATE_PARKING_MESSAGE } from '../notices/classify-notice';
 import { citationsFor, getContravention, getReference, toCitation } from '../reference/store';
@@ -176,46 +177,75 @@ export function assessCase(input: AssessmentInput): Assessment {
   /* ---- What the user told us ----------------------------------------------- */
 
   /*
-   * The user's answers, kept visibly separate from anything PCNWatch concluded.
+   * One canonical set of facts, from both the questions and the account.
    *
-   * Two rules shape this section, and both exist to stop a product like this
-   * inventing a defence out of an answer:
+   * These used to be two findings built in two blocks that never saw each
+   * other, and a real assessment printed "Did you buy a pay-and-display ticket
+   * or pay by app instead? — no." above "you paid to park; you paid using an
+   * app". Both were faithful records of something the user had said; showing
+   * them together as though they agreed was the failure, and it left PCNWatch
+   * with no idea which fact it was reasoning about either.
    *
-   *  - Answers are reported, never interpreted. "Did you hold a permit?" is a
-   *    question whose helpful answer is yes; "were the yellow lines clearly
-   *    visible?" is a question whose helpful answer is no. Deciding which way
-   *    each one cuts is a legal judgement about reference content, so this code
-   *    does not make it. It records what was said and shows what would
-   *    corroborate it.
-   *  - The wording comes from the reference store, resolved from the question
-   *    id, never from the request. A caller cannot put words in a finding.
+   * `reconcileContext` reduces both sources to one fact per topic. Where they
+   * genuinely disagree it produces a conflict instead of a fact, and a
+   * conflicted topic contributes nothing here — the assessment does not get to
+   * pick a side quietly, and the caller is expected to have put the choice to
+   * the user before asking for an assessment at all.
    */
   const context = input.userContext;
-  const answered = (context?.answers ?? [])
+  const reconciled = reconcileContext(
+    context?.answers ?? [],
+    context?.confirmedAssertions ?? [],
+    context?.resolvedFacts ?? [],
+  );
+
+  const asserted = reconciled.facts.filter(
+    (fact) => fact.stance === 'ASSERTED' && !isMitigationAssertion(fact.topic),
+  );
+
+  /*
+   * Answers to questions with no topic mapping.
+   *
+   * They cannot be reconciled, so they cannot be checked for contradiction
+   * either. They are folded into the same finding rather than given one of
+   * their own: a second "what you told us" block is how the original
+   * contradiction came to be displayed as two confident statements.
+   *
+   * The wording still comes from the reference store, resolved from the id.
+   */
+  const unmapped = reconciled.unmappedAnswers
+    .filter((answer) => answer.answer !== 'UNANSWERED')
     .map((answer) => ({ ...answer, prompt: resolveQuestionPrompt(answer.questionId) }))
-    // An id we cannot account for is dropped rather than displayed. It means a
-    // stale client or a hand-made request, and neither should reach a finding.
-    .filter((answer): answer is typeof answer & { prompt: string } => answer.prompt !== null);
+    .filter((answer): answer is typeof answer & { prompt: string } => answer.prompt !== null)
+    .filter((answer) => !isMitigationQuestion(answer.questionId));
 
-  const substantive = answered.filter((a) => !isMitigationQuestion(a.questionId));
+  if (asserted.length > 0 || unmapped.length > 0) {
+    const evidence = dedupeEvidence([
+      ...asserted.flatMap((fact) => evidenceForAssertion(fact.topic)),
+      ...unmapped.flatMap((answer) => evidenceForQuestion(answer.questionId, input.contraventionCode)),
+    ]);
 
-  if (substantive.length > 0) {
-    const relatedEvidence = dedupeEvidence(
-      substantive.flatMap((a) => evidenceForQuestion(a.questionId, input.contraventionCode)),
-    );
+    const parts: string[] = [];
+    if (asserted.length > 0) {
+      parts.push(`${asserted.map((f) => lowerFirst(ASSERTION_LABELS[f.topic])).join('; ')}.`);
+    }
+    for (const answer of unmapped) {
+      parts.push(`${answer.prompt} — ${ANSWER_WORDS[answer.answer]}`);
+    }
+
     findings.push({
-      id: 'context-user-account',
+      id: 'context-user-facts',
       category: 'FACTUAL_DISPUTE',
       issue: 'What you have told us about what happened',
       whyItMayMatter:
-        'This is your account, not a finding of ours, and an authority will want it corroborated. ' +
-        `You told us: ${substantive.map((a) => `${a.prompt} — ${ANSWER_WORDS[a.answer]}`).join(' ')} ` +
-        'The evidence listed here is what would support that account.',
-      evidenceNeeded: relatedEvidence,
-      evidenceAvailable: availableFrom(relatedEvidence),
+        `You told us: ${parts.join(' ')} ` +
+        'This is your account rather than a finding of ours, and an authority will want it ' +
+        'corroborated. What would support it is listed here.',
+      evidenceNeeded: evidence,
+      evidenceAvailable: availableFrom(evidence),
       // Cited against the contravention record the questions came from, when
-      // there is one. Nothing here asserts law.
-      citations: contravention ? [toCitation(contravention)] : [],
+      // there is one and a question contributed. Nothing here asserts law.
+      citations: contravention && unmapped.length > 0 ? [toCitation(contravention)] : [],
       // Low by construction: an account rests on the user's say-so until
       // something corroborates it, and this finding never sees held evidence.
       confidence: 'LOW',
@@ -223,65 +253,39 @@ export function assessCase(input: AssessmentInput): Assessment {
     });
   }
 
-  /*
-   * Facts read out of the user's written account — and confirmed by them.
-   *
-   * Everything in `confirmedAssertions` has been through a screen where the
-   * user was shown our reading of their words and said it was right. An
-   * extraction they never looked at cannot be in this list: the confirmation
-   * step is what turns one into the other, and nothing else constructs a
-   * ConfirmedAssertion.
-   *
-   * They are still claims. A confirmed "I held a permit" is the user standing
-   * behind their own account, not a permit, and it produces the same kind of
-   * finding as an answered question: what was said, and what would support it.
-   */
-  const confirmed = context?.confirmedAssertions ?? [];
-  const claimed = confirmed.filter(
-    (assertion) => assertion.stance === 'ASSERTED' && !isMitigationAssertion(assertion.kind),
-  );
-
-  if (claimed.length > 0) {
-    const evidence = dedupeEvidence(claimed.flatMap((a) => evidenceForAssertion(a.kind)));
-    findings.push({
-      id: 'context-narrative-facts',
-      category: 'FACTUAL_DISPUTE',
-      issue: 'What you told us happened, in your own words',
-      whyItMayMatter:
-        'You confirmed that we had understood the following from your account: ' +
-        `${claimed.map((a) => lowerFirst(ASSERTION_LABELS[a.kind])).join('; ')}. ` +
-        'This is your account rather than a finding of ours, and an authority will want it ' +
-        'corroborated. What would support it is listed here.',
-      evidenceNeeded: evidence,
-      evidenceAvailable: availableFrom(evidence),
-      // Nothing legal is cited, because nothing legal has been decided. These
-      // are facts awaiting evidence, not grounds.
-      citations: [],
-      confidence: 'LOW',
-      groundKey: null,
-    });
-  }
-
   // Something the user plainly meant that the closed schema could not hold. It
   // is surfaced for a person to read rather than approximated into a fact.
-  if (confirmed.some((a) => a.kind === 'OTHER_REQUIRES_REVIEW')) {
+  if (reconciled.facts.some((fact) => fact.topic === 'OTHER_REQUIRES_REVIEW')) {
     missingInformation.push(
       'You told us something we could not fit into the checks we run automatically. It has not been ignored, but it has also not been assessed — nothing in this page takes it into account.',
     );
   }
 
-  for (const assertion of confirmed) {
-    if (assertion.stance === 'UNCLEAR') {
+  /*
+   * A disagreement we could not resolve.
+   *
+   * Reaching this point means an assessment was produced from a context that
+   * still contains one, which the endpoint refuses to do. The fact is excluded
+   * either way, and saying so is better than a page that quietly knows less
+   * than it appears to.
+   */
+  for (const conflict of reconciled.conflicts) {
+    missingInformation.push(
+      `You have given us two different answers about ${lowerFirst(ASSERTION_LABELS[conflict.topic])}. Until you tell us which is right we have left it out of this assessment entirely.`,
+    );
+  }
+
+  // Not knowing cuts the same way whatever the source, so this is the one
+  // answer the engine can act on without a judgement about polarity.
+  for (const fact of reconciled.facts) {
+    if (fact.stance === 'UNCLEAR') {
       missingInformation.push(
-        `Your account left this open: ${lowerFirst(ASSERTION_LABELS[assertion.kind])}. Pinning it down would let us say more.`,
+        `Your account left this open: ${lowerFirst(ASSERTION_LABELS[fact.topic])}. Pinning it down would let us say more.`,
       );
     }
   }
-
-  // Not knowing cuts the same way whatever the question, so an "unsure" is the
-  // one answer this engine can act on without a judgement about polarity.
-  for (const answer of answered) {
-    if (answer.answer === 'UNSURE') {
+  for (const answer of unmapped) {
+    if (answer.answer === 'NOT_SURE') {
       missingInformation.push(
         `You were not sure: ${answer.prompt} Finding out would let us say more.`,
       );
@@ -296,9 +300,9 @@ export function assessCase(input: AssessmentInput): Assessment {
    * that. Presenting "there was a medical emergency" beside a statutory ground
    * would tell the user the two carry the same weight. They do not.
    */
-  const mitigation =
-    answered.some((a) => isMitigationQuestion(a.questionId) && a.answer === 'YES') ||
-    confirmed.some((a) => isMitigationAssertion(a.kind) && a.stance === 'ASSERTED');
+  const mitigation = reconciled.facts.some(
+    (fact) => isMitigationAssertion(fact.topic) && fact.stance === 'ASSERTED',
+  );
   const discretionRecord = getReference('GUIDANCE-DISCRETION');
   if (mitigation && discretionRecord) {
     const caution = (discretionRecord.content as { caution?: string }).caution;
@@ -550,7 +554,10 @@ function dedupeCitations(citations: readonly ReferenceCitation[]): ReferenceCita
 const ANSWER_WORDS: Record<AnswerValue, string> = {
   YES: 'yes.',
   NO: 'no.',
-  UNSURE: 'not sure.',
+  NOT_SURE: 'not sure.',
+  // Never rendered: an unanswered question is filtered out long before this.
+  // Present so the record is total and a new answer value cannot be forgotten.
+  UNANSWERED: '',
 };
 
 /**

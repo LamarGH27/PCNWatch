@@ -799,3 +799,209 @@ test.describe('we understood your account as follows', () => {
     expect(overflow, 'the confirmation screen pushes the page sideways').toBeLessThanOrEqual(1);
   });
 });
+
+test.describe('two answers about the same thing', () => {
+  const VALUES = [
+    'Westminster City Council',
+    'WM12345678',
+    '12',
+    '2026-08-11',
+    '2026-08-14',
+    'STRAND',
+    '13000',
+  ];
+
+  /** The reading the Preview scenario produced, verbatim. */
+  const RINGGO = [
+    { kind: 'PAYMENT_MADE', stance: 'ASSERTED', confidence: 0.9, summary: 'Says the parking session was paid for.', source: 'USER_ACCOUNT' },
+    { kind: 'PAYMENT_BY_APP', stance: 'ASSERTED', confidence: 0.9, summary: 'Says payment was made through RingGo.', source: 'USER_ACCOUNT' },
+    { kind: 'WRONG_VRM_POSSIBLE', stance: 'ASSERTED', confidence: 0.7, summary: 'Says the wrong registration may have been selected.', source: 'USER_ACCOUNT' },
+  ];
+
+  async function reachQuestions(page: import('@playwright/test').Page) {
+    await page.route('**/api/cases/narrative', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, assertions: RINGGO }),
+      }),
+    );
+
+    await page.goto('/analyse');
+    await page.getByRole('button', { name: /enter the details/i }).click();
+    const boxes = page.getByRole('textbox');
+    const ticks = page.getByRole('checkbox');
+    await expect(boxes).toHaveCount(VALUES.length);
+    for (let i = 0; i < VALUES.length; i++) {
+      await boxes.nth(i).fill(VALUES[i]!);
+      await ticks.nth(i).check();
+    }
+    await page.getByRole('button', { name: /confirm and continue/i }).click();
+
+    await page
+      .getByRole('textbox', { name: /what happened/i })
+      .fill('I paid using RingGo but may have selected the wrong registration.');
+    await page.getByRole('button', { name: /^continue$/i }).click();
+
+    await expect(
+      page.getByRole('heading', { name: /we understood your account as follows/i }),
+    ).toBeVisible({ timeout: 20_000 });
+    for (const label of [/you paid to park/i, /you paid using an app/i, /wrong registration/i]) {
+      await page
+        .getByRole('group')
+        .filter({ hasText: label })
+        .getByRole('radio', { name: /yes, that is right/i })
+        .check();
+    }
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await expect(page.getByText(/did you hold a valid permit/i)).toBeVisible({ timeout: 20_000 });
+  }
+
+  test('an untouched question is never treated as a no', async ({ page }) => {
+    const sent: string[] = [];
+    await page.route('**/api/cases/assess', async (route) => {
+      sent.push(route.request().postData() ?? '');
+      await route.continue();
+    });
+
+    await reachQuestions(page);
+    // Answer nothing at all.
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    const body = sent.join(' ');
+    expect(body, 'an untouched question was sent as an answer').not.toContain('"answer":"NO"');
+    // And the assessment shows no contradiction, because there is none.
+    const text = await page.locator('body').innerText();
+    expect(text).not.toMatch(/pay-and-display ticket or pay by app instead\? — no/i);
+  });
+
+  test('a contradiction is put to the user instead of being shown as two facts', async ({ page }) => {
+    await reachQuestions(page);
+
+    // The exact contradiction from the Preview report: the account said the
+    // session was paid for, the questionnaire says no.
+    await page
+      .getByRole('group')
+      .filter({ hasText: /pay-and-display ticket or pay by app/i })
+      .getByRole('radio', { name: /^no$/i })
+      .check();
+
+    await expect(page.getByRole('button', { name: /check two answers first/i })).toBeVisible();
+    await page.getByRole('button', { name: /check two answers first/i }).click();
+
+    await expect(
+      page.getByRole('heading', { name: /two different answers/i }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/we will not guess which one you meant/i)).toBeVisible();
+    // Until it is settled, the fact is out.
+    await expect(page.getByText(/left out of your assessment entirely/i)).toBeVisible();
+    // And there is no way past it while it is unresolved.
+    await expect(page.getByRole('button', { name: /choose 1 more/i })).toBeDisabled();
+  });
+
+  test('resolving it produces one version of the fact, not both', async ({ page }) => {
+    await reachQuestions(page);
+    await page
+      .getByRole('group')
+      .filter({ hasText: /pay-and-display ticket or pay by app/i })
+      .getByRole('radio', { name: /^no$/i })
+      .check();
+    await page.getByRole('button', { name: /check two answers first/i }).click();
+    await expect(page.getByRole('heading', { name: /two different answers/i })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    await page
+      .getByRole('group')
+      .filter({ hasText: /you paid to park/i })
+      .getByRole('radio', { name: /yes, that is right/i })
+      .check();
+    await page.getByRole('button', { name: /back to your answers/i }).click();
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    const text = await page.locator('body').innerText();
+    // One version of the fact.
+    expect(text.toLowerCase()).toContain('you paid to park');
+    // Not the pair that appeared together on the Preview screen.
+    expect(text).not.toMatch(/pay-and-display ticket or pay by app instead\? — no/i);
+  });
+
+  test('evidence follows what the user said', async ({ page }) => {
+    await reachQuestions(page);
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    await expect(page.getByText(/start with these/i)).toBeVisible();
+    await expect(page.getByText(/less likely to matter here/i)).toBeVisible();
+
+    const text = await page.locator('body').innerText();
+    const appAt = text.indexOf('Parking app session');
+    const permitAt = text.indexOf('Parking permit');
+    expect(appAt, 'the app session is missing').toBeGreaterThan(-1);
+    expect(permitAt, 'the permit was removed rather than de-prioritised').toBeGreaterThan(-1);
+    expect(appAt, 'the permit is still asked for first').toBeLessThan(permitAt);
+  });
+
+  test('a finding label and its heading are separate, not run together', async ({ page }) => {
+    await reachQuestions(page);
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    /*
+     * The badge and the heading looked separated but were not: an inline-block
+     * span butted straight against a <strong> meant copied text and the
+     * accessibility tree both read "PCNWatch findingWhat the authority
+     * alleges" as one phrase. Checked in the text rather than by geometry,
+     * because geometry was never the thing that was wrong.
+     */
+    const cards = await page.evaluate(() => {
+      const badges = [...document.querySelectorAll('span')].filter((el) =>
+        /^(PCNWatch finding|You told us)$/.test((el.textContent ?? '').trim()),
+      );
+      return badges.map((badge) => {
+        const card = badge.closest('div')?.parentElement as HTMLElement | null;
+        return {
+          label: (badge.textContent ?? '').trim(),
+          // The card's own text, which is what a copy-paste and a screen reader
+          // both see. A label run into its heading shows up here as one line.
+          text: (card?.innerText ?? '').split('\n').slice(0, 2),
+          headingTag: card?.querySelector('h3')?.tagName ?? null,
+        };
+      });
+    });
+
+    expect(cards.length, 'no labelled findings on the page').toBeGreaterThan(0);
+    for (const card of cards) {
+      // The label is a line of its own, and the heading is the next line.
+      // innerText applies the badge's text-transform, so compare case-insensitively.
+      expect(
+        (card.text[0] ?? '').toLowerCase(),
+        `"${card.label}" is run into what follows it`,
+      ).toBe(card.label.toLowerCase());
+      expect(card.text[1] ?? '', `"${card.label}" has no heading after it`).not.toBe('');
+      // And the heading is a heading.
+      expect(card.headingTag, `"${card.label}" has no heading element`).toBe('H3');
+    }
+  });
+
+  test('the conflict screen works at mobile width', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    await reachQuestions(page);
+    await page
+      .getByRole('group')
+      .filter({ hasText: /pay-and-display ticket or pay by app/i })
+      .getByRole('radio', { name: /^no$/i })
+      .check();
+    await page.getByRole('button', { name: /check two answers first/i }).click();
+    await expect(page.getByRole('heading', { name: /two different answers/i })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow, 'the conflict screen pushes the page sideways').toBeLessThanOrEqual(1);
+  });
+});

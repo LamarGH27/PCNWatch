@@ -11,6 +11,7 @@ import {
   type NarrativeStance,
   type UserContext,
 } from '@/core/context/types';
+import { reconcileContext, type FactConflict } from '@/core/context/reconcile';
 import type { EvidenceType } from '@/core/evidence/types';
 import type { NoticeType, ProceduralStage } from '@/core/reference/types';
 
@@ -39,7 +40,7 @@ import type { NoticeType, ProceduralStage } from '@/core/reference/types';
 const ANSWERS: readonly { value: AnswerValue; label: string }[] = [
   { value: 'YES', label: 'Yes' },
   { value: 'NO', label: 'No' },
-  { value: 'UNSURE', label: 'Not sure' },
+  { value: 'NOT_SURE', label: 'Not sure' },
 ];
 
 const HELD: readonly { value: EvidenceHeld; label: string }[] = [
@@ -62,6 +63,15 @@ export interface ContextDraft {
    */
   extracted: readonly NarrativeAssertion[];
   decisions: Record<string, AssertionDecision>;
+  /**
+   * Contradictions the user has settled, keyed by topic.
+   *
+   * Empty until the two sources actually disagree, which is rare — most people
+   * answer consistently. When it is not empty, it is the only thing standing
+   * between the user and an assessment that would have shown them two
+   * incompatible versions of their own afternoon.
+   */
+  resolutions: Record<string, NarrativeStance>;
 }
 
 /**
@@ -79,6 +89,7 @@ export const EMPTY_CONTEXT_DRAFT: ContextDraft = {
   evidence: {},
   extracted: [],
   decisions: {},
+  resolutions: {},
 };
 
 /**
@@ -97,6 +108,10 @@ export function toUserContext(draft: ContextDraft): UserContext {
       held: held as EvidenceHeld,
     })),
     confirmedAssertions: confirmedAssertionsOf(draft),
+    resolvedFacts: Object.entries(draft.resolutions).map(([topic, stance]) => ({
+      topic: topic as ConfirmedAssertion['kind'],
+      stance,
+    })),
   };
 }
 
@@ -138,7 +153,7 @@ export function ContextStage({
 }) {
   // Two panels rather than one long form: the open question first, then the
   // specifics. On a phone the whole of step one fits above the fold.
-  const [panel, setPanel] = useState<'ACCOUNT' | 'UNDERSTOOD' | 'DETAIL'>('ACCOUNT');
+  const [panel, setPanel] = useState<'ACCOUNT' | 'UNDERSTOOD' | 'DETAIL' | 'RESOLVE'>('ACCOUNT');
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [reading, setReading] = useState(false);
   const [readingProblem, setReadingProblem] = useState<string | null>(null);
@@ -392,7 +407,27 @@ export function ContextStage({
     );
   }
 
+  if (panel === 'RESOLVE') {
+    return <ResolvePanel draft={draft} onChange={onChange} onDone={() => setPanel('DETAIL')} />;
+  }
+
   const answeredCount = Object.keys(draft.answers).length;
+
+  /*
+   * Does what the user has typed contradict what they have clicked?
+   *
+   * Computed here rather than only on the server so the disagreement is put to
+   * them in the flow, before they are refused an assessment. The server checks
+   * it too, and that check is the one that counts.
+   */
+  const conflicts = reconcileContext(
+    Object.entries(draft.answers).map(([questionId, answer]) => ({ questionId, answer })),
+    confirmedAssertionsOf(draft),
+    Object.entries(draft.resolutions).map(([topic, stance]) => ({
+      topic: topic as ConfirmedAssertion['kind'],
+      stance,
+    })),
+  ).conflicts;
 
   return (
     <div style={{ marginTop: 28 }}>
@@ -519,8 +554,13 @@ export function ContextStage({
           gap: 10,
         }}
       >
-        <button type="button" className="fr-touch" onClick={onSubmit} style={primary(true)}>
-          See my assessment
+        <button
+          type="button"
+          className="fr-touch"
+          onClick={() => (conflicts.length > 0 ? setPanel('RESOLVE') : onSubmit())}
+          style={primary(true)}
+        >
+          {conflicts.length > 0 ? 'Check two answers first' : 'See my assessment'}
         </button>
         <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-faint)' }}>
           {answeredCount === 0
@@ -540,6 +580,150 @@ export function ContextStage({
             Back to your details
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "We have two different answers about this. Which is correct?"
+ *
+ * Shown when the questions and the written account genuinely disagree about
+ * the same fact. It exists because the alternative was worse in a specific
+ * way: PCNWatch used to print both versions in the same assessment, leaving a
+ * person to spot that their own case file contradicted itself — and leaving
+ * the product reasoning about neither fact in particular.
+ *
+ * Nothing is chosen for them and nothing is pre-selected. Both answers are
+ * theirs, and picking the more recent or the more useful one would be a guess
+ * about their life dressed up as a default.
+ */
+function ResolvePanel({
+  draft,
+  onChange,
+  onDone,
+}: {
+  draft: ContextDraft;
+  onChange: (next: ContextDraft) => void;
+  onDone: () => void;
+}) {
+  /*
+   * The disagreements, computed WITHOUT applying resolutions.
+   *
+   * Applying them here would make each card vanish the moment it was answered
+   * — the conflict really is settled, so it stops being a conflict — and a
+   * question that disappears as you answer it gives the user no confirmation
+   * of what they chose. The cards stay; the button below is what waits for
+   * them all to be settled.
+   */
+  const conflicts = reconcileContext(
+    Object.entries(draft.answers).map(([questionId, answer]) => ({ questionId, answer })),
+    confirmedAssertionsOf(draft),
+  ).conflicts;
+
+  const outstanding = conflicts.filter((c) => draft.resolutions[c.topic] === undefined);
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div className="fr-eyebrow" style={{ marginBottom: 6 }}>
+        Step 3 of 4 — one thing to check
+      </div>
+      <h2 style={{ fontSize: 20, fontWeight: 640, margin: '0 0 8px' }}>
+        {conflicts.length === 1
+          ? 'We have two different answers about one thing'
+          : `We have two different answers about ${conflicts.length} things`}
+      </h2>
+      <p style={{ margin: '0 0 4px', fontSize: 14.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        What you wrote and what you answered do not match. That is easily done — but we will not
+        guess which one you meant, and we will not put both into your assessment as though they
+        were both true.
+      </p>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+        Until you choose, this fact is left out of your assessment entirely.
+      </p>
+
+      {conflicts.length === 0 && (
+        <div style={noteBox}>
+          Nothing left to check. Your answers agree with what you wrote.
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gap: 12 }}>
+        {conflicts.map((conflict: FactConflict) => (
+          <fieldset key={conflict.topic} style={card}>
+            <legend style={{ fontSize: 14.5, fontWeight: 550, padding: 0, lineHeight: 1.45 }}>
+              {ASSERTION_LABELS[conflict.topic]}
+            </legend>
+            <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              You answered “{conflict.questionPrompt}” with{' '}
+              <strong>{conflict.questionAnswer === 'YES' ? 'yes' : 'no'}</strong>, but what you
+              wrote told us{' '}
+              <strong>{conflict.fromAccount === 'ASSERTED' ? 'it did happen' : 'it did not'}</strong>.
+            </p>
+            <p style={{ margin: '10px 0 0', fontSize: 13.5, fontWeight: 550 }}>Which is correct?</p>
+            <div style={choiceRow}>
+              <Choice
+                name={`resolve-${conflict.topic}`}
+                label="Yes, that is right"
+                selected={draft.resolutions[conflict.topic] === 'ASSERTED'}
+                onSelect={() =>
+                  onChange({
+                    ...draft,
+                    resolutions: { ...draft.resolutions, [conflict.topic]: 'ASSERTED' },
+                  })
+                }
+              />
+              <Choice
+                name={`resolve-${conflict.topic}`}
+                label="No, that is not right"
+                selected={draft.resolutions[conflict.topic] === 'DENIED'}
+                onSelect={() =>
+                  onChange({
+                    ...draft,
+                    resolutions: { ...draft.resolutions, [conflict.topic]: 'DENIED' },
+                  })
+                }
+              />
+              <Choice
+                name={`resolve-${conflict.topic}`}
+                label="I am not sure"
+                selected={draft.resolutions[conflict.topic] === 'UNCLEAR'}
+                onSelect={() =>
+                  onChange({
+                    ...draft,
+                    resolutions: { ...draft.resolutions, [conflict.topic]: 'UNCLEAR' },
+                  })
+                }
+              />
+            </div>
+          </fieldset>
+        ))}
+      </div>
+
+      <div
+        style={{
+          position: 'sticky',
+          bottom: 0,
+          background: 'var(--surface)',
+          borderTop: '1px solid var(--border)',
+          paddingTop: 14,
+          paddingBottom: 14,
+          marginTop: 18,
+          display: 'grid',
+          gap: 10,
+        }}
+      >
+        <button
+          type="button"
+          className="fr-touch"
+          onClick={onDone}
+          disabled={outstanding.length > 0}
+          style={primary(outstanding.length === 0)}
+        >
+          {outstanding.length > 0
+            ? `Choose ${outstanding.length} more`
+            : 'Back to your answers'}
+        </button>
       </div>
     </div>
   );

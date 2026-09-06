@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { EVIDENCE_DEFINITIONS } from '@/core/evidence/definitions';
-import type { EvidenceType } from '@/core/evidence/types';
 import { EVIDENCE_BASIS_LABELS } from '@/core/assessment/types';
 import { maskPcnNumber, type VerifiedAssessment, type VerifiedFacts } from '@/server/cases/assess-verified';
 
@@ -106,10 +105,6 @@ export function AssessmentView({
       </div>
     );
   }
-
-  const evidenceNeeded = [
-    ...new Set(assessment.findings.flatMap((f) => f.evidenceNeeded)),
-  ] as EvidenceType[];
 
   return (
     <div style={{ marginTop: 24 }}>
@@ -261,24 +256,38 @@ export function AssessmentView({
             const provenance = provenanceOf(finding.id);
             return (
               <div key={finding.id} style={{ ...deadlineCard, marginTop: 10 }}>
-                <span
-                  style={{
-                    display: 'inline-block',
-                    marginBottom: 6,
-                    padding: '2px 8px',
-                    borderRadius: 999,
-                    fontSize: 11,
-                    fontWeight: 620,
-                    letterSpacing: '0.06em',
-                    textTransform: 'uppercase',
-                    border: '1px solid var(--border-strong)',
-                    color: provenance.tone === 'USER' ? 'var(--text-muted)' : 'var(--text)',
-                  }}
-                >
-                  {provenance.label}
-                </span>
-                <strong style={{ fontSize: 15, display: 'block' }}>{finding.issue}</strong>
-                <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--text-muted)' }}>
+                {/*
+                  A block of its own, with a real heading after it.
+
+                  These used to be an inline-block span butted straight against
+                  a <strong>. They looked separated and were not: copied text
+                  and the accessibility tree both ran them together as
+                  "PCNWatch findingWhat the authority alleges", so a screen
+                  reader announced the label and the heading as one phrase. The
+                  wrapper gives the badge its own line in the layout and in the
+                  text, and the heading is now a heading.
+                */}
+                <div style={{ marginBottom: 8 }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      fontSize: 11,
+                      fontWeight: 620,
+                      letterSpacing: '0.06em',
+                      textTransform: 'uppercase',
+                      border: '1px solid var(--border-strong)',
+                      color: provenance.tone === 'USER' ? 'var(--text-muted)' : 'var(--text)',
+                    }}
+                  >
+                    {provenance.label}
+                  </span>
+                </div>
+                <h3 style={{ fontSize: 15, fontWeight: 620, margin: 0, lineHeight: 1.4 }}>
+                  {finding.issue}
+                </h3>
+                <p style={{ margin: '8px 0 0', fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.55 }}>
                   {finding.whyItMayMatter}
                 </p>
               </div>
@@ -287,22 +296,55 @@ export function AssessmentView({
         </Section>
       )}
 
-      {evidenceNeeded.length > 0 && (
+      {result.evidenceGuidance.length > 0 && (
         <Section title="Evidence to gather">
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14.5 }}>
-            {evidenceNeeded.map((type) => {
-              const definition = EVIDENCE_DEFINITIONS[type];
-              if (!definition) return null;
-              return (
-                <li key={type} style={{ marginBottom: 10 }}>
-                  <strong>{definition.label}</strong>
-                  <div style={{ fontSize: 13.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {definition.howToCapture}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          {/*
+            Ordered by what the user actually told us, not by the contravention
+            alone. A user who has just said they paid by app was being asked for
+            a parking permit at the top of this list; that item is still here,
+            because they might have had one, but it is no longer the headline.
+          */}
+          {(['PRIORITY', 'STANDARD', 'LESS_LIKELY'] as const).map((band) => {
+            const items = result.evidenceGuidance.filter((item) => item.priority === band);
+            if (items.length === 0) return null;
+            return (
+              <div key={band} style={{ marginTop: band === 'PRIORITY' ? 0 : 16 }}>
+                {band !== 'STANDARD' && (
+                  <p
+                    style={{
+                      margin: '0 0 8px',
+                      fontSize: 12.5,
+                      fontWeight: 620,
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-faint)',
+                    }}
+                  >
+                    {band === 'PRIORITY' ? 'Start with these' : 'Less likely to matter here'}
+                  </p>
+                )}
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14.5 }}>
+                  {items.map((item) => {
+                    const definition = EVIDENCE_DEFINITIONS[item.type];
+                    if (!definition) return null;
+                    return (
+                      <li key={item.type} style={{ marginBottom: 10 }}>
+                        <strong>{definition.label}</strong>
+                        <div style={{ fontSize: 13.5, color: 'var(--text-muted)', marginTop: 2 }}>
+                          {definition.howToCapture}
+                        </div>
+                        {item.reason && (
+                          <div style={{ fontSize: 12.5, color: 'var(--text-faint)', marginTop: 4 }}>
+                            {item.reason}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
         </Section>
       )}
 

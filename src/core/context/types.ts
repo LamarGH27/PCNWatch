@@ -15,8 +15,23 @@ import type { EvidenceType } from '../evidence/types';
  * we assert and not a ground we argue.
  */
 
-/** Whether the user says a thing was so. Never more granular than this. */
-export type AnswerValue = 'YES' | 'NO' | 'UNSURE';
+/**
+ * What the user said about a question — including not having said anything.
+ *
+ * UNANSWERED is a value rather than an absence, and that distinction caused a
+ * real bug: two representations of "we do not know" existed (a missing key and
+ * a recorded NOT_SURE), only one of them was reachable by reading the answer,
+ * and code that wanted to ask "did they say no?" had to remember which. Making
+ * it explicit means every place that handles an answer has to decide what to do
+ * with an untouched question, and none of them can decide it means "no".
+ */
+export const ANSWER_VALUES = ['YES', 'NO', 'NOT_SURE', 'UNANSWERED'] as const;
+export type AnswerValue = (typeof ANSWER_VALUES)[number];
+
+/** The answers that say something. UNANSWERED never reaches a finding. */
+export function isDefiniteAnswer(answer: AnswerValue): answer is 'YES' | 'NO' {
+  return answer === 'YES' || answer === 'NO';
+}
 
 /** Whether the user says they can produce a piece of evidence. */
 export type EvidenceHeld = 'HAVE' | 'DO_NOT_HAVE' | 'NOT_SURE';
@@ -90,6 +105,27 @@ export interface UserContext {
    * waiting to be filtered out by something remembering to.
    */
   readonly confirmedAssertions: readonly ConfirmedAssertion[];
+  /**
+   * Facts the user settled after being shown that their two answers disagreed.
+   *
+   * A resolution overrides both sources for that topic. It exists because the
+   * alternative — picking whichever source the code happened to read last — is
+   * how a case file ends up asserting two incompatible things about the same
+   * afternoon.
+   */
+  readonly resolvedFacts: readonly ResolvedFact[];
+}
+
+/**
+ * A contradiction the user has settled.
+ *
+ * Deliberately just a topic and a stance. The point of resolution is that one
+ * answer now stands; carrying the losing one forward as data would invite
+ * something downstream to display it again.
+ */
+export interface ResolvedFact {
+  readonly topic: NarrativeAssertionKind;
+  readonly stance: NarrativeStance;
 }
 
 export const EMPTY_USER_CONTEXT: UserContext = {
@@ -97,6 +133,7 @@ export const EMPTY_USER_CONTEXT: UserContext = {
   answers: [],
   declaredEvidence: [],
   confirmedAssertions: [],
+  resolvedFacts: [],
 };
 
 /* ------------------------------------------------------------------ */

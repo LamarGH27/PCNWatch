@@ -4,8 +4,10 @@ import { logError } from '@/lib/errors';
 import { rateLimit } from '@/server/rate-limit';
 import { assessVerifiedNotice, type VerifiedFacts } from '@/server/cases/assess-verified';
 import { NOTICE_TYPES } from '@/server/ai/schemas';
+import { reconcileContext } from '@/core/context/reconcile';
 import { EVIDENCE_TYPES } from '@/core/evidence/types';
 import {
+  ANSWER_VALUES,
   NARRATIVE_ASSERTION_KINDS,
   NARRATIVE_STANCES,
   type UserContext,
@@ -71,7 +73,7 @@ const bodySchema = z.object({
         .array(
           z.object({
             questionId: z.string().max(120),
-            answer: z.enum(['YES', 'NO', 'UNSURE']),
+            answer: z.enum(ANSWER_VALUES),
           }),
         )
         .max(40)
@@ -108,6 +110,25 @@ const bodySchema = z.object({
         )
         .max(20)
         .default([]),
+
+      /*
+       * Contradictions the user has settled.
+       *
+       * A resolution overrides both original sources for its topic. It is
+       * accepted here rather than being applied in the browser because the
+       * refusal below is server-side: a client that resolved a conflict only in
+       * its own state would keep being turned away, which is the correct
+       * behaviour and would be a confusing bug if resolutions had nowhere to go.
+       */
+      resolvedFacts: z
+        .array(
+          z.object({
+            topic: z.enum(NARRATIVE_ASSERTION_KINDS),
+            stance: z.enum(NARRATIVE_STANCES),
+          }),
+        )
+        .max(20)
+        .default([]),
     })
     .optional(),
 });
@@ -137,6 +158,35 @@ export async function POST(request: Request) {
 
   try {
     const { context, ...facts } = parsed.data;
+
+    /*
+     * An assessment is not produced while the user's own facts contradict
+     * each other.
+     *
+     * The engine already excludes a disputed topic, so proceeding would be
+     * safe in the narrow sense — but it would also be an assessment quietly
+     * built on less than the user thinks they told us, and the contradiction
+     * would still be sitting in their answers. Refusing here means the choice
+     * is put to them once, in front of the thing it affects.
+     *
+     * Enforced on the server rather than in the flow because this endpoint is
+     * the boundary: a stale client, a retry, or anything else calling it
+     * directly gets the same answer.
+     */
+    if (context) {
+      const { conflicts } = reconcileContext(
+        context.answers,
+        context.confirmedAssertions,
+        context.resolvedFacts,
+      );
+      if (conflicts.length > 0) {
+        return NextResponse.json(
+          { ok: false as const, reason: 'UNRESOLVED_CONFLICT' as const, conflicts },
+          { status: 409 },
+        );
+      }
+    }
+
     return NextResponse.json({
       ok: true as const,
       assessment: assessVerifiedNotice(
