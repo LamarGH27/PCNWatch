@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useId, useRef, useState } from 'react';
-import Link from 'next/link';
 import { EVIDENCE_DEFINITIONS } from '@/core/evidence/definitions';
+import type { VerifiedAssessment, VerifiedFacts } from '@/server/cases/assess-verified';
+import { AssessmentView } from './AssessmentView';
 
 /**
  * The upload → extract → verify flow.
@@ -29,6 +30,63 @@ interface FieldView {
   hint: string | null;
 }
 
+/**
+ * The facts the user actually confirmed.
+ *
+ * A field the user edited but did not tick is deliberately left out: the whole
+ * point of the verification step is that nothing becomes a fact until someone
+ * says so. Values are parsed back into the types the engines expect, and
+ * anything that will not parse is treated as unconfirmed rather than guessed.
+ */
+export function collectVerifiedFacts(
+  fields: readonly FieldView[],
+  values: Record<string, string>,
+  confirmed: Record<string, boolean>,
+): VerifiedFacts {
+  const confirmedValue = (key: string): string | undefined => {
+    if (!confirmed[key]) return undefined;
+    const raw = (values[key] ?? '').trim();
+    return raw === '' ? undefined : raw;
+  };
+
+  const pence = (key: string): number | undefined => {
+    const raw = confirmedValue(key);
+    if (raw === undefined) return undefined;
+    const digits = raw.replace(/[£,\s]/g, '');
+    return /^\d+$/.test(digits) ? Number(digits) : undefined;
+  };
+
+  const date = (key: string): string | undefined => {
+    const raw = confirmedValue(key);
+    return raw !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : undefined;
+  };
+
+  // The notice type is not one of the editable fields; it comes from the read
+  // and is the one value the user confirms by proceeding at all.
+  const noticeType = (fields.find((f) => f.key === 'noticeType')?.value ??
+    'UNKNOWN') as VerifiedFacts['noticeType'];
+
+  return {
+    noticeType,
+    authorityName: confirmedValue('authorityName'),
+    pcnNumber: confirmedValue('pcnNumber'),
+    vehicleRegistration: confirmedValue('vehicleRegistration'),
+    contraventionCode: confirmedValue('contraventionCode'),
+    contraventionDescription: confirmedValue('contraventionDescription'),
+    incidentDate: date('incidentDate'),
+    incidentTime: (() => {
+      const raw = confirmedValue('incidentTime');
+      return raw !== undefined && /^\d{2}:\d{2}$/.test(raw) ? raw : undefined;
+    })(),
+    issueDate: date('issueDate'),
+    location: confirmedValue('location'),
+    fullAmountPence: pence('fullAmountPence'),
+    discountedAmountPence: pence('discountedAmountPence'),
+    discountDeadlinePrinted: date('discountDeadlinePrinted'),
+    representationDeadlinePrinted: date('representationDeadlinePrinted'),
+  };
+}
+
 type Step =
   | { kind: 'UPLOAD' }
   | { kind: 'READING' }
@@ -36,16 +94,53 @@ type Step =
   | { kind: 'OUT_OF_SCOPE'; message: string; explanation: string }
   | { kind: 'MANUAL' }
   | { kind: 'ERROR'; what: string; whatYouCanDo: string; dataSaved: boolean; reference?: string }
-  | { kind: 'SAVED'; caseId: string };
+  | { kind: 'ANALYSING' }
+  | { kind: 'ASSESSED'; assessment: VerifiedAssessment; facts: VerifiedFacts }
+  // The assessment failed. The confirmed facts are held so nothing the user
+  // typed is lost, and so the attempt can be repeated.
+  | { kind: 'ASSESSMENT_FAILED'; facts: VerifiedFacts; message: string };
 
-export function AnalyseFlow({
-  extractionAvailable,
-  storageAvailable,
-}: {
-  extractionAvailable: boolean;
-  storageAvailable: boolean;
-}) {
+export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: boolean }) {
   const [step, setStep] = useState<Step>({ kind: 'UPLOAD' });
+
+  /**
+   * Turns the confirmed fields into the assessment.
+   *
+   * Only what the user ticked is sent. An edited-but-unconfirmed value never
+   * leaves this function, so it cannot reach a deadline or a finding.
+   */
+  const runAssessment = useCallback(async (facts: VerifiedFacts) => {
+    setStep({ kind: 'ANALYSING' });
+    try {
+      const response = await fetch('/api/cases/assess', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(facts),
+      });
+      const body = (await response.json()) as
+        | { ok: true; assessment: VerifiedAssessment }
+        | { ok: false; reason: string };
+
+      if (!body.ok) {
+        setStep({
+          kind: 'ASSESSMENT_FAILED',
+          facts,
+          message:
+            body.reason === 'RATE_LIMITED'
+              ? 'Too many requests just now. Wait a moment and try again.'
+              : 'We could not put your assessment together just now.',
+        });
+        return;
+      }
+      setStep({ kind: 'ASSESSED', assessment: body.assessment, facts });
+    } catch {
+      setStep({
+        kind: 'ASSESSMENT_FAILED',
+        facts,
+        message: 'We could not reach the assessment service.',
+      });
+    }
+  }, []);
   const [values, setValues] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
   const fileRef = useRef<HTMLInputElement>(null);
@@ -321,17 +416,7 @@ export function AnalyseFlow({
           style={{ marginTop: 20, display: 'grid', gap: 14 }}
           onSubmit={(e) => {
             e.preventDefault();
-            if (!storageAvailable) {
-              setStep({
-                kind: 'ERROR',
-                what: 'Saving cases is not available on this deployment.',
-                whatYouCanDo:
-                  'The details you entered have not been stored. You can still use the code and evidence guidance on this site.',
-                dataSaved: false,
-              });
-              return;
-            }
-            setStep({ kind: 'SAVED', caseId: 'pending' });
+            void runAssessment(collectVerifiedFacts(fields, values, confirmed));
           }}
         >
           {fields.map((field) => (
@@ -377,18 +462,59 @@ export function AnalyseFlow({
     );
   }
 
+  if (step.kind === 'ANALYSING') {
+    return (
+      <div style={{ marginTop: 28 }} role="status" aria-live="polite">
+        <Notice tone="neutral">
+          <strong>Analysing your verified PCN…</strong>
+          <p style={{ margin: '6px 0 0', fontSize: 14 }}>
+            Checking the contravention against our reference data and working out your dates.
+          </p>
+        </Notice>
+      </div>
+    );
+  }
+
+  if (step.kind === 'ASSESSMENT_FAILED') {
+    // The confirmed facts are still held in state, so nothing the user typed
+    // is lost and the attempt can simply be repeated.
+    return (
+      <div style={{ marginTop: 28 }}>
+        <Notice tone="warn">
+          <strong>{step.message}</strong>
+          <p style={{ margin: '6px 0 0', fontSize: 14 }}>
+            The details you confirmed have not been lost. You can try again, or go back and change
+            them.
+          </p>
+        </Notice>
+        <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="fr-touch"
+            onClick={() => void runAssessment(step.facts)}
+            style={primaryButton(true)}
+          >
+            Try again
+          </button>
+          <button
+            type="button"
+            className="fr-touch"
+            onClick={() => setStep({ kind: 'MANUAL' })}
+            style={secondaryButton(true)}
+          >
+            Change the details
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ marginTop: 28 }}>
-      <Notice tone="ok">
-        <strong>Case saved.</strong>
-        <p style={{ margin: '6px 0 0', fontSize: 14 }}>
-          Your notice details are stored privately. Only you can read them.
-        </p>
-      </Notice>
-      <p style={{ marginTop: 18 }}>
-        <Link href="/">Return home</Link>
-      </p>
-    </div>
+    <AssessmentView
+      result={step.assessment}
+      facts={step.facts}
+      onEdit={() => setStep({ kind: 'MANUAL' })}
+    />
   );
 }
 

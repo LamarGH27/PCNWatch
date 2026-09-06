@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import { isConfigured } from '@/lib/env';
-import { getStorageReadiness } from '@/server/repositories/storage-readiness';
 import { AnalyseFlow } from './AnalyseFlow';
 
 /**
@@ -21,7 +20,6 @@ export const metadata: Metadata = {
 };
 
 export default async function AnalysePage() {
-  const storage = await getStorageReadiness();
   return (
     <div className="fr-container" style={{ paddingBlock: 32, maxWidth: 760 }}>
       <div className="fr-eyebrow" style={{ marginBottom: 8 }}>
@@ -35,14 +33,7 @@ export default async function AnalysePage() {
         anything important before it counts.
       </p>
 
-      <AnalyseFlow
-        extractionAvailable={isConfigured('anthropic')}
-        // Supabase being configured is not enough. The object policies live on
-        // a table Supabase owns, so migration 0006 may not have created them —
-        // and without them one user's documents are readable by another. Checked
-        // against the database rather than inferred from configuration.
-        storageAvailable={isConfigured('supabase') && storage.ready}
-      />
+      <AnalyseFlow extractionAvailable={isConfigured('anthropic')} />
     </div>
   );
 }
