@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NARRATIVE_ASSERTION_KINDS, NARRATIVE_STANCES } from '@/core/context/types';
 import {
   LEGIBILITY_LEVELS,
   NOTICE_TYPES,
@@ -202,17 +203,101 @@ export function toPcnExtraction(wire: PcnExtractionWire): PcnExtraction {
   } as PcnExtraction;
 }
 
+/* ------------------------------------------------------------------ */
+/* Narrative extraction                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What the model answers with when reading a user's account.
+ *
+ * Two differences from the domain schema, both deliberate:
+ *
+ *  - No `source`. The domain type records that every assertion came from the
+ *    user's own account; the model is not asked, because a field the model
+ *    fills in is a field the model can get wrong, and "where did this fact come
+ *    from" is the one thing that must never be wrong here. The mapper stamps it.
+ *  - No unions anywhere, so this stays far below the 16-parameter structured
+ *    output limit that the document schema had to be rebuilt to satisfy. Every
+ *    field is required with an explicit closed set of values.
+ */
+export const narrativeExtractionWireSchema = z.object({
+  assertions: z
+    .array(
+      z.object({
+        kind: z.enum(NARRATIVE_ASSERTION_KINDS),
+        stance: z.enum(NARRATIVE_STANCES),
+        confidence: z.number().min(0).max(1),
+        summary: z.string().max(200),
+      }),
+    )
+    .max(20),
+});
+
+export type NarrativeExtractionWire = z.infer<typeof narrativeExtractionWireSchema>;
+
+/**
+ * Stamps the provenance the model was never asked for.
+ *
+ * Also drops an assertion whose summary is empty: a factual claim we cannot
+ * show the user is one they cannot confirm, and an assertion nobody confirmed
+ * must never reach the assessment — so it is discarded here rather than
+ * travelling as something to be filtered out later.
+ */
+export interface NarrativeExtractionDomain {
+  readonly assertions: readonly {
+    readonly kind: NarrativeExtractionWire['assertions'][number]['kind'];
+    readonly stance: NarrativeExtractionWire['assertions'][number]['stance'];
+    readonly confidence: number;
+    readonly summary: string;
+    readonly source: 'USER_ACCOUNT';
+  }[];
+}
+
+/**
+ * Returns `unknown` deliberately: the mapped shape when the response was the
+ * expected one, and the response untouched when it was not. Both go to the
+ * validator, which is the only thing that decides whether either is usable.
+ */
+export function toNarrativeExtraction(wire: NarrativeExtractionWire): unknown {
+  /*
+   * Passes anything it does not recognise straight through, untouched.
+   *
+   * The mapper runs before validation, so what it does with a malformed
+   * response decides how that response is reported. Coercing one into
+   * `{assertions: []}` would be the worst of the options available: the domain
+   * schema would accept it and the user would be told, plausibly and wrongly,
+   * that we found nothing in their account. Throwing would report a model
+   * failure as an outage of ours. Passing it on lets the schema reject it as
+   * what it is, which is recorded and visible on the data-health page.
+   */
+  if (!wire || !Array.isArray(wire.assertions)) return wire;
+
+  return {
+    assertions: wire.assertions
+      .filter((assertion) => typeof assertion?.summary === 'string' && assertion.summary.trim() !== '')
+      .map((assertion) => ({
+        kind: assertion.kind,
+        stance: assertion.stance,
+        confidence: assertion.confidence,
+        summary: assertion.summary.trim(),
+        source: 'USER_ACCOUNT' as const,
+      })),
+  };
+}
+
 /**
  * Job types that answer in a wire shape rather than the domain shape.
  *
- * Only extraction needs one today. The others are already well under the union
- * limit, and a wire schema they do not need would be indirection for its own
- * sake.
+ * Extraction needs one because of the union limit; narrative extraction needs
+ * one because its domain type carries a provenance field the model must not be
+ * allowed to set. The remaining jobs need neither.
  */
 export const WIRE_SCHEMAS = {
   DOCUMENT_EXTRACTION: pcnExtractionWireSchema,
+  NARRATIVE_EXTRACTION: narrativeExtractionWireSchema,
 } as const;
 
 export const WIRE_MAPPERS = {
   DOCUMENT_EXTRACTION: (raw: unknown) => toPcnExtraction(raw as PcnExtractionWire),
+  NARRATIVE_EXTRACTION: (raw: unknown) => toNarrativeExtraction(raw as NarrativeExtractionWire),
 } as const;

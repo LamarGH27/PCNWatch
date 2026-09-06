@@ -81,10 +81,118 @@ export interface UserContext {
   readonly narrativeProvided: boolean;
   readonly answers: readonly ContextAnswer[];
   readonly declaredEvidence: readonly EvidenceDeclaration[];
+  /**
+   * Facts read out of the account that the user then confirmed.
+   *
+   * Only confirmed ones exist at this point in the system. An extraction the
+   * user has not looked at never becomes a member of this list, so there is no
+   * state in which unreviewed model output is sitting in the assessment's input
+   * waiting to be filtered out by something remembering to.
+   */
+  readonly confirmedAssertions: readonly ConfirmedAssertion[];
 }
 
 export const EMPTY_USER_CONTEXT: UserContext = {
   narrativeProvided: false,
   answers: [],
   declaredEvidence: [],
+  confirmedAssertions: [],
 };
+
+/* ------------------------------------------------------------------ */
+/* What a written account can be reduced to                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The closed set of factual claims an account may be turned into.
+ *
+ * Closed is the mechanism, not a convenience. A model reading "I had a permit
+ * and this ticket is outrageous" must have somewhere to put the permit and
+ * nowhere to put the outrage-as-law: there is no member here for a defence, a
+ * ground, an invalid notice or an outcome, so it cannot return one however the
+ * account was phrased.
+ *
+ * Every member states something that happened, never what follows from it.
+ * Whether holding a permit means the contravention did not occur is a question
+ * for the reference store and the deterministic engine, and it is not asked here.
+ *
+ * Lives in core rather than beside the model schema because both sides need it:
+ * the server constrains the model to it, and the browser renders it back for
+ * confirmation. One list, so the two cannot drift.
+ */
+export const NARRATIVE_ASSERTION_KINDS = [
+  'HELD_PERMIT',
+  'PERMIT_VALID',
+  'PAYMENT_MADE',
+  'PAYMENT_BY_APP',
+  'WRONG_VRM_POSSIBLE',
+  'LOADING_OR_UNLOADING',
+  'SIGNAGE_UNCLEAR_OR_NOT_SEEN',
+  'BAY_MARKINGS_UNCLEAR',
+  'VEHICLE_BROKE_DOWN',
+  'BLUE_BADGE_PRESENT',
+  'AUTHORITY_PHOTOGRAPHS_REVIEWED',
+  'MITIGATING_CIRCUMSTANCES',
+  /**
+   * The escape hatch, and it must stay one.
+   *
+   * Something the user plainly meant that no member above covers goes here with
+   * a neutral summary, for a person to look at later. Forcing it into the
+   * nearest member would be worse than not capturing it at all: "I was at the
+   * hospital with my mother" is not "the vehicle broke down", and a near-miss
+   * reads back as a fact the user never stated.
+   */
+  'OTHER_REQUIRES_REVIEW',
+] as const;
+
+export type NarrativeAssertionKind = (typeof NARRATIVE_ASSERTION_KINDS)[number];
+
+/** What the account says about it. Never what we conclude from it. */
+export const NARRATIVE_STANCES = ['ASSERTED', 'DENIED', 'UNCLEAR'] as const;
+export type NarrativeStance = (typeof NARRATIVE_STANCES)[number];
+
+/** Plain-English labels for the confirmation screen. */
+export const ASSERTION_LABELS: Record<NarrativeAssertionKind, string> = {
+  HELD_PERMIT: 'You held a permit',
+  PERMIT_VALID: 'The permit was valid at the time',
+  PAYMENT_MADE: 'You paid to park',
+  PAYMENT_BY_APP: 'You paid using an app',
+  WRONG_VRM_POSSIBLE: 'The wrong registration may have been entered',
+  LOADING_OR_UNLOADING: 'You were loading or unloading',
+  SIGNAGE_UNCLEAR_OR_NOT_SEEN: 'The signs were unclear or you did not see them',
+  BAY_MARKINGS_UNCLEAR: 'The bay markings were unclear',
+  VEHICLE_BROKE_DOWN: 'Your vehicle broke down',
+  BLUE_BADGE_PRESENT: 'A Blue Badge was displayed',
+  AUTHORITY_PHOTOGRAPHS_REVIEWED: 'You have looked at the authority\u2019s photographs',
+  MITIGATING_CIRCUMSTANCES: 'There were exceptional circumstances',
+  OTHER_REQUIRES_REVIEW: 'Something else you told us',
+};
+
+/**
+ * One factual claim read out of the account.
+ *
+ * `source` is always USER_ACCOUNT and is stamped server-side rather than taken
+ * from the model — "where did this come from" is the one field that must never
+ * be wrong, so nothing that could be wrong about it is asked to fill it in.
+ */
+export interface NarrativeAssertion {
+  readonly kind: NarrativeAssertionKind;
+  readonly stance: NarrativeStance;
+  readonly confidence: number;
+  /** A short neutral restatement, attributed to the user. Shown for confirmation. */
+  readonly summary: string;
+  readonly source: 'USER_ACCOUNT';
+}
+
+/**
+ * An assertion the user has looked at and accepted.
+ *
+ * A separate type from `NarrativeAssertion` on purpose. An extracted assertion
+ * is a machine's reading of prose; a confirmed one is something a person said
+ * is right. Only the second may reach the assessment, and giving them different
+ * types means a caller has to do something deliberate to confuse them.
+ */
+export interface ConfirmedAssertion {
+  readonly kind: NarrativeAssertionKind;
+  readonly stance: NarrativeStance;
+}

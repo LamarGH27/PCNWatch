@@ -24,6 +24,27 @@ import { validateAiResponse, type GroundingContext, type ValidationOutcome } fro
  *   - A rejected response is logged as rejected, not retried into acceptance.
  */
 
+/**
+ * Jobs whose input is the user telling us something, not a document they were sent.
+ *
+ * A penalty charge notice is a document an authority produced and posted; the
+ * audit trail keeps a hash of it and the model's reading of it, and that is
+ * proportionate. An account someone writes about their own life is a different
+ * kind of thing. It may name a hospital, a child, an employer or an illness,
+ * and none of that is ours to keep.
+ *
+ * For these jobs the audit row records that a call happened, what it cost and
+ * whether it was accepted — and nothing about what was in it. The output is not
+ * stored either: the summaries are derived from the account and can restate it
+ * almost verbatim, so persisting them would persist the account by another
+ * name.
+ *
+ * The fingerprint is taken from the input's shape rather than its text for the
+ * same reason. A hash of a long document is a fair identifier; a hash of two
+ * sentences somebody typed is a thing an attacker with a guess can confirm.
+ */
+const PRIVATE_INPUT_JOBS: ReadonlySet<AiJobType> = new Set<AiJobType>(['NARRATIVE_EXTRACTION']);
+
 export interface AiCallOptions<K extends AiJobType> {
   readonly jobType: K;
   readonly system: string;
@@ -78,7 +99,10 @@ export async function runAiJob<K extends AiJobType>(
   }
 
   const promptVersion = PROMPT_VERSIONS[options.jobType];
-  const fingerprint = fingerprintInput(options.system, options.userContent);
+  const isPrivateInput = PRIVATE_INPUT_JOBS.has(options.jobType);
+  const fingerprint = fingerprintInput(options.system, options.userContent, {
+    hashText: !isPrivateInput,
+  });
 
   if (!isConfigured('anthropic')) {
     await logAiCall({
@@ -126,9 +150,15 @@ export async function runAiJob<K extends AiJobType>(
       model,
       promptVersion,
       inputFingerprint: fingerprint,
-      // The output is stored for accepted and rejected calls alike, so a
-      // fabrication is inspectable afterwards rather than discarded.
-      output: raw,
+      /*
+       * Stored for accepted and rejected calls alike, so a fabrication is
+       * inspectable afterwards rather than discarded — except where the output
+       * is derived from something the user wrote about themselves, which is
+       * never written down at all. That costs us the ability to review those
+       * responses later, and it is the right trade: an audit trail is not worth
+       * a database full of people's private circumstances.
+       */
+      output: isPrivateInput ? null : raw,
       validationResult: validation.outcome,
       validationErrors: validation.outcome === 'ACCEPTED' ? null : validation.errors,
       latencyMs,
@@ -279,15 +309,33 @@ function toContentBlock(block: AiContentBlock): Anthropic.ContentBlockParam {
  * duplicate work and to correlate a complaint with a specific call, without the
  * log ever holding a PCN number, a registration or a document.
  */
-export function fingerprintInput(system: string, content: AiContentBlock[]): string {
+export function fingerprintInput(
+  system: string,
+  content: AiContentBlock[],
+  options: { hashText?: boolean } = {},
+): string {
+  // `hashText: false` fingerprints how much text there was rather than which
+  // text it was. Short free-form input is guessable, and a hash that confirms a
+  // guess is not anonymous — see PRIVATE_INPUT_JOBS.
+  const hashText = options.hashText ?? true;
   const shape = content.map((block) =>
     block.type === 'text'
-      ? `text:${createHash('sha256').update(block.text).digest('hex').slice(0, 16)}`
+      ? hashText
+        ? `text:${createHash('sha256').update(block.text).digest('hex').slice(0, 16)}`
+        : `text:len:${lengthBand(block.text.length)}`
       : `${block.type}:${block.mediaType}:${block.data.length}`,
   );
   return createHash('sha256')
     .update(`${createHash('sha256').update(system).digest('hex')}|${shape.join('|')}`)
     .digest('hex');
+}
+
+/** Coarse enough that the band says nothing about the content. */
+function lengthBand(length: number): string {
+  if (length < 200) return 'S';
+  if (length < 800) return 'M';
+  if (length < 2000) return 'L';
+  return 'XL';
 }
 
 interface AiLogEntry {

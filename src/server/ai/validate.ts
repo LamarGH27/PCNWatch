@@ -123,6 +123,44 @@ export function validateAiResponse<K extends AiJobType>(
     }
   }
 
+  if (jobType === 'NARRATIVE_EXTRACTION') {
+    const extraction = data as z.infer<typeof AI_SCHEMAS.NARRATIVE_EXTRACTION>;
+
+    /*
+     * The account is the one input to this system written by someone who is not
+     * our user in the security sense — it is prose typed into a box, and it
+     * reaches a model. Two things follow.
+     *
+     * First, the model must not have turned it into law. The schema already
+     * makes a legal *conclusion* unrepresentable — there is no assertion kind
+     * for "has a defence" — but `summary` is free text shown back to the user,
+     * and free text is where a conclusion would appear if one appeared at all.
+     *
+     * Second, a summary is quoted into a PCNWatch screen. A response that
+     * smuggles a statute, a case or an instruction through that field is
+     * rejected outright rather than displayed and relied on.
+     */
+    for (const assertion of extraction.assertions) {
+      for (const phrase of FORBIDDEN_NARRATIVE_PHRASES) {
+        if (phrase.pattern.test(assertion.summary)) {
+          errors.push(
+            `A summary for ${assertion.kind} contains ${phrase.description}. The narrative reader records facts, not conclusions.`,
+          );
+        }
+      }
+    }
+
+    // The same claim twice is the model padding, and it would show the user the
+    // same sentence to confirm two or three times.
+    const kinds = extraction.assertions.map((a) => a.kind);
+    const duplicated = kinds.filter(
+      (kind, index) => kind !== 'OTHER_REQUIRES_REVIEW' && kinds.indexOf(kind) !== index,
+    );
+    if (duplicated.length > 0) {
+      errors.push(`The same assertion was returned more than once: ${[...new Set(duplicated)].join(', ')}.`);
+    }
+  }
+
   if (errors.length > 0) return { outcome: 'CITATION_REJECTED', errors };
   return { outcome: 'ACCEPTED', data };
 }
@@ -133,6 +171,47 @@ export function validateAiResponse<K extends AiJobType>(
  * Deliberately narrow: these match the *form* of a fabricated citation, so a
  * legitimate reference supplied through the approved store is unaffected.
  */
+/**
+ * Legal conclusions, in the one free-text field a narrative assertion has.
+ *
+ * Narrow on purpose. These match a summary *asserting* something about the law,
+ * not one reporting that the user believes it: "says they think the ticket is
+ * unlawful" is a faithful record of an account and passes, while "the ticket is
+ * unlawful" is PCNWatch stating law it has no business stating and fails.
+ */
+const FORBIDDEN_NARRATIVE_PHRASES: readonly { pattern: RegExp; description: string }[] = [
+  {
+    // Unattributed: "is unlawful" with no says/believes/claims before it.
+    pattern: /(?<!\b(?:says|said|believes|believed|claims|claimed|thinks|thought|feels|felt|states|stated|asserts|asserted)\b[^.]{0,60})\b(?:is|was|were|are)\s+(?:unlawful|illegal|invalid|void|unenforceable|wrongly\s+issued|improperly\s+issued)\b/i,
+    description: 'an unattributed statement that something is unlawful or invalid',
+  },
+  {
+    pattern: /\b(?:has|have|had)\s+(?:a\s+)?(?:valid\s+)?(?:defence|ground|grounds)\b/i,
+    description: 'a claim that the user has a defence or grounds',
+  },
+  {
+    pattern: /\b(?:should|ought to|must|can|could)\s+(?:challenge|appeal|contest|dispute|win|succeed)\b/i,
+    description: 'a recommendation to challenge or a prediction of success',
+  },
+  {
+    pattern: /\b(?:likely|unlikely|probable|good chance|strong case|weak case)\b/i,
+    description: 'a prediction about the outcome',
+  },
+  {
+    pattern: /\b\d{1,3}\s?%|\bpercent\b/i,
+    description: 'a percentage, which reads as a probability of success',
+  },
+  {
+    // Statute, regulation or case wording the reference store is the only source of.
+    pattern: /\b(?:Traffic Management Act|Road Traffic|Regulation \d+|Schedule \d+|s\.\s?\d+|section \d+)\b/i,
+    description: 'a statutory reference',
+  },
+  {
+    pattern: /\b[A-Z][a-z]+\s+v\.?\s+[A-Z][a-z]+\s*[[(]\d{4}[\])]/,
+    description: 'what looks like a case citation',
+  },
+];
+
 const FORBIDDEN_DRAFT_PHRASES: readonly { pattern: RegExp; description: string }[] = [
   {
     // "Smith v Camden [2019]" — a case citation the reference store cannot contain.

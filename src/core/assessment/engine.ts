@@ -2,7 +2,13 @@ import { buildEvidenceChecklist } from '../evidence/checklist';
 import type { EvidenceType } from '../evidence/types';
 import { EVIDENCE_DEFINITIONS } from '../evidence/definitions';
 import type { AnswerValue, UserContext } from '../context/types';
-import { isMitigationQuestion, resolveQuestionPrompt } from '../context/questions';
+import {
+  evidenceForAssertion,
+  isMitigationAssertion,
+  isMitigationQuestion,
+  resolveQuestionPrompt,
+} from '../context/questions';
+import { ASSERTION_LABELS } from '../context/types';
 import { PRIVATE_PARKING_MESSAGE } from '../notices/classify-notice';
 import { citationsFor, getContravention, getReference, toCitation } from '../reference/store';
 import type { ProceduralStage, ReferenceCitation } from '../reference/types';
@@ -217,6 +223,61 @@ export function assessCase(input: AssessmentInput): Assessment {
     });
   }
 
+  /*
+   * Facts read out of the user's written account — and confirmed by them.
+   *
+   * Everything in `confirmedAssertions` has been through a screen where the
+   * user was shown our reading of their words and said it was right. An
+   * extraction they never looked at cannot be in this list: the confirmation
+   * step is what turns one into the other, and nothing else constructs a
+   * ConfirmedAssertion.
+   *
+   * They are still claims. A confirmed "I held a permit" is the user standing
+   * behind their own account, not a permit, and it produces the same kind of
+   * finding as an answered question: what was said, and what would support it.
+   */
+  const confirmed = context?.confirmedAssertions ?? [];
+  const claimed = confirmed.filter(
+    (assertion) => assertion.stance === 'ASSERTED' && !isMitigationAssertion(assertion.kind),
+  );
+
+  if (claimed.length > 0) {
+    const evidence = dedupeEvidence(claimed.flatMap((a) => evidenceForAssertion(a.kind)));
+    findings.push({
+      id: 'context-narrative-facts',
+      category: 'FACTUAL_DISPUTE',
+      issue: 'What you told us happened, in your own words',
+      whyItMayMatter:
+        'You confirmed that we had understood the following from your account: ' +
+        `${claimed.map((a) => lowerFirst(ASSERTION_LABELS[a.kind])).join('; ')}. ` +
+        'This is your account rather than a finding of ours, and an authority will want it ' +
+        'corroborated. What would support it is listed here.',
+      evidenceNeeded: evidence,
+      evidenceAvailable: availableFrom(evidence),
+      // Nothing legal is cited, because nothing legal has been decided. These
+      // are facts awaiting evidence, not grounds.
+      citations: [],
+      confidence: 'LOW',
+      groundKey: null,
+    });
+  }
+
+  // Something the user plainly meant that the closed schema could not hold. It
+  // is surfaced for a person to read rather than approximated into a fact.
+  if (confirmed.some((a) => a.kind === 'OTHER_REQUIRES_REVIEW')) {
+    missingInformation.push(
+      'You told us something we could not fit into the checks we run automatically. It has not been ignored, but it has also not been assessed — nothing in this page takes it into account.',
+    );
+  }
+
+  for (const assertion of confirmed) {
+    if (assertion.stance === 'UNCLEAR') {
+      missingInformation.push(
+        `Your account left this open: ${lowerFirst(ASSERTION_LABELS[assertion.kind])}. Pinning it down would let us say more.`,
+      );
+    }
+  }
+
   // Not knowing cuts the same way whatever the question, so an "unsure" is the
   // one answer this engine can act on without a judgement about polarity.
   for (const answer of answered) {
@@ -235,7 +296,9 @@ export function assessCase(input: AssessmentInput): Assessment {
    * that. Presenting "there was a medical emergency" beside a statutory ground
    * would tell the user the two carry the same weight. They do not.
    */
-  const mitigation = answered.find((a) => isMitigationQuestion(a.questionId) && a.answer === 'YES');
+  const mitigation =
+    answered.some((a) => isMitigationQuestion(a.questionId) && a.answer === 'YES') ||
+    confirmed.some((a) => isMitigationAssertion(a.kind) && a.stance === 'ASSERTED');
   const discretionRecord = getReference('GUIDANCE-DISCRETION');
   if (mitigation && discretionRecord) {
     const caution = (discretionRecord.content as { caution?: string }).caution;
@@ -379,7 +442,8 @@ function determineBasis(
      */
     const engaged =
       (input.userContext?.answers.length ?? 0) > 0 ||
-      (input.userContext?.declaredEvidence.length ?? 0) > 0;
+      (input.userContext?.declaredEvidence.length ?? 0) > 0 ||
+      (input.userContext?.confirmedAssertions.length ?? 0) > 0;
 
     if (!engaged) {
       return {

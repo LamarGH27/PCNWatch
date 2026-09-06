@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  NARRATIVE_ASSERTION_KINDS,
+  NARRATIVE_STANCES,
+} from '@/core/context/types';
 
 /**
  * Structured output schemas for every AI job.
@@ -186,6 +190,42 @@ export const responseComparisonSchema = z.object({
 });
 
 /* ------------------------------------------------------------------ */
+/* 7. Narrative extraction                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The vocabulary lives in src/core/context/types.ts, because the browser renders
+ * these back to the user for confirmation and the server constrains the model to
+ * them. One list, so a kind cannot exist on one side and not the other.
+ */
+
+export const narrativeExtractionSchema = z.object({
+  assertions: z
+    .array(
+      z.object({
+        kind: z.enum(NARRATIVE_ASSERTION_KINDS),
+        stance: z.enum(NARRATIVE_STANCES),
+        confidence,
+        /**
+         * A short neutral restatement, shown to the user for confirmation.
+         *
+         * Attributed, never asserted: "says a resident permit was held", not
+         * "a resident permit was held". The difference is the whole safety
+         * boundary of this feature rendered as a sentence.
+         */
+        summary: z.string().max(200),
+        /**
+         * Fixed. The model does not get to say where a fact came from — every
+         * assertion here came from the user's own account and nothing else, and
+         * the mapper sets this rather than trusting the response.
+         */
+        source: z.literal('USER_ACCOUNT'),
+      }),
+    )
+    .max(20),
+});
+
+/* ------------------------------------------------------------------ */
 
 export const AI_SCHEMAS = {
   DOCUMENT_EXTRACTION: pcnExtractionSchema,
@@ -194,6 +234,7 @@ export const AI_SCHEMAS = {
   ASSESSMENT_EXPLANATION: assessmentExplanationSchema,
   CHALLENGE_DRAFTING: challengeDraftSchema,
   RESPONSE_COMPARISON: responseComparisonSchema,
+  NARRATIVE_EXTRACTION: narrativeExtractionSchema,
 } as const;
 
 export type AiJobType = keyof typeof AI_SCHEMAS;
@@ -209,4 +250,5 @@ export const PROMPT_VERSIONS: Record<AiJobType, string> = {
   ASSESSMENT_EXPLANATION: 'explain-v1',
   CHALLENGE_DRAFTING: 'draft-v1',
   RESPONSE_COMPARISON: 'compare-v1',
+  NARRATIVE_EXTRACTION: 'narrative-v1',
 };
