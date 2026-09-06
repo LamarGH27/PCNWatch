@@ -324,3 +324,90 @@ test.describe('the analyse journey does not dead-end', () => {
     expect(overflows).toBe(false);
   });
 });
+
+test.describe('editing after an assessment keeps the notice recognised', () => {
+  /**
+   * The production failure, driven through the browser: a recognised council
+   * PCN became "we could not tell what kind of notice this is" after pressing
+   * edit and confirming again. The notice type lived inside the verify step
+   * object, and editing moved to a different step, which destroyed it.
+   *
+   * Uses manual entry rather than a photograph, so it runs without an
+   * extraction key while exercising the same confirm → assess → edit →
+   * reassess transitions.
+   */
+
+  const VALUES = [
+    'Westminster City Council',
+    'WM12345678',
+    '12',
+    '2026-08-11',
+    '2026-08-14',
+    'STRAND',
+    '13000',
+  ];
+
+  /**
+   * Fills every field and ticks its confirmation.
+   *
+   * Paired by index: each row is one textbox and one "This matches my notice"
+   * checkbox, in the same order. The button stays disabled and reads "Confirm
+   * N more fields" until all seven are ticked, which is what makes the
+   * assertion below meaningful — an incomplete form cannot reach an
+   * assessment, so a test that failed to fill it would fail here rather than
+   * quietly passing later.
+   */
+  async function fillAndConfirm(page: import('@playwright/test').Page) {
+    const boxes = page.getByRole('textbox');
+    const ticks = page.getByRole('checkbox');
+    await expect(boxes).toHaveCount(VALUES.length);
+
+    for (let i = 0; i < VALUES.length; i++) {
+      await boxes.nth(i).fill(VALUES[i]!);
+      await ticks.nth(i).check();
+    }
+
+    const submit = page.getByRole('button', { name: /confirm and continue/i });
+    await expect(submit).toBeEnabled();
+    await submit.click();
+  }
+
+  test('the confirm button does not claim to save anything', async ({ page }) => {
+    await page.goto('/analyse');
+    await page.getByRole('button', { name: /enter the details/i }).click();
+    await expect(page.getByRole('button', { name: /save and continue/i })).toHaveCount(0);
+  });
+
+  test('a recognised council PCN stays recognised after an edit', async ({ page }) => {
+    await page.goto('/analyse');
+    await page.getByRole('button', { name: /enter the details/i }).click();
+    await fillAndConfirm(page);
+
+    // Positive proof the assessment rendered, not merely that an error is
+    // absent: absence would also be satisfied by a page that went nowhere.
+    const assessment = page.getByRole('heading', { name: 'Your PCN' });
+    await expect(assessment).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/could not tell what kind of notice/i)).toHaveCount(0);
+
+    // Edit, then confirm again without changing anything.
+    await page.getByRole('button', { name: /edit verified details/i }).click();
+    await expect(page.getByRole('button', { name: /confirm and continue/i })).toBeEnabled();
+    await page.getByRole('button', { name: /confirm and continue/i }).click();
+
+    // The bug: this second pass said "we could not tell what kind of notice
+    // this is" and offered nothing else.
+    await expect(assessment).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/could not tell what kind of notice/i)).toHaveCount(0);
+  });
+
+  test('an unreviewed timing rule shows no date to act on', async ({ page }) => {
+    await page.goto('/analyse');
+    await page.getByRole('button', { name: /enter the details/i }).click();
+    await fillAndConfirm(page);
+
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+    // A date and "awaiting review by a qualified person" must never share the
+    // screen: people act on the date.
+    await expect(page.getByText(/awaiting review by a qualified person/i)).toHaveCount(0);
+  });
+});

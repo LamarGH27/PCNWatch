@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { assessVerifiedNotice, maskPcnNumber, type VerifiedFacts } from '@/server/cases/assess-verified';
 import { stageForNoticeType, isDisplayableStage } from '@/core/case/stage-from-notice';
 import { knownContraventionCodes } from '@/core/reference/store';
+import { DEADLINE_RULES, findRule } from '@/core/deadlines/rules';
 import { SYNTHETIC_PCN } from '../fixtures/pcn/synthetic-pcn';
 
 /**
@@ -13,6 +14,11 @@ import { SYNTHETIC_PCN } from '../fixtures/pcn/synthetic-pcn';
  * evidence basis that reads as a prediction, and nothing unconfirmed reaching
  * the engines.
  */
+
+/** Looks a rule up by the label the assessment displays. */
+function findRule2(label: string) {
+  return DEADLINE_RULES.find((rule) => rule.label === label);
+}
 
 function facts(over: Partial<VerifiedFacts> = {}): VerifiedFacts {
   return {
@@ -105,24 +111,78 @@ describe('deadlines', () => {
     expect(result.printedDeadlines[0]!.date).toBe('2026-08-28');
   });
 
-  it('labels a worked-out deadline as ours, with the date it keys off', () => {
+  it('shows a worked-out date only when its timing rule has been reviewed', () => {
     const result = assessVerifiedNotice(facts({ issueDate: '2026-08-14' }));
-    expect(result.calculatedDeadlines.length).toBeGreaterThan(0);
-    for (const deadline of result.calculatedDeadlines) {
-      expect(deadline.source).toBe('CALCULATED_BY_PCNWATCH');
-      expect(deadline.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(deadline.basis.length).toBeGreaterThan(0);
+
+    // Data-driven rather than a fixed expectation, so this starts exercising
+    // the shown branch by itself the day a rule is signed off.
+    for (const type of DEADLINE_RULES.map((r) => r.deadlineType)) {
+      const rule = findRule(type)!;
+      const shown = result.calculatedDeadlines.find((d) => d.label === rule.label);
+      const withheld = result.refusedDeadlines.find((d) => d.label === rule.label);
+
+      if (rule.reviewStatus === 'REVIEWED') {
+        expect(shown, `${rule.label} is reviewed and should be shown`).toBeDefined();
+        expect(shown!.source).toBe('CALCULATED_BY_PCNWATCH');
+        expect(shown!.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(shown!.basis.length).toBeGreaterThan(0);
+      } else {
+        expect(shown, `${rule.label} is unreviewed and must not be shown`).toBeUndefined();
+        expect(withheld, `${rule.label} must be reported as withheld`).toBeDefined();
+      }
     }
   });
 
-  it('never mixes the two', () => {
+  it('never shows a date beside a warning that its rule is unreviewed', () => {
+    // The production screen carried a calculated legal date and "This timing
+    // rule is awaiting review by a qualified person" in the same block. People
+    // act on the date.
+    const result = assessVerifiedNotice(facts({ issueDate: '2026-08-14' }));
+    for (const deadline of result.calculatedDeadlines) {
+      expect(findRule2(deadline.label)?.reviewStatus).toBe('REVIEWED');
+      for (const warning of deadline.warnings) {
+        expect(warning.toLowerCase()).not.toContain('awaiting review');
+      }
+    }
+  });
+
+  it('names the deadline it could not give, rather than repeating one message', () => {
+    const result = assessVerifiedNotice(facts({ issueDate: '2026-08-14' }));
+    expect(result.refusedDeadlines.length).toBeGreaterThan(0);
+
+    const labels = result.refusedDeadlines.map((d) => d.label);
+    // Every refusal names a distinct deadline, so a user can tell which is
+    // missing instead of reading the same sentence five times.
+    expect(new Set(labels).size).toBe(labels.length);
+    for (const refusal of result.refusedDeadlines) {
+      expect(refusal.label).not.toMatch(/^[A-Z_]+$/); // not the raw enum
+      expect(refusal.message).toContain(refusal.label);
+    }
+  });
+
+  it('explains a withheld deadline as awaiting review, not as missing data', () => {
+    const result = assessVerifiedNotice(facts({ issueDate: '2026-08-14' }));
+    const withheld = result.refusedDeadlines.filter((d) => d.reason === 'RULE_AWAITING_REVIEW');
+    expect(withheld.length).toBeGreaterThan(0);
+    for (const refusal of withheld) {
+      expect(refusal.message).toMatch(/not yet been checked by a qualified person/i);
+      // And points at the authority that can be relied on instead.
+      expect(refusal.message).toMatch(/printed on your notice/i);
+    }
+  });
+
+  it('never mixes printed and calculated dates', () => {
     const result = assessVerifiedNotice(
       facts({ issueDate: '2026-08-14', discountDeadlinePrinted: '2026-08-28' }),
     );
-    const printed = new Set(result.printedDeadlines.map((d) => d.source));
-    const calculated = new Set(result.calculatedDeadlines.map((d) => d.source));
-    expect(printed).toEqual(new Set(['PRINTED_ON_NOTICE']));
-    expect(calculated).toEqual(new Set(['CALCULATED_BY_PCNWATCH']));
+    // A printed deadline is unaffected by the review gate: it is the
+    // authority's own date, not our arithmetic.
+    expect(new Set(result.printedDeadlines.map((d) => d.source))).toEqual(
+      new Set(['PRINTED_ON_NOTICE']),
+    );
+    for (const deadline of result.calculatedDeadlines) {
+      expect(deadline.source).toBe('CALCULATED_BY_PCNWATCH');
+    }
   });
 
   it('refuses rather than estimating when the trigger date is unconfirmed', () => {
@@ -142,12 +202,18 @@ describe('deadlines', () => {
 
 describe('unconfirmed values never reach the engines', () => {
   it('treats an absent fact as not established, not as a default', () => {
-    // A user who marked the date unknown must not get a deadline anyway.
+    // A user who marked the date unknown must not get a deadline anyway. With
+    // the date, the engine reaches a result (shown or withheld by review);
+    // without it, it cannot even reach one.
     const withDate = assessVerifiedNotice(facts({ issueDate: '2026-08-14' }));
     const without = assessVerifiedNotice(facts({ issueDate: undefined }));
 
-    expect(withDate.calculatedDeadlines.length).toBeGreaterThan(0);
+    expect(
+      withDate.refusedDeadlines.some((d) => d.reason === 'RULE_AWAITING_REVIEW') ||
+        withDate.calculatedDeadlines.length > 0,
+    ).toBe(true);
     expect(without.calculatedDeadlines).toHaveLength(0);
+    expect(without.refusedDeadlines.every((d) => d.reason !== 'RULE_AWAITING_REVIEW')).toBe(true);
   });
 
   it('reports an unconfirmed amount as absent rather than zero', () => {
@@ -301,8 +367,8 @@ describe('coverage is reported separately from support', () => {
     expect(result.authority.coverageNote).toBeTruthy();
 
     // Limited coverage must not mean a degraded assessment: the national rules
-    // still run, and the deadlines are still worked out.
-    expect(result.calculatedDeadlines.length).toBeGreaterThan(0);
+    // still run and the deadline engine still reaches an answer for each one.
+    expect(result.refusedDeadlines.length + result.calculatedDeadlines.length).toBeGreaterThan(0);
     expect(result.assessment.basis).toBeTruthy();
     expect(result.stageIsKnown).toBe(true);
   });
@@ -374,5 +440,141 @@ describe('the verified facts carry the notice type from the read', () => {
     expect(collected.pcnNumber).toBe('WM123');
     // Typed but never ticked, so it must not become a fact.
     expect(collected.issueDate).toBeUndefined();
+  });
+});
+
+describe('editing after an assessment does not lose the classification', () => {
+  /**
+   * The production failure: a correctly recognised Westminster PCN became "we
+   * could not tell what kind of notice this is" the moment the user pressed
+   * "Check the details we read" and confirmed again.
+   *
+   * The notice type lived inside the VERIFY step object. Editing moves to the
+   * MANUAL step, which destroyed it, and the reassessment read UNKNOWN. These
+   * exercise the same collect-then-assess path the browser takes on the second
+   * pass, with the notice type carried in state rather than in the step.
+   */
+
+  async function confirmAndAssess(
+    values: Record<string, string>,
+    noticeType: VerifiedFacts['noticeType'],
+  ) {
+    const { collectVerifiedFacts } = await import('@/app/analyse/AnalyseFlow');
+    const confirmed = Object.fromEntries(Object.keys(values).map((k) => [k, true]));
+    return assessVerifiedNotice(collectVerifiedFacts(values, confirmed, noticeType));
+  }
+
+  const westminster = {
+    authorityName: 'Westminster City Council',
+    pcnNumber: 'WM12345678',
+    contraventionCode: '12',
+    incidentDate: '2026-08-11',
+    issueDate: '2026-08-14',
+    location: 'STRAND',
+    fullAmountPence: '13000',
+  };
+
+  it('survives a first pass', async () => {
+    const first = await confirmAndAssess(westminster, 'PCN_POSTAL');
+    expect(first.supported).toBe(true);
+    expect(first.authority.slug).toBe('westminster');
+  });
+
+  it('survives editing the location and confirming again', async () => {
+    const second = await confirmAndAssess(
+      { ...westminster, location: 'WHITEHALL' },
+      'PCN_POSTAL',
+    );
+    expect(second.supported).toBe(true);
+    expect(second.unsupportedMessage).toBeNull();
+    expect(second.authority.recognised).toBe(true);
+  });
+
+  it('survives editing the amount and confirming again', async () => {
+    const second = await confirmAndAssess(
+      { ...westminster, fullAmountPence: '11000' },
+      'PCN_POSTAL',
+    );
+    expect(second.supported).toBe(true);
+    expect(second.amountSummary.full).toBe('£110.00');
+  });
+
+  it('reclassifies when the authority is edited to another recognised council', async () => {
+    const moved = await confirmAndAssess(
+      { ...westminster, authorityName: 'London Borough of Camden' },
+      'PCN_POSTAL',
+    );
+    expect(moved.supported).toBe(true);
+    expect(moved.authority.slug).toBe('camden');
+    // Camden is the one borough with enforcement history, so coverage changes
+    // with it — classification and coverage move independently and correctly.
+    expect(moved.authority.coverage).toBe('REVIEWED');
+  });
+
+  it('reruns the classifier when the edit is classification-changing', async () => {
+    // Council to private operator: the stale local-authority classification
+    // must not carry over.
+    const nowPrivate = await confirmAndAssess(
+      { ...westminster, authorityName: 'ParkingEye Ltd' },
+      'PCN_POSTAL',
+    );
+    expect(nowPrivate.supported).toBe(false);
+    expect(nowPrivate.assessment.outOfScope).toBe(true);
+  });
+
+  it('cannot turn a private notice into a council one through stale state', async () => {
+    // Even carrying a council notice type forward from a previous read, a
+    // private operator on the notice keeps it out of council logic.
+    const stillPrivate = await confirmAndAssess(
+      { authorityName: 'Total Parking Solutions Ltd', issueDate: '2026-08-14' },
+      'PCN_POSTAL',
+    );
+    expect(stillPrivate.supported).toBe(false);
+    expect(stillPrivate.calculatedDeadlines).toHaveLength(0);
+  });
+
+  it('still refuses a genuinely unidentifiable notice on the second pass', async () => {
+    const ambiguous = await confirmAndAssess({ location: 'A CAR PARK' }, 'UNKNOWN');
+    expect(ambiguous.supported).toBe(false);
+    expect(ambiguous.unsupportedMessage).toBeTruthy();
+  });
+
+  it('is stable across repeated confirmations', async () => {
+    const a = await confirmAndAssess(westminster, 'PCN_POSTAL');
+    const b = await confirmAndAssess(westminster, 'PCN_POSTAL');
+    expect(b).toEqual(a);
+  });
+});
+
+describe('the notice type carries classification on its own', () => {
+  /**
+   * Why losing it mattered, isolated.
+   *
+   * With a recognisable council name the authority settles the category, so
+   * the state loss was invisible in the manual-entry path — the name did the
+   * work. It becomes decisive exactly when the name cannot: an authority the
+   * reader could not make out, or one whose wording is not council-shaped.
+   * That is the case the browser test cannot reach and this one pins.
+   */
+
+  it('supports a statutory notice type when the authority name is unreadable', () => {
+    const withType = assessVerifiedNotice({ noticeType: 'NOTICE_TO_OWNER' });
+    expect(withType.supported).toBe(true);
+    expect(withType.stage).toBe('NOTICE_TO_OWNER');
+  });
+
+  it('falls to UNKNOWN the moment that type is lost', () => {
+    // Precisely what the dropped state produced: same notice, type gone.
+    const lost = assessVerifiedNotice({ noticeType: 'UNKNOWN' });
+    expect(lost.supported).toBe(false);
+    expect(lost.unsupportedMessage).toBeTruthy();
+  });
+
+  it('is not rescued by an unrecognisable authority name', () => {
+    const lost = assessVerifiedNotice({
+      noticeType: 'UNKNOWN',
+      authorityName: 'Riverside Retail Park',
+    });
+    expect(lost.supported).toBe(false);
   });
 });
