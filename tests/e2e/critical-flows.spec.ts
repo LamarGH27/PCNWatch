@@ -392,6 +392,19 @@ test.describe('editing after an assessment keeps the notice recognised', () => {
     await submit.click();
   }
 
+  /**
+   * Straight past "Tell us what happened" without answering.
+   *
+   * Skipping is a supported route, not a shortcut for tests: it is what a user
+   * who does not want to type gets, so every test that does not care about the
+   * context stage goes this way and proves the skip path still works.
+   */
+  async function skipContext(page: import('@playwright/test').Page) {
+    const skip = page.getByRole('button', { name: /^skip for now$/i });
+    await expect(skip).toBeVisible({ timeout: 20_000 });
+    await skip.click();
+  }
+
   test('the confirm button does not claim to save anything', async ({ page }) => {
     await page.goto('/analyse');
     await page.getByRole('button', { name: /enter the details/i }).click();
@@ -402,6 +415,7 @@ test.describe('editing after an assessment keeps the notice recognised', () => {
     await page.goto('/analyse');
     await page.getByRole('button', { name: /enter the details/i }).click();
     await fillAndConfirm(page);
+    await skipContext(page);
 
     // Positive proof the assessment rendered, not merely that an error is
     // absent: absence would also be satisfied by a page that went nowhere.
@@ -413,6 +427,7 @@ test.describe('editing after an assessment keeps the notice recognised', () => {
     await page.getByRole('button', { name: /edit verified details/i }).click();
     await expect(page.getByRole('button', { name: /confirm and continue/i })).toBeEnabled();
     await page.getByRole('button', { name: /confirm and continue/i }).click();
+    await skipContext(page);
 
     // The bug: this second pass said "we could not tell what kind of notice
     // this is" and offered nothing else.
@@ -424,10 +439,157 @@ test.describe('editing after an assessment keeps the notice recognised', () => {
     await page.goto('/analyse');
     await page.getByRole('button', { name: /enter the details/i }).click();
     await fillAndConfirm(page);
+    await skipContext(page);
 
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
     // A date and "awaiting review by a qualified person" must never share the
     // screen: people act on the date.
     await expect(page.getByText(/awaiting review by a qualified person/i)).toHaveCount(0);
+  });
+});
+
+test.describe('tell us what happened', () => {
+  const VALUES = [
+    'Westminster City Council',
+    'WM12345678',
+    '12',
+    '2026-08-11',
+    '2026-08-14',
+    'STRAND',
+    '13000',
+  ];
+
+  async function reachContextStage(page: import('@playwright/test').Page) {
+    await page.goto('/analyse');
+    await page.getByRole('button', { name: /enter the details/i }).click();
+
+    const boxes = page.getByRole('textbox');
+    const ticks = page.getByRole('checkbox');
+    await expect(boxes).toHaveCount(VALUES.length);
+    for (let i = 0; i < VALUES.length; i++) {
+      await boxes.nth(i).fill(VALUES[i]!);
+      await ticks.nth(i).check();
+    }
+    await page.getByRole('button', { name: /confirm and continue/i }).click();
+    await expect(page.getByRole('heading', { name: /what happened/i })).toBeVisible({
+      timeout: 20_000,
+    });
+  }
+
+  test('asks what happened before giving the assessment', async ({ page }) => {
+    await reachContextStage(page);
+
+    // The assessment must not already be on screen: this stage sits before it.
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: /what happened/i })).toBeVisible();
+    await expect(page.getByText(/in your own words/i)).toBeVisible();
+    // Never asks for legal language.
+    await expect(page.getByText(/you do not need legal wording/i)).toBeVisible();
+  });
+
+  test('says the account stays in this browser', async ({ page }) => {
+    await reachContextStage(page);
+    await expect(page.getByText(/stays in this browser for this session only/i).first()).toBeVisible();
+  });
+
+  test('asks the code 12 questions and does not call them defences', async ({ page }) => {
+    await reachContextStage(page);
+    await page.getByRole('button', { name: /^continue$/i }).click();
+
+    // Straight from the approved reference record for code 12.
+    await expect(page.getByText(/did you hold a valid permit for that bay/i)).toBeVisible();
+    await expect(page.getByText(/pay-and-display ticket or pay by app/i)).toBeVisible();
+
+    // And the warning that a yes is not a defence.
+    await expect(page.getByText(/does not mean you have a defence/i)).toBeVisible();
+  });
+
+  test('marks mitigation as discretion rather than a legal ground', async ({ page }) => {
+    await reachContextStage(page);
+    await page.getByRole('button', { name: /^continue$/i }).click();
+    await expect(page.getByText(/it is not a legal ground/i)).toBeVisible();
+  });
+
+  test('an answered case reaches an assessment that uses the answers', async ({ page }) => {
+    await reachContextStage(page);
+    await page
+      .getByRole('textbox', { name: /what happened/i })
+      .fill('I had a resident permit for that bay and had renewed it that morning.');
+    await page.getByRole('button', { name: /^continue$/i }).click();
+
+    // Answer the permit question yes.
+    const permit = page.getByRole('group').filter({ hasText: /did you hold a valid permit/i });
+    await permit.getByRole('radio', { name: /^yes$/i }).check();
+
+    // Declare the permit, behind the disclosure.
+    await page.getByRole('button', { name: /anything that supports this/i }).click();
+    const permitEvidence = page.getByRole('group').filter({ hasText: /parking permit/i });
+    await permitEvidence.getByRole('radio', { name: /i have this/i }).check();
+
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    // The answers are on the page, labelled as the user's own account.
+    await expect(page.getByText(/what you have told us about what happened/i)).toBeVisible();
+    await expect(page.getByText('You told us').first()).toBeVisible();
+    // The declaration lands in two places, and both matter: the basis says the
+    // case still rests on the account, and the missing-information list asks
+    // for the document itself. Asserting each separately rather than loosening
+    // to one match keeps both halves covered.
+    await expect(
+      page.getByText(/you have told us about 1 item of supporting evidence, but we have not seen it/i),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/you said you can produce parking permit\. we have not seen it/i),
+    ).toBeVisible();
+
+    // And nothing became a prediction.
+    await expect(page.getByText(/likely to succeed|good chance|you will win/i)).toHaveCount(0);
+  });
+
+  test('skipping still gives an assessment, and says what it is missing', async ({ page }) => {
+    await reachContextStage(page);
+    await page.getByRole('button', { name: /^skip for now$/i }).click();
+
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: /insufficient information/i })).toBeVisible();
+    await expect(page.getByText(/only knows what your notice says/i)).toBeVisible();
+    // And a way back in, rather than a dead end.
+    await expect(page.getByRole('button', { name: /tell us what happened/i }).first()).toBeVisible();
+  });
+
+  test('the account survives going back to the verified details', async ({ page }) => {
+    await reachContextStage(page);
+    const account = page.getByRole('textbox', { name: /what happened/i });
+    await account.fill('I had a permit.');
+
+    await page.getByRole('button', { name: /back to your details/i }).click();
+    await expect(page.getByRole('button', { name: /confirm and continue/i })).toBeEnabled();
+    await page.getByRole('button', { name: /confirm and continue/i }).click();
+
+    // The bug this guards: an account someone typed evaporating because they
+    // went back to correct a date.
+    await expect(page.getByRole('textbox', { name: /what happened/i })).toHaveValue('I had a permit.');
+  });
+
+  test('works at mobile width', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    await reachContextStage(page);
+    await page.getByRole('button', { name: /^continue$/i }).click();
+
+    // Nothing may push the page sideways on a phone.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow, 'the questions push the page sideways').toBeLessThanOrEqual(1);
+
+    // Every answer control is still a real touch target.
+    const radios = page.getByRole('radio');
+    const count = await radios.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < Math.min(count, 6); i++) {
+      const box = await radios.nth(i).locator('xpath=ancestor::label[1]').boundingBox();
+      expect(box!.height, 'an answer control is too small to tap').toBeGreaterThanOrEqual(44);
+    }
   });
 });

@@ -3,7 +3,16 @@
 import { useCallback, useId, useRef, useState } from 'react';
 import { EVIDENCE_DEFINITIONS } from '@/core/evidence/definitions';
 import type { VerifiedAssessment, VerifiedFacts } from '@/server/cases/assess-verified';
+import type { UserContext } from '@/core/context/types';
+import { normaliseContraventionCode } from '@/core/reference/store';
+import { stageForNoticeType } from '@/core/case/stage-from-notice';
 import { AssessmentView } from './AssessmentView';
+import {
+  ContextStage,
+  EMPTY_CONTEXT_DRAFT,
+  toUserContext,
+  type ContextDraft,
+} from './ContextStage';
 
 /**
  * The upload → extract → verify flow.
@@ -89,6 +98,10 @@ type Step =
   | { kind: 'OUT_OF_SCOPE'; message: string; explanation: string }
   | { kind: 'MANUAL' }
   | { kind: 'ERROR'; what: string; whatYouCanDo: string; dataSaved: boolean; reference?: string }
+  // "Tell us what happened". Carries no data of its own: the account and the
+  // answers live in flow state, so returning here from the assessment finds
+  // them exactly as they were left.
+  | { kind: 'CONTEXT' }
   | { kind: 'ANALYSING' }
   | { kind: 'ASSESSED'; assessment: VerifiedAssessment; facts: VerifiedFacts }
   // The assessment failed. The confirmed facts are held so nothing the user
@@ -104,13 +117,16 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
    * Only what the user ticked is sent. An edited-but-unconfirmed value never
    * leaves this function, so it cannot reach a deadline or a finding.
    */
-  const runAssessment = useCallback(async (facts: VerifiedFacts) => {
+  const runAssessment = useCallback(async (facts: VerifiedFacts, context: UserContext) => {
     setStep({ kind: 'ANALYSING' });
     try {
       const response = await fetch('/api/cases/assess', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(facts),
+        // The account itself is not in `context` — `toUserContext` reduced it to
+        // a boolean before it got here. What goes over the wire is question ids
+        // and fixed answers.
+        body: JSON.stringify({ ...facts, context }),
       });
       const body = (await response.json()) as
         | { ok: true; assessment: VerifiedAssessment }
@@ -164,6 +180,16 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
     legibility: string;
     unreadable: string[];
   } | null>(null);
+
+  /**
+   * What the user told us about what happened.
+   *
+   * Flow state for the same reason the notice type is: the step changes when
+   * they go back to edit a field, and an account somebody typed out must not
+   * evaporate because they corrected a date. The narrative text lives here and
+   * only here — it is never put on the step, never fetched, never sent.
+   */
+  const [contextDraft, setContextDraft] = useState<ContextDraft>(EMPTY_CONTEXT_DRAFT);
 
   /** Back to the read when there was one, otherwise the manual form. */
   const editDetails = useCallback(() => {
@@ -447,7 +473,7 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
           style={{ marginTop: 20, display: 'grid', gap: 14 }}
           onSubmit={(e) => {
             e.preventDefault();
-            void runAssessment(collectVerifiedFacts(values, confirmed, readNoticeType));
+            setStep({ kind: 'CONTEXT' });
           }}
         >
           {fields.map((field) => (
@@ -494,6 +520,28 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
     );
   }
 
+  if (step.kind === 'CONTEXT') {
+    // The facts are recollected here rather than carried on the step, so the
+    // questions always reflect the code the user last confirmed.
+    const facts = collectVerifiedFacts(values, confirmed, readNoticeType);
+    return (
+      <ContextStage
+        contraventionCode={
+          facts.contraventionCode ? normaliseContraventionCode(facts.contraventionCode) : null
+        }
+        noticeType={facts.noticeType}
+        proceduralStage={stageForNoticeType(facts.noticeType)}
+        draft={contextDraft}
+        onChange={setContextDraft}
+        onBack={editDetails}
+        onSubmit={() => void runAssessment(facts, toUserContext(contextDraft))}
+        // Skipping is a real option, not a nudge. The assessment it produces
+        // says what it could not take into account rather than pretending.
+        onSkip={() => void runAssessment(facts, toUserContext(EMPTY_CONTEXT_DRAFT))}
+      />
+    );
+  }
+
   if (step.kind === 'ANALYSING') {
     return (
       <div style={{ marginTop: 28 }} role="status" aria-live="polite">
@@ -523,7 +571,7 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
           <button
             type="button"
             className="fr-touch"
-            onClick={() => void runAssessment(step.facts)}
+            onClick={() => void runAssessment(step.facts, toUserContext(contextDraft))}
             style={primaryButton(true)}
           >
             Try again
@@ -546,6 +594,12 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
       result={step.assessment}
       facts={step.facts}
       onEdit={editDetails}
+      onEditContext={() => setStep({ kind: 'CONTEXT' })}
+      contextAnswered={
+        contextDraft.narrative.trim().length > 0 ||
+        Object.keys(contextDraft.answers).length > 0 ||
+        Object.keys(contextDraft.evidence).length > 0
+      }
     />
   );
 }

@@ -7,6 +7,7 @@ import { getContravention, normaliseContraventionCode, toCitation } from '@/core
 import type { NoticeType, ProceduralStage, ReferenceCitation } from '@/core/reference/types';
 import { isDisplayableStage, stageForNoticeType } from '@/core/case/stage-from-notice';
 import { PRIVATE_PARKING_MESSAGE } from '@/core/notices/classify-notice';
+import { EMPTY_USER_CONTEXT, type UserContext } from '@/core/context/types';
 import {
   classifyAuthorityName,
   hasReviewedAuthorityGuidance,
@@ -118,7 +119,18 @@ const SERVICE_METHOD: Partial<Record<NoticeType, ServiceMethod>> = {
   PCN_POSTAL: 'POSTED',
 };
 
-export function assessVerifiedNotice(facts: VerifiedFacts): VerifiedAssessment {
+/**
+ * The verified notice plus whatever the user has since told us.
+ *
+ * Separate arguments on purpose. The context can add findings, add missing
+ * information and move the evidence basis; it can never change a fact the user
+ * verified from the notice, and keeping the two apart is what makes that
+ * checkable rather than merely intended.
+ */
+export function assessVerifiedNotice(
+  facts: VerifiedFacts,
+  context: UserContext = EMPTY_USER_CONTEXT,
+): VerifiedAssessment {
   const code = facts.contraventionCode
     ? normaliseContraventionCode(facts.contraventionCode)
     : null;
@@ -171,9 +183,25 @@ export function assessVerifiedNotice(facts: VerifiedFacts): VerifiedAssessment {
     noticeCategory,
     // Nothing is asserted as a ground yet: the user has confirmed what the
     // notice says, not what they want to argue.
+    /*
+     * Still empty, and deliberately.
+     *
+     * A ground is something the user decides to rely on. Answering "yes, I had
+     * a permit" is a claim about what happened, not a decision to argue that the
+     * contravention did not occur, and turning the first into the second is
+     * precisely how a tool starts inventing defences on people's behalf. The
+     * free assessment therefore asserts no ground; choosing one is a later,
+     * explicit act.
+     */
     assertedGroundKeys: [],
+    /*
+     * Evidence PCNWatch holds. Nothing is uploaded in this flow yet, so this
+     * stays empty even when the user has told us they hold documents — what
+     * they told us travels in `userContext` and is never counted here.
+     */
     evidenceProvided: {},
-    userNarrativeProvided: false,
+    userNarrativeProvided: context.narrativeProvided,
+    userContext: context,
     verifiedFields: {
       pcnNumber: facts.pcnNumber !== undefined,
       contraventionCode: code !== null,

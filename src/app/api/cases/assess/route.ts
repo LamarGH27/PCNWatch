@@ -4,6 +4,8 @@ import { logError } from '@/lib/errors';
 import { rateLimit } from '@/server/rate-limit';
 import { assessVerifiedNotice, type VerifiedFacts } from '@/server/cases/assess-verified';
 import { NOTICE_TYPES } from '@/server/ai/schemas';
+import { EVIDENCE_TYPES } from '@/core/evidence/types';
+import type { UserContext } from '@/core/context/types';
 
 /**
  * The free assessment for a set of confirmed facts.
@@ -43,6 +45,44 @@ const bodySchema = z.object({
   discountedAmountPence: z.number().int().min(0).max(1_000_000).optional(),
   discountDeadlinePrinted: optionalDate,
   representationDeadlinePrinted: optionalDate,
+
+  /*
+   * What the user has told us about what happened.
+   *
+   * Note what is not here: the narrative itself. The account a user writes may
+   * name a hospital, an employer, a child or an address, no rule in the
+   * deterministic engine can read free prose, and there is no authenticated
+   * place to put it yet — so the browser keeps the text and sends only the fact
+   * that it exists. This endpoint cannot log, store or leak a sentence it never
+   * receives.
+   *
+   * What does arrive is a closed set: question ids the reference store can
+   * resolve, three possible answers, and evidence types from a fixed list.
+   * Nothing free-form reaches a finding.
+   */
+  context: z
+    .object({
+      narrativeProvided: z.boolean(),
+      answers: z
+        .array(
+          z.object({
+            questionId: z.string().max(120),
+            answer: z.enum(['YES', 'NO', 'UNSURE']),
+          }),
+        )
+        .max(40)
+        .default([]),
+      declaredEvidence: z
+        .array(
+          z.object({
+            type: z.enum(EVIDENCE_TYPES),
+            held: z.enum(['HAVE', 'DO_NOT_HAVE', 'NOT_SURE']),
+          }),
+        )
+        .max(40)
+        .default([]),
+    })
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -69,9 +109,13 @@ export async function POST(request: Request) {
   }
 
   try {
+    const { context, ...facts } = parsed.data;
     return NextResponse.json({
       ok: true as const,
-      assessment: assessVerifiedNotice(parsed.data as VerifiedFacts),
+      assessment: assessVerifiedNotice(
+        facts as VerifiedFacts,
+        context as UserContext | undefined,
+      ),
     });
   } catch (error) {
     logError('api.cases.assess', error);
