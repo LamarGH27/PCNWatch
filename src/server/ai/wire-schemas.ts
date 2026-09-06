@@ -275,6 +275,7 @@ export function toNarrativeExtraction(wire: NarrativeExtractionWire): unknown {
   return {
     assertions: wire.assertions
       .filter((assertion) => typeof assertion?.summary === 'string' && assertion.summary.trim() !== '')
+      .filter((assertion) => summarySupportsKind(assertion.kind, assertion.summary))
       .map((assertion) => ({
         kind: assertion.kind,
         stance: assertion.stance,
@@ -292,6 +293,45 @@ export function toNarrativeExtraction(wire: NarrativeExtractionWire): unknown {
  * one because its domain type carries a provenance field the model must not be
  * allowed to set. The remaining jobs need neither.
  */
+/**
+ * Vocabulary an assertion's own summary must touch to justify its kind.
+ *
+ * A real assessment told a user "you held a permit" when all they had written
+ * was that they paid through RingGo. Nothing derived it — the model chose the
+ * kind, and a user confirming a screenful of readings waved it through. The
+ * borough's own wording invites the mistake: contravention 12 speaks of "a
+ * valid virtual permit", and a paid app session looks like one.
+ *
+ * So an entitlement is only recorded when the model's own restatement is about
+ * an entitlement. Paying to park is not holding a permit, whatever the two have
+ * in common.
+ *
+ * Deliberately narrow. It covers the kinds where one claim is routinely
+ * mistaken for another and the vocabulary is unambiguous; everything else is
+ * left alone rather than policed by keyword.
+ */
+const SUMMARY_VOCABULARY: Partial<Record<string, RegExp>> = {
+  HELD_PERMIT: /permit|voucher|dispensation|exemption certificate/i,
+  PERMIT_VALID: /permit|voucher|dispensation|exemption certificate/i,
+  BLUE_BADGE_PRESENT: /blue badge|badge/i,
+  PAYMENT_MADE: /paid|pay|payment|ticket|session|tariff/i,
+  PAYMENT_BY_APP: /app|ringo|ringgo|paybyphone|justpark|phone|online|session/i,
+};
+
+/**
+ * Whether an assertion's summary actually supports the kind it was filed under.
+ *
+ * A mismatch drops that one assertion rather than failing the whole response.
+ * That is the proportionate failure: the cost is a claim the user must make
+ * again through the questions, which they are asked immediately afterwards —
+ * against the cost of PCNWatch telling somebody they held a permit they never
+ * mentioned, prioritising permit evidence, and building a case on it.
+ */
+export function summarySupportsKind(kind: string, summary: string): boolean {
+  const required = SUMMARY_VOCABULARY[kind];
+  return required ? required.test(summary) : true;
+}
+
 export const WIRE_SCHEMAS = {
   DOCUMENT_EXTRACTION: pcnExtractionWireSchema,
   NARRATIVE_EXTRACTION: narrativeExtractionWireSchema,

@@ -312,12 +312,53 @@ export type EvidencePriority = 'PRIORITY' | 'STANDARD' | 'LESS_LIKELY';
  * their case turns on". A route through the day, not a ruling about it — paying
  * by app is a different way of parking lawfully from holding a permit, so a
  * permit becomes the less likely document, not an impossible one.
+ *
+ * Only ever applied to evidence the user themselves would produce. Nothing here
+ * can reach the authority's own material; see INDEPENDENT_EVIDENCE.
  */
 const SUPERSEDED_BY: Partial<Record<string, readonly FactTopic[]>> = {
   PERMIT: ['PAYMENT_MADE', 'PAYMENT_BY_APP'],
   PAYMENT_RECEIPT: ['HELD_PERMIT'],
   PARKING_APP_RECEIPT: ['HELD_PERMIT'],
 };
+
+/**
+ * Evidence that exists whatever the user says, and can contradict them.
+ *
+ * This set is the reason the ranking rules below are shaped as they are. An
+ * assessment demoted "The authority's photographs" to "less likely to matter
+ * here", reasoning "You told us this is not what happened, so it is unlikely to
+ * be what your case turns on" — which is exactly backwards. Photographs held by
+ * the authority matter *because* they can settle a disputed fact, and they can
+ * settle it against the user as easily as for them. A product that quietly
+ * buried the one piece of evidence capable of falsifying its user's account
+ * would be building them a case out of nothing but their own say-so.
+ *
+ * So: nothing the user asserts or denies may push anything in this set below
+ * STANDARD. Their account can decide what is *most* relevant. It cannot decide
+ * what is allowed to contradict them.
+ */
+const INDEPENDENT_EVIDENCE: ReadonlySet<string> = new Set(['COUNCIL_PHOTOGRAPHS', 'PCN_IMAGE']);
+
+/**
+ * Topics that are a dispute about what happened.
+ *
+ * Excluded: whether the user has got round to looking at the authority's
+ * photographs (their progress, not an event), something we could not classify,
+ * and mitigation — which asks for discretion rather than denying the
+ * contravention.
+ */
+const NON_FACTUAL_TOPICS: ReadonlySet<FactTopic> = new Set<FactTopic>([
+  'AUTHORITY_PHOTOGRAPHS_REVIEWED',
+  'OTHER_REQUIRES_REVIEW',
+  'MITIGATING_CIRCUMSTANCES',
+  'VEHICLE_BROKE_DOWN',
+]);
+
+/** True when this evidence may never be demoted by what the user says. */
+export function isIndependentEvidence(evidenceType: string): boolean {
+  return INDEPENDENT_EVIDENCE.has(evidenceType);
+}
 
 export interface EvidenceRelevance {
   readonly priority: EvidencePriority;
@@ -339,6 +380,41 @@ export function evidenceRelevance(
 ): EvidenceRelevance {
   const stanceOf = (topic: FactTopic) => facts.find((f) => f.topic === topic)?.stance;
 
+  /*
+   * Evidence the authority holds is ranked before anything the user said is
+   * consulted, and it is never ranked down. Deciding this first, rather than
+   * as an exception further down, is deliberate: an exception buried inside
+   * the demotion rules is one refactor away from being skipped.
+   */
+  if (INDEPENDENT_EVIDENCE.has(evidenceType)) {
+    if (evidenceType !== 'COUNCIL_PHOTOGRAPHS') {
+      return { priority: 'STANDARD', reason: null };
+    }
+
+    // "Have you looked at the photographs?" answered no. Not having seen them
+    // makes them more important to get, not less — the original bug read this
+    // as though the user had denied that something happened.
+    if (stanceOf('AUTHORITY_PHOTOGRAPHS_REVIEWED') === 'DENIED') {
+      return {
+        priority: 'PRIORITY',
+        reason:
+          'You have not looked at these yet. They are what the authority will rely on, so they are worth seeing before you decide anything.',
+      };
+    }
+
+    const disputed = facts.some(
+      (fact) => fact.stance === 'ASSERTED' && !NON_FACTUAL_TOPICS.has(fact.topic),
+    );
+    if (disputed) {
+      return {
+        priority: 'PRIORITY',
+        reason:
+          'You have told us what happened, and these are the images the authority will rely on. They may support your account or contradict it, which is why they matter either way.',
+      };
+    }
+    return { priority: 'STANDARD', reason: null };
+  }
+
   // Asserted by the user: this is what their account is about.
   const assertedSupport = supports.filter((topic) => stanceOf(topic) === 'ASSERTED');
   if (assertedSupport.length > 0) {
@@ -349,10 +425,14 @@ export function evidenceRelevance(
   }
 
   // Explicitly denied: the user says the thing this would show did not happen.
+  // Safe here only because the authority's own material never reaches this
+  // branch — a user denying the allegation must not bury the evidence capable
+  // of settling it.
   if (supports.length > 0 && supports.every((topic) => stanceOf(topic) === 'DENIED')) {
     return {
       priority: 'LESS_LIKELY',
-      reason: 'You told us this is not what happened, so it is unlikely to be what your case turns on.',
+      reason:
+        'You told us this is not what happened, so a document showing it is unlikely to be what your case turns on.',
     };
   }
 
