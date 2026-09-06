@@ -85,14 +85,7 @@ export function collectVerifiedFacts(
 type Step =
   | { kind: 'UPLOAD' }
   | { kind: 'READING' }
-  | {
-      kind: 'VERIFY';
-      fields: FieldView[];
-      legibility: string;
-      unreadable: string[];
-      /** From the read, not from the editable fields — it is not one of them. */
-      noticeType: VerifiedFacts['noticeType'];
-    }
+  | { kind: 'VERIFY'; fields: FieldView[]; legibility: string; unreadable: string[] }
   | { kind: 'OUT_OF_SCOPE'; message: string; explanation: string }
   | { kind: 'MANUAL' }
   | { kind: 'ERROR'; what: string; whatYouCanDo: string; dataSaved: boolean; reference?: string }
@@ -144,6 +137,38 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
     }
   }, []);
   const [values, setValues] = useState<Record<string, string>>({});
+  /**
+   * What the reader made of the notice type.
+   *
+   * Kept here rather than on the step, because the step changes and this must
+   * not. It lived inside the VERIFY step and was lost the moment the user
+   * pressed "Check the details we read", which moves to MANUAL — so a
+   * re-confirmed Westminster PCN came back as an unidentifiable document.
+   *
+   * It is a starting point, not a verdict: the assessment re-derives the
+   * category from this *and* the authority name on every request, so editing
+   * the authority reclassifies the notice properly.
+   */
+  const [readNoticeType, setReadNoticeType] =
+    useState<VerifiedFacts['noticeType']>('UNKNOWN');
+  /**
+   * The read itself, kept so "Edit verified details" can return to it.
+   *
+   * Editing used to drop to the manual form, which lists seven fields against
+   * the fourteen the reader fills in — so the registration, the times and the
+   * printed deadlines vanished from view while still being sent. Going back to
+   * the verification step keeps every field, its confidence and its hint.
+   */
+  const [verifySnapshot, setVerifySnapshot] = useState<{
+    fields: FieldView[];
+    legibility: string;
+    unreadable: string[];
+  } | null>(null);
+
+  /** Back to the read when there was one, otherwise the manual form. */
+  const editDetails = useCallback(() => {
+    setStep(verifySnapshot ? { kind: 'VERIFY', ...verifySnapshot } : { kind: 'MANUAL' });
+  }, [verifySnapshot]);
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -183,16 +208,16 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
             Object.fromEntries(fields.map((f) => [f.key, f.value === null ? '' : String(f.value)])),
           );
           setConfirmed({});
-          setStep({
-            kind: 'VERIFY',
+          // Reported separately from the editable fields, so it has to be
+          // carried separately too.
+          setReadNoticeType(result.noticeType as VerifiedFacts['noticeType']);
+          const snapshot = {
             fields,
             legibility: result.legibility,
             unreadable: result.unreadableRegions ?? [],
-            // The extraction reports this separately from the editable fields.
-            // Reading it back out of `fields` is what made every notice, of
-            // every authority, arrive at the assessment as UNKNOWN.
-            noticeType: result.noticeType as VerifiedFacts['noticeType'],
-          });
+          };
+          setVerifySnapshot(snapshot);
+          setStep({ kind: 'VERIFY', ...snapshot });
         } else if (result.kind === 'OUT_OF_SCOPE') {
           setStep({
             kind: 'OUT_OF_SCOPE',
@@ -422,13 +447,7 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
           style={{ marginTop: 20, display: 'grid', gap: 14 }}
           onSubmit={(e) => {
             e.preventDefault();
-            void runAssessment(
-              collectVerifiedFacts(
-                values,
-                confirmed,
-                step.kind === 'VERIFY' ? step.noticeType : 'UNKNOWN',
-              ),
-            );
+            void runAssessment(collectVerifiedFacts(values, confirmed, readNoticeType));
           }}
         >
           {fields.map((field) => (
@@ -461,7 +480,8 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
             >
               {outstanding.length > 0
                 ? `Confirm ${outstanding.length} more field${outstanding.length === 1 ? '' : 's'}`
-                : 'Save and continue'}
+                : // Nothing is stored, so the button must not say it is.
+                  'Confirm and continue'}
             </button>
             {outstanding.length > 0 && (
               <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--text-faint)' }}>
@@ -511,7 +531,7 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
           <button
             type="button"
             className="fr-touch"
-            onClick={() => setStep({ kind: 'MANUAL' })}
+            onClick={editDetails}
             style={secondaryButton(true)}
           >
             Change the details
@@ -525,7 +545,7 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
     <AssessmentView
       result={step.assessment}
       facts={step.facts}
-      onEdit={() => setStep({ kind: 'MANUAL' })}
+      onEdit={editDetails}
     />
   );
 }

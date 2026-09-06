@@ -198,6 +198,28 @@ describe('the read pool can reach a transaction pooler', () => {
   });
 });
 
+describe('the analyse flow does not keep facts inside a step', () => {
+  const flow = readFileSync(resolve(ROOT, 'src/app/analyse/AnalyseFlow.tsx'), 'utf8');
+
+  it('reads the notice type from state, not from the current step', () => {
+    // It lived on the VERIFY step object. Pressing "Edit verified details"
+    // moves to another step, which destroyed it, and the reassessment saw
+    // UNKNOWN — so a recognised council PCN came back unsupported. Anything
+    // that survives an edit has to live outside the step.
+    expect(flow).not.toMatch(/step\.noticeType/);
+    // Any conditional that makes the notice type depend on the current step
+    // reintroduces the fault, whatever the variable is called.
+    expect(flow).not.toMatch(/kind === 'VERIFY'[^;]{0,80}[Nn]oticeType/);
+    expect(flow).toMatch(/readNoticeType/);
+  });
+
+  it('returns to the verification step when editing, not to the manual form', () => {
+    // The manual form lists seven fields against the fourteen the reader
+    // fills in; dropping to it hid the rest while still submitting them.
+    expect(flow).toMatch(/verifySnapshot/);
+  });
+});
+
 describe('filters offer only what the data contains', () => {
   it('builds the contravention filter from the database, not a literal', () => {
     const source = readFileSync(resolve(ROOT, 'src/app/hotspots/page.tsx'), 'utf8');

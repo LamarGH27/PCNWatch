@@ -2,6 +2,7 @@ import { assessCase, formatPence } from '@/core/assessment/engine';
 import type { Assessment } from '@/core/assessment/types';
 import { calculateAllDeadlines } from '@/core/deadlines/calculate';
 import type { DeadlineResult, ServiceMethod } from '@/core/deadlines/types';
+import { findRule } from '@/core/deadlines/rules';
 import { getContravention, normaliseContraventionCode, toCitation } from '@/core/reference/store';
 import type { NoticeType, ProceduralStage, ReferenceCitation } from '@/core/reference/types';
 import { isDisplayableStage, stageForNoticeType } from '@/core/case/stage-from-notice';
@@ -64,6 +65,7 @@ export interface CalculatedDeadline {
 }
 
 export interface RefusedDeadline {
+  /** The deadline's own name, so the user knows which one is missing. */
   readonly label: string;
   readonly reason: string;
   readonly message: string;
@@ -213,23 +215,59 @@ export function assessVerifiedNotice(facts: VerifiedFacts): VerifiedAssessment {
 
   const calculatedDeadlines: CalculatedDeadline[] = [];
   const refusedDeadlines: RefusedDeadline[] = [];
+
   for (const result of results) {
-    if (result.calculated) {
-      calculatedDeadlines.push({
-        label: result.label,
-        date: result.calculatedDueDate,
-        source: 'CALCULATED_BY_PCNWATCH',
-        basis: result.triggerDescription,
-        confidence: result.confidence,
-        warnings: result.warnings,
-      });
-    } else {
+    const rule = findRule(result.deadlineType);
+    // A rule's own name, not the enum. "We do not have the date this deadline
+    // runs from" repeated five times told nobody which deadline was missing.
+    const label = rule?.label ?? humaniseDeadlineType(result.deadlineType);
+
+    if (!result.calculated) {
+      // Named. The engine's message is the same sentence for every deadline
+      // that shares a trigger date, so five of them read as one problem
+      // repeated rather than five distinct things we could not tell you.
       refusedDeadlines.push({
-        label: result.deadlineType.replace(/_/g, ' ').toLowerCase(),
+        label,
         reason: result.reason,
-        message: result.message,
+        message: `${label}: ${lowerFirst(result.message)}`,
       });
+      continue;
     }
+
+    /*
+     * A timing rule still awaiting legal review does not produce a date the
+     * user sees.
+     *
+     * The engine computed one and attached "This timing rule is awaiting
+     * review by a qualified person" beside it — which is a date and a
+     * disclaimer occupying the same space, and people act on the date. Someone
+     * missing a statutory deadline because we showed an unreviewed calculation
+     * is the harm this exists to prevent, and it is worse than showing nothing.
+     *
+     * The arithmetic is unchanged and still deterministic; it is only withheld
+     * from display. When a rule is signed off, its date appears with no other
+     * change.
+     */
+    if (rule && rule.reviewStatus !== 'REVIEWED') {
+      refusedDeadlines.push({
+        label,
+        reason: 'RULE_AWAITING_REVIEW',
+        message:
+          `${label}: PCNWatch can work this date out, but the timing rule behind it has not ` +
+          'yet been checked by a qualified person, so we will not show you a date to act on. ' +
+          'Use the deadline printed on your notice.',
+      });
+      continue;
+    }
+
+    calculatedDeadlines.push({
+      label,
+      date: result.calculatedDueDate,
+      source: 'CALCULATED_BY_PCNWATCH',
+      basis: result.triggerDescription,
+      confidence: result.confidence,
+      warnings: result.warnings,
+    });
   }
 
   return {
@@ -274,6 +312,19 @@ export function assessVerifiedNotice(facts: VerifiedFacts): VerifiedAssessment {
           : null,
     },
   };
+}
+
+/** Lower-cases the first letter so a message reads on from its label. */
+function lowerFirst(sentence: string): string {
+  // Only when the second character is lower case, so "PCNWatch can…" survives.
+  if (sentence.length < 2 || sentence[1] !== sentence[1]!.toLowerCase()) return sentence;
+  return sentence.charAt(0).toLowerCase() + sentence.slice(1);
+}
+
+/** Fallback name for a deadline with no rule of its own. */
+function humaniseDeadlineType(deadlineType: string): string {
+  const words = deadlineType.replace(/_/g, ' ').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /**
