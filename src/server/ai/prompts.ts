@@ -198,6 +198,12 @@ Rules:
 - Record only what the account states. Do not add a claim because it would be
   the sensible thing for this person to say, and do not infer one claim from
   another: paying by app is not the same as selecting the right registration.
+- Paying to park is never holding a permit. A paid session, a ticket, an app
+  payment and a card transaction are payments; a permit, voucher or badge is an
+  entitlement someone was granted. They are different claims with different
+  evidence behind them, and a notice that talks about a "virtual permit" does
+  not turn one into the other. Only record a permit if the account mentions
+  one.
 - If the account makes no factual claim at all — it is only frustration,
   apology or an account of the effect on them — return an empty list. That is a
   correct and useful answer, not a failure.

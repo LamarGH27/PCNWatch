@@ -944,6 +944,40 @@ test.describe('two answers about the same thing', () => {
     expect(appAt, 'the permit is still asked for first').toBeLessThan(permitAt);
   });
 
+  test('never says the user held a permit they did not mention', async ({ page }) => {
+    // The account is about paying by app. Nothing in the assessment may report
+    // an entitlement the user never claimed.
+    await reachQuestions(page);
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    const text = await page.locator('body').innerText().then((t) => t.toLowerCase());
+    expect(text, 'a permit was inferred from a payment').not.toContain('you held a permit');
+    expect(text).not.toContain('you told us you held a permit');
+    // What they did say is still there.
+    expect(text).toContain('you paid using an app');
+  });
+
+  test('keeps the authority photographs prominent, not buried', async ({ page }) => {
+    /*
+     * The photographs were being demoted to "less likely to matter here" with
+     * "You told us this is not what happened" — the reasoning backwards. They
+     * are the evidence that can settle a disputed fact, either way.
+     */
+    await reachQuestions(page);
+    await page.getByRole('button', { name: /see my assessment/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+
+    // innerText applies the band heading's text-transform, so search in lower case.
+    const text = (await page.locator('body').innerText()).toLowerCase();
+    const photosAt = text.indexOf('the authority’s photographs');
+    const lessLikelyAt = text.indexOf('less likely to matter here');
+    expect(photosAt, 'the photographs are missing').toBeGreaterThan(-1);
+    expect(lessLikelyAt, 'nothing was de-prioritised at all').toBeGreaterThan(-1);
+    expect(photosAt, 'the photographs were buried under "less likely"').toBeLessThan(lessLikelyAt);
+    expect(text).toMatch(/support your account or contradict it/i);
+  });
+
   test('a finding label and its heading are separate, not run together', async ({ page }) => {
     await reachQuestions(page);
     await page.getByRole('button', { name: /see my assessment/i }).click();
