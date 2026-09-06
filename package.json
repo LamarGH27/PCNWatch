@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:data": "scripts/e2e-data.sh",
     "test:db": "vitest run --config vitest.integration.config.ts",
     "ingest:camden": "tsx scripts/ingest-camden.ts",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
@@ -22,9 +23,11 @@
     "camden:probe": "tsx scripts/camden-probe.ts",
     "camden:trace": "tsx scripts/camden-trace.ts",
     "db:setup": "tsx scripts/db-setup.ts",
-    "check:runtime-config": "NODE_ENV=production tsx scripts/check-runtime-config.ts"
+    "check:runtime-config": "NODE_ENV=production tsx scripts/check-runtime-config.ts",
+    "scanner:smoke": "tsx scripts/scanner-smoke-test.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.58.0",
     "maplibre-gl": "^5.9.0",

@@ -114,7 +114,11 @@ const serverSchema = z.object({
   DATABASE_URL: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
 
   ANTHROPIC_API_KEY: nonEmpty,
-  ANTHROPIC_MODEL: z.string().min(1).default('claude-sonnet-5'),
+  // Opus 5. Reading a photographed notice is a vision task where a
+  // misread registration or date is worse than a slower answer, and the
+  // whole flow is gated on the extraction being trustworthy enough to show
+  // someone as fact.
+  ANTHROPIC_MODEL: z.string().min(1).default('claude-opus-5'),
 
   STRIPE_SECRET_KEY: nonEmpty,
   STRIPE_WEBHOOK_SECRET: nonEmpty,

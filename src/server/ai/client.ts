@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
+import Anthropic from '@anthropic-ai/sdk';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { serverEnv, isConfigured } from '@/lib/env';
 import { AppError, logError } from '@/lib/errors';
 import { createSupabaseServiceClient } from '@/lib/supabase/server';
-import { PROMPT_VERSIONS, type AiJobType } from './schemas';
+import { AI_SCHEMAS, PROMPT_VERSIONS, type AiJobType } from './schemas';
 import { validateAiResponse, type GroundingContext, type ValidationOutcome } from './validate';
 
 /**
@@ -112,6 +114,7 @@ export async function runAiJob<K extends AiJobType>(
       system: options.system,
       content: options.userContent,
       maxTokens: options.maxTokens ?? 4096,
+      jobType: options.jobType,
     });
 
     const validation = validateAiResponse(options.jobType, raw, options.grounding);
@@ -190,62 +193,68 @@ interface AnthropicCallArgs {
   system: string;
   content: AiContentBlock[];
   maxTokens: number;
+  jobType: AiJobType;
 }
 
 /**
- * Minimal Messages API call.
+ * One Messages API call, constrained to the job's schema.
  *
- * Written against the HTTP API directly rather than pulling in the SDK, because
- * this is the only place we call it and the surface we need is small. The
- * response is expected to be a single JSON object in a text block.
+ * This used to be a hand-rolled `fetch` that ended the request with an assistant
+ * turn prefilled with `{`, so the model had no choice but to continue a JSON
+ * object. That technique is gone: assistant prefill returns HTTP 400 on every
+ * current model, so the integration could not have completed a single real call
+ * — it was written against an API that no longer accepts it, and nothing had
+ * ever run it against a live model to find out.
+ *
+ * Structured outputs replace it and are strictly better: the schema is enforced
+ * by the API rather than coaxed by a prompt, so a response that does not fit
+ * cannot come back at all. The same Zod schema drives both this constraint and
+ * the validation that follows, so the two cannot drift apart.
+ *
+ * `messages.parse()` does the decoding. The result still goes through
+ * `validateAiResponse` afterwards — schema shape is not the only thing that
+ * matters, and citation grounding is checked there.
  */
 async function callAnthropic(args: AnthropicCallArgs): Promise<unknown> {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': args.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: args.model,
-      max_tokens: args.maxTokens,
-      system: args.system,
-      messages: [
-        {
-          role: 'user',
-          content: args.content.map((block) => {
-            if (block.type === 'text') return { type: 'text', text: block.text };
-            if (block.type === 'image') {
-              return {
-                type: 'image',
-                source: { type: 'base64', media_type: block.mediaType, data: block.data },
-              };
-            }
-            return {
-              type: 'document',
-              source: { type: 'base64', media_type: block.mediaType, data: block.data },
-            };
-          }),
-        },
-        // Prefilling an opening brace keeps the response to a bare JSON object.
-        { role: 'assistant', content: [{ type: 'text', text: '{' }] },
-      ],
-    }),
+  const client = new Anthropic({ apiKey: args.apiKey });
+
+  const response = await client.messages.parse({
+    model: args.model,
+    max_tokens: args.maxTokens,
+    system: args.system,
+    messages: [{ role: 'user', content: args.content.map(toContentBlock) }],
+    output_config: { format: zodOutputFormat(AI_SCHEMAS[args.jobType]) },
   });
 
-  if (!response.ok) {
-    throw new Error(`Anthropic returned HTTP ${response.status}`);
+  // A refusal is a stop reason, not an exception, so it has to be checked
+  // before the content is read. Reading a refused response as data is how a
+  // safety decline turns into an empty extraction the user is asked to confirm.
+  if (response.stop_reason === 'refusal') {
+    throw new Error(
+      `The model declined to read this document (${response.stop_details?.category ?? 'unspecified'}).`,
+    );
   }
 
-  const payload = (await response.json()) as {
-    content?: { type: string; text?: string }[];
-  };
-  const text = payload.content?.find((b) => b.type === 'text')?.text;
-  if (!text) throw new Error('Anthropic response contained no text block.');
+  if (response.parsed_output === null || response.parsed_output === undefined) {
+    throw new Error('The model returned no output matching the required schema.');
+  }
 
-  // The prefill means the model's continuation is missing its opening brace.
-  return JSON.parse(`{${text}`);
+  return response.parsed_output;
+}
+
+/** Our transport-agnostic block shape, in the wire form the SDK expects. */
+function toContentBlock(block: AiContentBlock): Anthropic.ContentBlockParam {
+  if (block.type === 'text') return { type: 'text', text: block.text };
+  if (block.type === 'image') {
+    return {
+      type: 'image',
+      source: { type: 'base64', media_type: block.mediaType, data: block.data },
+    };
+  }
+  return {
+    type: 'document',
+    source: { type: 'base64', media_type: block.mediaType, data: block.data },
+  };
 }
 
 /* ------------------------------------------------------------------ */
