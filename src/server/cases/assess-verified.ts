@@ -6,6 +6,10 @@ import { getContravention, normaliseContraventionCode, toCitation } from '@/core
 import type { NoticeType, ProceduralStage, ReferenceCitation } from '@/core/reference/types';
 import { isDisplayableStage, stageForNoticeType } from '@/core/case/stage-from-notice';
 import { PRIVATE_PARKING_MESSAGE } from '@/core/notices/classify-notice';
+import {
+  classifyAuthorityName,
+  hasReviewedAuthorityGuidance,
+} from '@/core/notices/classify-authority';
 
 /**
  * The free assessment, built from facts the user has confirmed.
@@ -74,9 +78,25 @@ export interface ContraventionMeaning {
   readonly asPrintedOnNotice: string | null;
 }
 
+/**
+ * How much PCNWatch holds about the issuing authority.
+ *
+ * Never affects whether a notice is supported. A Westminster PCN is a
+ * local-authority PCN whether or not we have ever ingested a Westminster row.
+ */
+export type AuthorityCoverage = 'REVIEWED' | 'LIMITED' | 'NONE';
+
 export interface VerifiedAssessment {
   readonly supported: boolean;
   readonly unsupportedMessage: string | null;
+  readonly authority: {
+    readonly name: string | null;
+    readonly recognised: boolean;
+    readonly slug: string | null;
+    readonly coverage: AuthorityCoverage;
+    /** What we can and cannot say about this authority, in plain words. */
+    readonly coverageNote: string | null;
+  };
   readonly assessment: Assessment;
   readonly contravention: ContraventionMeaning;
   readonly stage: ProceduralStage;
@@ -102,12 +122,44 @@ export function assessVerifiedNotice(facts: VerifiedFacts): VerifiedAssessment {
     : null;
   const reference = code ? getContravention(code) : undefined;
 
-  const noticeCategory =
-    facts.noticeType === 'PRIVATE_PARKING_CHARGE'
-      ? ('PRIVATE_PARKING_CHARGE' as const)
-      : facts.noticeType === 'UNKNOWN'
-        ? ('UNKNOWN' as const)
-        : ('LOCAL_AUTHORITY_PCN' as const);
+  /*
+   * Two independent signals decide the category, and the authority's name is
+   * the stronger one.
+   *
+   * A real Westminster PCN was being called an unidentifiable document. The
+   * proximate bug was elsewhere, but the design was fragile too: the category
+   * came from the notice *type* alone, so anything that left the type at
+   * UNKNOWN — a photograph that cut off the heading, a layout the reader had
+   * not seen — took the whole notice out of scope, however plainly "Westminster
+   * City Council" was printed on it.
+   *
+   * The name the user confirmed now decides it. A council is a council whether
+   * or not PCNWatch has ever held data about it.
+   */
+  const authority = classifyAuthorityName(facts.authorityName);
+
+  const noticeCategory = ((): 'LOCAL_AUTHORITY_PCN' | 'PRIVATE_PARKING_CHARGE' | 'UNKNOWN' => {
+    // An explicit private charge stays out, on either signal.
+    if (facts.noticeType === 'PRIVATE_PARKING_CHARGE') return 'PRIVATE_PARKING_CHARGE';
+    if (authority.kind === 'PRIVATE_OPERATOR') return 'PRIVATE_PARKING_CHARGE';
+
+    // A recognised council settles it even when the notice type did not read.
+    if (authority.kind === 'LOCAL_AUTHORITY') return 'LOCAL_AUTHORITY_PCN';
+
+    // Otherwise the notice type is all we have. A statutory notice type is
+    // itself proof of a statutory process.
+    if (facts.noticeType !== 'UNKNOWN') return 'LOCAL_AUTHORITY_PCN';
+
+    // Neither signal identified it. This is the genuine unknown.
+    return 'UNKNOWN';
+  })();
+
+  const coverage: AuthorityCoverage =
+    authority.kind !== 'LOCAL_AUTHORITY'
+      ? 'NONE'
+      : hasReviewedAuthorityGuidance(authority.authoritySlug)
+        ? 'REVIEWED'
+        : 'LIMITED';
 
   const stage = stageForNoticeType(facts.noticeType);
 
@@ -182,6 +234,18 @@ export function assessVerifiedNotice(facts: VerifiedFacts): VerifiedAssessment {
 
   return {
     supported: noticeCategory === 'LOCAL_AUTHORITY_PCN',
+    authority: {
+      name: facts.authorityName ?? null,
+      recognised: authority.kind === 'LOCAL_AUTHORITY',
+      slug: authority.authoritySlug,
+      coverage,
+      coverageNote:
+        coverage === 'LIMITED'
+          ? 'The national rules below apply to this notice. PCNWatch does not yet hold ' +
+            'enforcement history or reviewed procedure notes for this authority, so ' +
+            'anything specific to how they handle challenges is not covered here.'
+          : null,
+    },
     unsupportedMessage:
       noticeCategory === 'PRIVATE_PARKING_CHARGE'
         ? PRIVATE_PARKING_MESSAGE

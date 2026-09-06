@@ -39,9 +39,9 @@ interface FieldView {
  * anything that will not parse is treated as unconfirmed rather than guessed.
  */
 export function collectVerifiedFacts(
-  fields: readonly FieldView[],
   values: Record<string, string>,
   confirmed: Record<string, boolean>,
+  noticeType: VerifiedFacts['noticeType'],
 ): VerifiedFacts {
   const confirmedValue = (key: string): string | undefined => {
     if (!confirmed[key]) return undefined;
@@ -60,11 +60,6 @@ export function collectVerifiedFacts(
     const raw = confirmedValue(key);
     return raw !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : undefined;
   };
-
-  // The notice type is not one of the editable fields; it comes from the read
-  // and is the one value the user confirms by proceeding at all.
-  const noticeType = (fields.find((f) => f.key === 'noticeType')?.value ??
-    'UNKNOWN') as VerifiedFacts['noticeType'];
 
   return {
     noticeType,
@@ -90,7 +85,14 @@ export function collectVerifiedFacts(
 type Step =
   | { kind: 'UPLOAD' }
   | { kind: 'READING' }
-  | { kind: 'VERIFY'; fields: FieldView[]; legibility: string; unreadable: string[] }
+  | {
+      kind: 'VERIFY';
+      fields: FieldView[];
+      legibility: string;
+      unreadable: string[];
+      /** From the read, not from the editable fields — it is not one of them. */
+      noticeType: VerifiedFacts['noticeType'];
+    }
   | { kind: 'OUT_OF_SCOPE'; message: string; explanation: string }
   | { kind: 'MANUAL' }
   | { kind: 'ERROR'; what: string; whatYouCanDo: string; dataSaved: boolean; reference?: string }
@@ -186,6 +188,10 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
             fields,
             legibility: result.legibility,
             unreadable: result.unreadableRegions ?? [],
+            // The extraction reports this separately from the editable fields.
+            // Reading it back out of `fields` is what made every notice, of
+            // every authority, arrive at the assessment as UNKNOWN.
+            noticeType: result.noticeType as VerifiedFacts['noticeType'],
           });
         } else if (result.kind === 'OUT_OF_SCOPE') {
           setStep({
@@ -416,7 +422,13 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
           style={{ marginTop: 20, display: 'grid', gap: 14 }}
           onSubmit={(e) => {
             e.preventDefault();
-            void runAssessment(collectVerifiedFacts(fields, values, confirmed));
+            void runAssessment(
+              collectVerifiedFacts(
+                values,
+                confirmed,
+                step.kind === 'VERIFY' ? step.noticeType : 'UNKNOWN',
+              ),
+            );
           }}
         >
           {fields.map((field) => (
