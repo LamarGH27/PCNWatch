@@ -124,7 +124,7 @@ describe('a confirmed assertion changes the assessment, within limits', () => {
       context({ confirmedAssertions: [{ kind: 'HELD_PERMIT', stance: 'ASSERTED' }] }),
     );
 
-    const finding = result.assessment.findings.find((f) => f.id === 'context-narrative-facts');
+    const finding = result.assessment.findings.find((f) => f.id === 'context-user-facts');
     expect(finding).toBeDefined();
     expect(finding!.whyItMayMatter).toMatch(/this is your account rather than a finding of ours/i);
     expect(finding!.category).toBe('FACTUAL_DISPUTE');
@@ -141,7 +141,7 @@ describe('a confirmed assertion changes the assessment, within limits', () => {
         ],
       }),
     );
-    const finding = result.assessment.findings.find((f) => f.id === 'context-narrative-facts');
+    const finding = result.assessment.findings.find((f) => f.id === 'context-user-facts');
     expect(finding!.evidenceNeeded).toContain('PARKING_APP_RECEIPT');
     expect(finding!.evidenceNeeded).toContain('PARKING_SIGN');
   });
@@ -193,7 +193,7 @@ describe('a confirmed assertion changes the assessment, within limits', () => {
     expect(mitigation!.category).toBe('DISCRETIONARY');
     expect(mitigation!.whyItMayMatter).toMatch(/does not establish that the contravention did not occur/i);
     // And not counted as a factual claim needing corroboration of the usual kind.
-    const facts = result.assessment.findings.find((f) => f.id === 'context-narrative-facts');
+    const facts = result.assessment.findings.find((f) => f.id === 'context-user-facts');
     expect(facts).toBeUndefined();
   });
 
@@ -316,7 +316,7 @@ describe('the assess endpoint', () => {
     expect(status).toBe(200);
     expect(
       json.assessment.assessment.findings.some(
-        (f: { id: string }) => f.id === 'context-narrative-facts',
+        (f: { id: string }) => f.id === 'context-user-facts',
       ),
     ).toBe(true);
   });

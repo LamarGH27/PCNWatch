@@ -39,14 +39,15 @@ describe('the account and answers reach the assessment', () => {
       context({ answers: [{ questionId: PERMIT_QUESTION, answer: 'YES' }] }),
     );
 
-    const finding = result.assessment.findings.find((f) => f.id === 'context-user-account');
+    const finding = result.assessment.findings.find((f) => f.id === 'context-user-facts');
     expect(finding, 'the account produced no finding').toBeDefined();
     expect(finding!.issue).toMatch(/what you have told us/i);
-    // The question's own wording, quoted back from the reference store.
-    expect(finding!.whyItMayMatter).toContain('Did you hold a valid permit for that bay at that time?');
-    expect(finding!.whyItMayMatter).toMatch(/yes\./);
+    // The permit question is reconciled onto a topic, so it is reported by the
+    // fact it establishes rather than by quoting the question back. Either way
+    // the wording is ours or the store's, never the caller's.
+    expect(finding!.whyItMayMatter.toLowerCase()).toContain('you held a permit');
     // And it says whose account it is, rather than presenting it as our finding.
-    expect(finding!.whyItMayMatter).toMatch(/this is your account, not a finding of ours/i);
+    expect(finding!.whyItMayMatter).toMatch(/this is your account rather than a finding of ours/i);
   });
 
   it('turns declared evidence into something we still need to see', () => {
@@ -63,9 +64,13 @@ describe('the account and answers reach the assessment', () => {
   it('records not knowing as a gap it could close', () => {
     const result = assessVerifiedNotice(
       WESTMINSTER,
-      context({ answers: [{ questionId: PERMIT_QUESTION, answer: 'UNSURE' }] }),
+      context({ answers: [{ questionId: PERMIT_QUESTION, answer: 'NOT_SURE' }] }),
     );
-    expect(result.assessment.missingInformation.join(' ')).toMatch(/you were not sure/i);
+    // A not-sure on a reconciled question becomes an open fact rather than a
+    // quoted question, and either way it is recorded as a gap and never as a no.
+    expect(result.assessment.missingInformation.join(' ')).toMatch(
+      /your account left this open: you held a permit/i,
+    );
   });
 
   it('keeps mitigation out of the grounds and says what it is', () => {
@@ -225,8 +230,8 @@ describe('answers cannot change the notice', () => {
       }),
     );
 
-    const finding = result.assessment.findings.find((f) => f.id === 'context-user-account');
-    expect(finding!.whyItMayMatter).toContain('Did you hold a valid permit');
+    const finding = result.assessment.findings.find((f) => f.id === 'context-user-facts');
+    expect(finding!.whyItMayMatter.toLowerCase()).toContain('you held a permit');
     expect(finding!.whyItMayMatter).not.toContain('made-up-entirely');
     expect(finding!.whyItMayMatter).not.toMatch(/already paid/i);
   });
@@ -275,7 +280,7 @@ describe('the endpoint', () => {
     expect(json.ok).toBe(true);
     expect(
       json.assessment.assessment.findings.some(
-        (f: { id: string }) => f.id === 'context-user-account',
+        (f: { id: string }) => f.id === 'context-user-facts',
       ),
     ).toBe(true);
   });

@@ -9,6 +9,13 @@ import { isDisplayableStage, stageForNoticeType } from '@/core/case/stage-from-n
 import { PRIVATE_PARKING_MESSAGE } from '@/core/notices/classify-notice';
 import { EMPTY_USER_CONTEXT, type UserContext } from '@/core/context/types';
 import {
+  evidenceRelevance,
+  reconcileContext,
+  type EvidencePriority,
+} from '@/core/context/reconcile';
+import { evidenceForAssertion } from '@/core/context/questions';
+import type { EvidenceType } from '@/core/evidence/types';
+import {
   classifyAuthorityName,
   hasReviewedAuthorityGuidance,
 } from '@/core/notices/classify-authority';
@@ -72,6 +79,18 @@ export interface RefusedDeadline {
   readonly message: string;
 }
 
+/**
+ * A piece of evidence to gather, and how prominently to ask for it.
+ *
+ * Ordered server-side rather than in the view, so what a user is asked for is
+ * deterministic, testable, and the same wherever the assessment is rendered.
+ */
+export interface EvidenceGuidance {
+  readonly type: EvidenceType;
+  readonly priority: EvidencePriority;
+  readonly reason: string | null;
+}
+
 export interface ContraventionMeaning {
   readonly code: string;
   /** The approved plain-English meaning, or null when we hold none. */
@@ -111,6 +130,16 @@ export interface VerifiedAssessment {
     readonly full: string | null;
     readonly discounted: string | null;
   };
+  /**
+   * Evidence to gather, most relevant first.
+   *
+   * Derived from the confirmed facts as well as the contravention, which is the
+   * fix for an assessment that asked someone who had just said they paid by app
+   * to produce a parking permit at the top of the list. Nothing is dropped —
+   * only ordered and, where a confirmed fact makes it unlikely, labelled as
+   * such.
+   */
+  readonly evidenceGuidance: readonly EvidenceGuidance[];
 }
 
 /** Notice types served on the vehicle rather than posted, for deemed service. */
@@ -298,6 +327,40 @@ export function assessVerifiedNotice(
     });
   }
 
+  /* -- Evidence, ordered by what the user has actually told us ------------- */
+
+  const reconciled = reconcileContext(
+    context.answers,
+    context.confirmedAssertions,
+    context.resolvedFacts,
+  );
+
+  const PRIORITY_ORDER: Record<EvidencePriority, number> = {
+    PRIORITY: 0,
+    STANDARD: 1,
+    LESS_LIKELY: 2,
+  };
+
+  const neededTypes = [
+    ...new Set(assessment.findings.flatMap((finding) => finding.evidenceNeeded)),
+  ] as EvidenceType[];
+
+  const evidenceGuidance: EvidenceGuidance[] = neededTypes
+    .map((type) => {
+      // Which confirmed facts this document would corroborate. Derived from the
+      // one assertion-to-evidence mapping rather than a second table.
+      const supports = reconciled.facts
+        .map((fact) => fact.topic)
+        .filter((topic) => evidenceForAssertion(topic).includes(type));
+      const { priority, reason } = evidenceRelevance(type, supports, reconciled.facts);
+      return { type, priority, reason };
+    })
+    .sort((a, b) => {
+      const byPriority = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
+      // Stable within a band, so the order does not shuffle between renders.
+      return byPriority !== 0 ? byPriority : neededTypes.indexOf(a.type) - neededTypes.indexOf(b.type);
+    });
+
   return {
     supported: noticeCategory === 'LOCAL_AUTHORITY_PCN',
     authority: {
@@ -332,6 +395,7 @@ export function assessVerifiedNotice(
     printedDeadlines,
     calculatedDeadlines,
     refusedDeadlines,
+    evidenceGuidance,
     amountSummary: {
       full: facts.fullAmountPence !== undefined ? formatPence(facts.fullAmountPence) : null,
       discounted:
