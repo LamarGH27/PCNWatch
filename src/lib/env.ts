@@ -11,8 +11,32 @@ import { z } from 'zod';
  *  - `next build` must succeed without any credentials so CI can typecheck/build.
  */
 
-const optionalUrl = z.string().url().optional();
-const nonEmpty = z.string().min(1).optional();
+/**
+ * An optional setting that is absent, present, or wrong — and never fatal.
+ *
+ * Three things had to be true at once and only two were:
+ *
+ *  1. An unset variable and one set to the empty string mean the same thing.
+ *    `.env.example` writes every unconfigured integration as `KEY=`, and a
+ *    Vercel variable saved with a blank value arrives as `''`. Both mean "not
+ *    configured", but `z.string().min(1)` rejected the second.
+ *  2. `serverEnv()` parses the whole environment at once, so that rejection
+ *    failed the *entire* object — and the read path resolves DATABASE_URL
+ *    through it. A blank ANTHROPIC_API_KEY therefore disabled the database,
+ *    which is how a live deployment with a correct DATABASE_URL reported
+ *    "No Postgres connection configured".
+ *  3. Beyond empty, a genuinely malformed optional value (a DTRO_BASE_URL that
+ *    is not a URL) must disable its own integration and nothing else.
+ *
+ * So: empty becomes absent, and an invalid optional value falls back to absent
+ * rather than taking the process down with it. Neither can fabricate a value —
+ * the worst case is an integration correctly reporting itself unconfigured.
+ */
+const emptyAsUndefined = (value: unknown) =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
+
+const optionalUrl = z.preprocess(emptyAsUndefined, z.string().url().optional().catch(undefined));
+const nonEmpty = z.preprocess(emptyAsUndefined, z.string().min(1).optional().catch(undefined));
 
 /* ------------------------------------------------------------------ */
 /* Public (client-safe) configuration                                  */
@@ -84,7 +108,10 @@ export const publicEnv = publicParsed.data;
 const serverSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   SUPABASE_SERVICE_ROLE_KEY: nonEmpty,
-  DATABASE_URL: nonEmpty,
+  // Not `nonEmpty`: this one may not quietly fall back to absent. Everything
+  // public the product shows is read through it, so a malformed value must say
+  // so rather than present itself as an unconfigured integration.
+  DATABASE_URL: z.preprocess(emptyAsUndefined, z.string().min(1).optional()),
 
   ANTHROPIC_API_KEY: nonEmpty,
   ANTHROPIC_MODEL: z.string().min(1).default('claude-sonnet-5'),
@@ -153,10 +180,26 @@ export interface IntegrationStatus {
 }
 
 function statusFor(name: IntegrationName, requires: readonly string[]): IntegrationStatus {
+  // Read through the parsed environment, not raw `process.env`.
+  //
+  // These two disagreed, and the disagreement is what hid the failure above:
+  // `isConfigured('database')` read `process.env.DATABASE_URL` and said yes,
+  // while the pool resolved the same value through `serverEnv()` and got
+  // nothing. Every page therefore believed it had a backend and then failed
+  // per-query. Whatever the pool uses is what readiness must report.
+  let server: Record<string, unknown> = {};
+  try {
+    server = serverEnv() as unknown as Record<string, unknown>;
+  } catch {
+    // Server config is unreadable, so nothing server-side is configured. The
+    // reason is logged by whoever needed it; this only reports the state.
+    server = {};
+  }
+
   const missing = requires.filter((key) => {
     const value = key.startsWith('NEXT_PUBLIC_')
       ? (publicEnv as Record<string, unknown>)[key]
-      : process.env[key];
+      : server[key];
     return value === undefined || value === null || value === '';
   });
   return { name, configured: missing.length === 0, requires, missing };

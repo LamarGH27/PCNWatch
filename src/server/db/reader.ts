@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { isConfigured, serverEnv } from '@/lib/env';
 import { createSupabaseServiceClient } from '@/lib/supabase/server';
-import { logError } from '@/lib/errors';
+import { logError, logInfo } from '@/lib/errors';
 
 /**
  * Read access to public enforcement data, over whichever transport is configured.
@@ -31,10 +31,19 @@ function getPool(): Pool | null {
   let connectionString: string | undefined;
   try {
     connectionString = serverEnv().DATABASE_URL;
-  } catch {
+  } catch (error) {
+    // Never swallowed again. This bare `catch { return null }` turned a precise
+    // validation error into "No Postgres connection configured" on a deployment
+    // whose DATABASE_URL was perfectly correct — the code knew exactly what was
+    // wrong and discarded it. The message names the offending variable and
+    // carries no values.
+    logError('db.getPool.serverEnv', error);
     return null;
   }
-  if (!connectionString) return null;
+  if (!connectionString) {
+    logError('db.getPool', new Error('DATABASE_URL resolved to no value.'), { ...describeDatabaseUrl() });
+    return null;
+  }
 
   pool = new Pool({
     connectionString,
@@ -72,6 +81,9 @@ function getPool(): Pool | null {
 
 /** True when at least one read backend is available. */
 export function hasReadBackend(): boolean {
+  // Every public page asks this before reading, so it is the one place
+  // guaranteed to run once on a cold start.
+  logDatabaseReadiness();
   return isConfigured('supabase') || Boolean(getPool());
 }
 
@@ -171,8 +183,68 @@ export async function queryRows<T>(sql: string, values: readonly unknown[] = [])
   }
 }
 
+/**
+ * Whether the database is reachable, and if not, why — with nothing secret in it.
+ *
+ * A deployment that reports "no Postgres connection configured" while the
+ * platform swears the variable is set needs exactly six facts, none of which is
+ * the value: is it there, is it long enough to be real, does it start like a
+ * PostgreSQL URL, does the parsed configuration agree, which environment, and
+ * which commit. Reconstructing those from the outside cost a deployment cycle.
+ *
+ * Deliberately no host, user, password, query string or any fragment of one:
+ * a length and a leading protocol cannot identify a database or authenticate
+ * to it. Server-only — nothing here is exported to the browser.
+ */
+export interface DatabaseUrlDiagnostic {
+  readonly present: boolean;
+  readonly length: number;
+  readonly protocolValid: boolean;
+  readonly parsedConfigured: boolean;
+  readonly environment: string | null;
+  readonly commit: string | null;
+}
+
+export function describeDatabaseUrl(): DatabaseUrlDiagnostic {
+  const raw = process.env.DATABASE_URL;
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+
+  let parsedConfigured = false;
+  try {
+    parsedConfigured = Boolean(serverEnv().DATABASE_URL);
+  } catch {
+    parsedConfigured = false;
+  }
+
+  return {
+    present: typeof raw === 'string' && trimmed !== '',
+    length: trimmed.length,
+    protocolValid: /^postgres(ql)?:\/\//.test(trimmed),
+    parsedConfigured,
+    // Set by Vercel; absent elsewhere, which is itself worth seeing.
+    environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? null,
+    commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+  };
+}
+
+/**
+ * Logs the diagnostic once per process.
+ *
+ * Once, because it is startup information: repeating it on every request would
+ * bury the request logs it exists to explain.
+ */
+let described = false;
+export function logDatabaseReadiness(): void {
+  if (described) return;
+  described = true;
+  logInfo('db.readiness', 'Database configuration at startup', {
+    ...describeDatabaseUrl(),
+  });
+}
+
 /** Test hook: drops the pooled connection so a new DATABASE_URL takes effect. */
 export async function __resetPool(): Promise<void> {
   if (pool) await pool.end();
   pool = null;
+  described = false;
 }

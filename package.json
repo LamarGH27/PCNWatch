@@ -21,7 +21,8 @@
     "db:test": "scripts/db-test.sh",
     "camden:probe": "tsx scripts/camden-probe.ts",
     "camden:trace": "tsx scripts/camden-trace.ts",
-    "db:setup": "tsx scripts/db-setup.ts"
+    "db:setup": "tsx scripts/db-setup.ts",
+    "check:runtime-config": "NODE_ENV=production tsx scripts/check-runtime-config.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",
