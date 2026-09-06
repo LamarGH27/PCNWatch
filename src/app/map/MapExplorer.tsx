@@ -6,6 +6,8 @@ import maplibregl, { type Map as MapLibreMap, type GeoJSONSource } from 'maplibr
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { publicEnv, isPlaceholderMapStyle} from '@/lib/env';
 import { SCORE_DISCLAIMER } from '@/core/scoring/config';
+import { OUTSIDE_COVERAGE_MESSAGE } from '@/core/coverage/area';
+import type { SearchResponse, SearchResult } from '@/app/api/map/search/route';
 import type { ScoreClassification } from '@/core/scoring/types';
 
 /**
@@ -58,6 +60,15 @@ const PERIODS: { value: Period; label: string }[] = [
   { value: '12M', label: '12 months' },
 ];
 
+/** Every state the search box can be in. There is no silent one. */
+type SearchState =
+  | { kind: 'IDLE' }
+  | { kind: 'SEARCHING' }
+  | { kind: 'FOUND'; result: SearchResult; coveredArea: string }
+  | { kind: 'NO_MATCH'; query: string }
+  | { kind: 'RATE_LIMITED' }
+  | { kind: 'FAILED' };
+
 export function MapExplorer({
   authoritySlug,
   canShowActivity,
@@ -82,6 +93,8 @@ export function MapExplorer({
   const usingPlaceholderBasemap = isPlaceholderMapStyle(publicEnv.NEXT_PUBLIC_MAP_STYLE_URL);
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  /** A result that arrived before the map was ready, replayed once it loads. */
+  const pendingFlyRef = useRef<SearchResult | null>(null);
   const requestSeq = useRef(0);
 
   const [state, setState] = useState<LoadState>({ kind: 'IDLE' });
@@ -89,6 +102,7 @@ export function MapExplorer({
   const [contravention, setContravention] = useState<string>('');
   const [selected, setSelected] = useState<MapCell | null>(null);
   const [search, setSearch] = useState('');
+  const [searchState, setSearchState] = useState<SearchState>({ kind: 'IDLE' });
   const searchId = useId();
 
   /* -- Load cells for the current viewport -------------------------------- */
@@ -182,6 +196,14 @@ export function MapExplorer({
     });
 
     map.on('load', () => {
+      // A search that resolved before the map finished initialising is
+      // replayed here rather than lost.
+      const pending = pendingFlyRef.current;
+      if (pending) {
+        pendingFlyRef.current = null;
+        map.flyTo({ center: [pending.longitude, pending.latitude], zoom: 15.5, essential: true });
+      }
+
       map.addSource('activity', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -305,23 +327,71 @@ export function MapExplorer({
 
   /* -- Search -------------------------------------------------------------- */
 
+  /**
+   * Moves the map to a result.
+   *
+   * Guards on the map ref because a search can resolve before MapLibre has
+   * finished initialising — the fetch and the map's load are independent, and
+   * on a slow connection the answer can arrive first. Without the guard the
+   * result is silently dropped, which is indistinguishable from a broken
+   * search.
+   */
+  const flyToResult = useCallback((result: SearchResult) => {
+    const map = mapRef.current;
+    if (!map) return false;
+    map.flyTo({
+      center: [result.longitude, result.latitude],
+      // Street level: close enough to see individual streets, wide enough that
+      // nearby enforcement activity is on screen rather than just under the pin.
+      zoom: 15.5,
+      essential: true,
+    });
+    return true;
+  }, []);
+
   const onSearch = useCallback(
     async (event: React.FormEvent) => {
       event.preventDefault();
       const query = search.trim();
       if (!query) return;
-      const response = await fetch(
-        `/api/map/search?authority=${authoritySlug}&q=${encodeURIComponent(query)}`,
-      );
-      const body = (await response.json()) as
-        | { ok: true; results: { longitude: number; latitude: number; displayName: string }[] }
-        | { ok: false };
-      const first = body.ok ? body.results[0] : undefined;
-      if (first) {
-        mapRef.current?.flyTo({ center: [first.longitude, first.latitude], zoom: 16 });
+
+      setSearchState({ kind: 'SEARCHING' });
+
+      let body: SearchResponse;
+      try {
+        const response = await fetch(
+          `/api/map/search?authority=${authoritySlug}&q=${encodeURIComponent(query)}`,
+        );
+        body = (await response.json()) as SearchResponse;
+      } catch {
+        setSearchState({ kind: 'FAILED' });
+        return;
       }
+
+      if (!body.ok) {
+        setSearchState(body.reason === 'RATE_LIMITED' ? { kind: 'RATE_LIMITED' } : { kind: 'FAILED' });
+        return;
+      }
+
+      const first = body.results[0];
+      if (!first) {
+        setSearchState({ kind: 'NO_MATCH', query });
+        return;
+      }
+
+      // The map may still be initialising. Keep the result and let the load
+      // handler fly to it, rather than reporting a success that never happened.
+      if (!flyToResult(first)) {
+        pendingFlyRef.current = first;
+      }
+
+      setSearchState({
+        kind: 'FOUND',
+        result: first,
+        coveredArea: body.coveredArea,
+      });
     },
-    [authoritySlug, search],
+    [authoritySlug, search, flyToResult],
   );
 
   const summary = useMemo(() => {
@@ -415,6 +485,56 @@ export function MapExplorer({
             Go
           </button>
         </form>
+
+        {/*
+          A search must never look like nothing happened. Every outcome —
+          including "we could not look" — says so here. `aria-live` announces it
+          to a screen reader without moving focus away from the input.
+        */}
+        {searchState.kind !== 'IDLE' && (
+          <div
+            role="status"
+            aria-live="polite"
+            // Named because the page carries several status regions; without a
+            // name a screen-reader user hears three unlabelled ones and cannot
+            // tell which answered their search.
+            aria-label="Search status"
+            style={{
+              pointerEvents: 'auto',
+              flexBasis: '100%',
+              maxWidth: 520,
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--surface-raised)',
+              border: '1px solid var(--border-strong)',
+              color: 'var(--text)',
+              fontSize: 13,
+              lineHeight: 1.45,
+            }}
+          >
+            {searchState.kind === 'SEARCHING' && 'Searching…'}
+            {searchState.kind === 'NO_MATCH' && (
+              <>
+                No match for <strong>{searchState.query}</strong>. Try a street name, or a full
+                postcode such as NW1 1AA.
+              </>
+            )}
+            {searchState.kind === 'RATE_LIMITED' &&
+              'Too many searches just now. Please wait a moment and try again.'}
+            {searchState.kind === 'FAILED' &&
+              'Search is unavailable at the moment. This is a problem on our side, not a statement about enforcement.'}
+            {searchState.kind === 'FOUND' && (
+              <>
+                <strong>{searchState.result.displayName}</strong> located. Showing this area.
+                {!searchState.result.withinCoverage && (
+                  <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+                    {OUTSIDE_COVERAGE_MESSAGE}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         <div
           role="group"
