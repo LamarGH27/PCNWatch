@@ -26,23 +26,44 @@ const extractedField = <T extends z.ZodTypeAny>(inner: T) =>
 /* 1. Document extraction                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Notice types and procedural stages, named once.
+ *
+ * The wire schema the model answers against and the domain schema its answer
+ * is validated against both build from these, so a member added to one cannot
+ * silently be missing from the other.
+ */
+export const NOTICE_TYPES = [
+  'PCN_ON_STREET',
+  'PCN_POSTAL',
+  'NOTICE_TO_OWNER',
+  'NOTICE_OF_REJECTION',
+  'NOTICE_OF_ACCEPTANCE',
+  'CHARGE_CERTIFICATE',
+  'ORDER_FOR_RECOVERY',
+  'PRIVATE_PARKING_CHARGE',
+  'UNKNOWN',
+] as const;
+
+export const PROCEDURAL_STAGES = [
+  'NEW',
+  'INFORMAL_CHALLENGE',
+  'NOTICE_TO_OWNER',
+  'FORMAL_REPRESENTATION',
+  'NOTICE_OF_ACCEPTANCE',
+  'NOTICE_OF_REJECTION',
+  'TRIBUNAL_ELIGIBLE',
+  'CLOSED_PAID',
+  'UNKNOWN_STAGE',
+] as const;
+
+export const LEGIBILITY_LEVELS = ['CLEAR', 'PARTIAL', 'POOR'] as const;
+
 export const pcnExtractionSchema = z.object({
   authorityName: extractedField(z.string().max(200)),
   pcnNumber: extractedField(z.string().max(64)),
   vehicleRegistration: extractedField(z.string().max(16)),
-  noticeType: extractedField(
-    z.enum([
-      'PCN_ON_STREET',
-      'PCN_POSTAL',
-      'NOTICE_TO_OWNER',
-      'NOTICE_OF_REJECTION',
-      'NOTICE_OF_ACCEPTANCE',
-      'CHARGE_CERTIFICATE',
-      'ORDER_FOR_RECOVERY',
-      'PRIVATE_PARKING_CHARGE',
-      'UNKNOWN',
-    ]),
-  ),
+  noticeType: extractedField(z.enum(NOTICE_TYPES)),
   contraventionCode: extractedField(z.string().max(8)),
   contraventionDescription: extractedField(z.string().max(400)),
   incidentDate: extractedField(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
@@ -58,22 +79,10 @@ export const pcnExtractionSchema = z.object({
    * What the document says about where in the process it sits. The state machine
    * decides whether to act on this; the model does not set the stage itself.
    */
-  proceduralStageIndicated: extractedField(
-    z.enum([
-      'NEW',
-      'INFORMAL_CHALLENGE',
-      'NOTICE_TO_OWNER',
-      'FORMAL_REPRESENTATION',
-      'NOTICE_OF_ACCEPTANCE',
-      'NOTICE_OF_REJECTION',
-      'TRIBUNAL_ELIGIBLE',
-      'CLOSED_PAID',
-      'UNKNOWN_STAGE',
-    ]),
-  ),
+  proceduralStageIndicated: extractedField(z.enum(PROCEDURAL_STAGES)),
   /** Free text the model could not attribute to a field. Helps a human debug. */
   unreadableRegions: z.array(z.string().max(200)).max(10).default([]),
-  overallLegibility: z.enum(['CLEAR', 'PARTIAL', 'POOR']),
+  overallLegibility: z.enum(LEGIBILITY_LEVELS),
 });
 
 export type PcnExtraction = z.infer<typeof pcnExtractionSchema>;
@@ -191,7 +200,10 @@ export type AiJobType = keyof typeof AI_SCHEMAS;
 
 /** Prompt template versions. Persisted with every call so output is reproducible. */
 export const PROMPT_VERSIONS: Record<AiJobType, string> = {
-  DOCUMENT_EXTRACTION: 'extract-v1',
+  // v2: the model answers with an explicit per-field status rather than a
+  // nullable value. Stored with every call, so output from before and after the
+  // change is never compared as though it came from the same contract.
+  DOCUMENT_EXTRACTION: 'extract-v2',
   DOCUMENT_CLASSIFICATION: 'classify-v1',
   CASE_SUMMARISATION: 'summarise-v1',
   ASSESSMENT_EXPLANATION: 'explain-v1',

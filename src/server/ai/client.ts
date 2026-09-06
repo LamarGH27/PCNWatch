@@ -5,6 +5,7 @@ import { serverEnv, isConfigured } from '@/lib/env';
 import { AppError, logError } from '@/lib/errors';
 import { createSupabaseServiceClient } from '@/lib/supabase/server';
 import { AI_SCHEMAS, PROMPT_VERSIONS, type AiJobType } from './schemas';
+import { WIRE_MAPPERS, WIRE_SCHEMAS } from './wire-schemas';
 import { validateAiResponse, type GroundingContext, type ValidationOutcome } from './validate';
 
 /**
@@ -218,12 +219,18 @@ interface AnthropicCallArgs {
 async function callAnthropic(args: AnthropicCallArgs): Promise<unknown> {
   const client = new Anthropic({ apiKey: args.apiKey });
 
+  // The model answers in the wire shape where one exists, and in the domain
+  // shape otherwise. Anthropic caps structured outputs at 16 union parameters;
+  // the domain extraction schema has 30, because every nullable field is a
+  // union. See wire-schemas.ts.
+  const answerSchema = WIRE_SCHEMAS[args.jobType as keyof typeof WIRE_SCHEMAS] ?? AI_SCHEMAS[args.jobType];
+
   const response = await client.messages.parse({
     model: args.model,
     max_tokens: args.maxTokens,
     system: args.system,
     messages: [{ role: 'user', content: args.content.map(toContentBlock) }],
-    output_config: { format: zodOutputFormat(AI_SCHEMAS[args.jobType]) },
+    output_config: { format: zodOutputFormat(answerSchema) },
   });
 
   // A refusal is a stop reason, not an exception, so it has to be checked
@@ -239,7 +246,11 @@ async function callAnthropic(args: AnthropicCallArgs): Promise<unknown> {
     throw new Error('The model returned no output matching the required schema.');
   }
 
-  return response.parsed_output;
+  // Mapped back to the domain shape before it leaves this function, so the
+  // validation and grounding that follow are unchanged and know nothing about
+  // the wire format.
+  const mapper = WIRE_MAPPERS[args.jobType as keyof typeof WIRE_MAPPERS];
+  return mapper ? mapper(response.parsed_output) : response.parsed_output;
 }
 
 /** Our transport-agnostic block shape, in the wire form the SDK expects. */
