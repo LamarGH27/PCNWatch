@@ -6,6 +6,7 @@ import { assessCase } from '@/core/assessment/engine';
 import type { Assessment } from '@/core/assessment/types';
 import { STAGE_LABELS, isTerminal } from '@/core/case/state-machine';
 import { getReference } from '@/core/reference/store';
+import type { UserContext } from '@/core/context/types';
 import type { ProceduralStage } from '@/core/reference/types';
 
 /**
@@ -34,7 +35,12 @@ export interface CaseRecord {
   readonly fullAmountPence: number | null;
   readonly discountedAmountPence: number | null;
   readonly proceduralStage: ProceduralStage;
-  readonly userNarrative: string | null;
+  /** Whether the user wrote an account. Never the account — it is not stored. */
+  readonly narrativeProvided: boolean;
+  readonly contextAnswers: UserContext['answers'];
+  readonly confirmedAssertions: UserContext['confirmedAssertions'];
+  readonly declaredEvidence: UserContext['declaredEvidence'];
+  readonly resolvedFacts: UserContext['resolvedFacts'];
   readonly assertedGroundKeys: readonly string[];
   readonly verifiedFields: Readonly<Record<string, boolean>>;
   readonly evidenceCounts: Partial<Record<EvidenceType, number>>;
@@ -100,7 +106,20 @@ export function buildCaseView(record: CaseRecord, today: string): CaseView {
     noticeCategory: record.noticeCategory,
     assertedGroundKeys: record.assertedGroundKeys,
     evidenceProvided: record.evidenceCounts,
-    userNarrativeProvided: Boolean(record.userNarrative?.trim()),
+    userNarrativeProvided: record.narrativeProvided,
+    /*
+     * The canonical context, rebuilt from the row rather than recomputed from
+     * nothing. A resumed case has to produce the same assessment as the one the
+     * user saw before they closed the page, and it can only do that if what
+     * they confirmed comes back with it.
+     */
+    userContext: {
+      narrativeProvided: record.narrativeProvided,
+      answers: record.contextAnswers,
+      declaredEvidence: record.declaredEvidence,
+      confirmedAssertions: record.confirmedAssertions,
+      resolvedFacts: record.resolvedFacts,
+    },
     verifiedFields: {
       pcnNumber: record.verifiedFields.pcnNumber === true,
       contraventionCode: record.verifiedFields.contraventionCode === true,

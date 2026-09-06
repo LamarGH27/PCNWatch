@@ -114,16 +114,17 @@ describe('declared evidence is never counted as held evidence', () => {
     expect(call).toMatch(/assertedGroundKeys:\s*\[\]/);
   });
 
-  it('keeps the narrative out of the assessment request schema', () => {
+  it('keeps the narrative out of the case request schema', () => {
     // The account reaches exactly one endpoint. A `narrative` string field on
-    // the assessment schema would be a second door into the rest of the system.
-    const route = readFileSync(resolve(ROOT, 'src/app/api/cases/assess/route.ts'), 'utf8');
+    // the shared case schema would be a second door into the rest of the
+    // system — and now into the database as well.
+    const route = readFileSync(resolve(ROOT, 'src/app/api/cases/schema.ts'), 'utf8');
     expect(route).not.toMatch(/narrative:\s*z\.string/);
     expect(route).toContain('narrativeProvided: z.boolean()');
   });
 
   it('accepts only confirmed assertions, in a shape an unconfirmed one cannot take', () => {
-    const route = readFileSync(resolve(ROOT, 'src/app/api/cases/assess/route.ts'), 'utf8');
+    const route = readFileSync(resolve(ROOT, 'src/app/api/cases/schema.ts'), 'utf8');
     const start = route.indexOf('confirmedAssertions:');
     expect(start, 'confirmedAssertions is no longer on the schema').toBeGreaterThan(-1);
     const block = route.slice(start, route.indexOf('.max(20)', start));
@@ -168,6 +169,52 @@ describe('a written account is not kept anywhere', () => {
   it('does not fingerprint a private-input job by its content', () => {
     const source = readFileSync(CLIENT, 'utf8');
     expect(source).toMatch(/hashText:\s*!isPrivateInput/);
+  });
+
+  it('has no column the account could be written to', () => {
+    /*
+     * The strongest form of this rule, and the reason it is a migration rather
+     * than a convention: `user_narrative` existed in 0004 and was never used,
+     * which is one `insert` away from being used. 0014 drops it.
+     *
+     * Checked against the migrations rather than a live database so it holds
+     * before anything is deployed.
+     */
+    const migrations = readdirSync(resolve(ROOT, 'supabase/migrations'))
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+
+    const dropped = migrations.some((f) =>
+      /alter table pcn_cases drop column if exists user_narrative/i.test(
+        readFileSync(resolve(ROOT, 'supabase/migrations', f), 'utf8'),
+      ),
+    );
+    expect(dropped, 'the narrative column is no longer dropped by a migration').toBe(true);
+
+    // And nothing added it back afterwards.
+    const afterDrop = migrations.slice(
+      migrations.findIndex((f) =>
+        /drop column if exists user_narrative/i.test(
+          readFileSync(resolve(ROOT, 'supabase/migrations', f), 'utf8'),
+        ),
+      ) + 1,
+    );
+    for (const file of afterDrop) {
+      expect(
+        readFileSync(resolve(ROOT, 'supabase/migrations', file), 'utf8'),
+        `${file} adds a narrative column back`,
+      ).not.toMatch(/add column[^;]*user_narrative/i);
+    }
+  });
+
+  it('never writes an owner it was given', () => {
+    // `user_id` defaults to auth.uid() and RLS checks the same value, so the
+    // database decides the owner. A user_id in the write path would be a value
+    // that could be wrong.
+    const persist = readFileSync(resolve(ROOT, 'src/server/cases/persist.ts'), 'utf8');
+    const start = persist.indexOf('export function toCaseRow');
+    const row = persist.slice(start, persist.indexOf('\n}', start));
+    expect(row).not.toMatch(/user_id/);
   });
 
   it('reads accounts from exactly one endpoint', () => {

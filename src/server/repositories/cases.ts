@@ -38,8 +38,9 @@ export async function getCase(caseId: string): Promise<CaseResult> {
       .select(
         `id, pcn_number, authority_name_raw, notice_category, contravention_code,
          contravention_suffix, incident_date, issue_date, location_text,
-         full_amount_pence, discounted_amount_pence, procedural_stage, user_narrative,
-         asserted_ground_keys, verified_fields, closed_at,
+         full_amount_pence, discounted_amount_pence, procedural_stage,
+         narrative_provided, context_answers, confirmed_assertions, declared_evidence,
+         resolved_facts, asserted_ground_keys, verified_fields, closed_at,
          authorities ( name, slug ),
          parking_locations ( slug ),
          pcn_evidence ( evidence_type ),
@@ -80,7 +81,10 @@ export async function listCases(): Promise<
 
     const { data, error } = await supabase
       .from('pcn_cases')
-      .select('id, pcn_number, location_text, procedural_stage, incident_date, closed_at')
+      .select(
+        `id, pcn_number, location_text, procedural_stage, incident_date, closed_at,
+         authority_name_raw, contravention_code, status, updated_at`,
+      )
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) throw error;
@@ -94,6 +98,10 @@ export async function listCases(): Promise<
         stage: row.procedural_stage as ProceduralStage,
         incidentDate: row.incident_date ?? null,
         closed: row.closed_at !== null,
+        authorityName: row.authority_name_raw ?? null,
+        contraventionCode: row.contravention_code ?? null,
+        status: String(row.status ?? 'DRAFT'),
+        updatedAt: String(row.updated_at ?? ''),
       })),
     };
   } catch (error) {
@@ -108,6 +116,10 @@ export interface CaseSummary {
   readonly stage: ProceduralStage;
   readonly incidentDate: string | null;
   readonly closed: boolean;
+  readonly authorityName: string | null;
+  readonly contraventionCode: string | null;
+  readonly status: string;
+  readonly updatedAt: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -147,7 +159,13 @@ function toCaseRecord(row: Row): CaseRecord {
     fullAmountPence: numberOrNull(row.full_amount_pence),
     discountedAmountPence: numberOrNull(row.discounted_amount_pence),
     proceduralStage: (row.procedural_stage as ProceduralStage) ?? 'UNKNOWN_STAGE',
-    userNarrative: (row.user_narrative as string | null) ?? null,
+    // The account itself is never stored — migration 0014 dropped the column.
+    // What survives is that one was written, which is all the engine reads.
+    narrativeProvided: row.narrative_provided === true,
+    contextAnswers: asArray(row.context_answers) as CaseRecord['contextAnswers'],
+    confirmedAssertions: asArray(row.confirmed_assertions) as CaseRecord['confirmedAssertions'],
+    declaredEvidence: asArray(row.declared_evidence) as CaseRecord['declaredEvidence'],
+    resolvedFacts: asArray(row.resolved_facts) as CaseRecord['resolvedFacts'],
     assertedGroundKeys: Array.isArray(row.asserted_ground_keys)
       ? (row.asserted_ground_keys as string[])
       : [],
