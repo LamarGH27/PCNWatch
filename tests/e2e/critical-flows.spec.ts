@@ -8,6 +8,27 @@ import { expect, test } from '@playwright/test';
  * privacy, and a fully-configured environment would hide them.
  */
 
+/**
+ * Each test is a different visitor.
+ *
+ * The rate limiter derives a caller identity from the proxy headers a real
+ * deployment sets, and falls back to one shared bucket when there are none. In
+ * the browser suite that made 129 tests look like a single client hammering the
+ * assessment endpoint forty times a minute — so the limiter did exactly its job,
+ * some runs tripped the limit partway through, and a test would fail waiting
+ * twenty seconds for a page the server had correctly refused to build.
+ *
+ * Setting the header per test is not a way around the limit: it is what the
+ * production path actually receives, and these really are distinct visitors.
+ * The limiter stays live, at its real setting, and a genuine regression in it
+ * would still be caught.
+ */
+let visitor = 0;
+test.beforeEach(async ({ page }) => {
+  visitor += 1;
+  await page.setExtraHTTPHeaders({ 'x-forwarded-for': `203.0.113.${visitor % 254}` });
+});
+
 test.describe('landing and navigation', () => {
   test('the landing page leads to the two things the product does', async ({ page }) => {
     await page.goto('/');
@@ -1037,5 +1058,98 @@ test.describe('two answers about the same thing', () => {
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow, 'the conflict screen pushes the page sideways').toBeLessThanOrEqual(1);
+  });
+});
+
+test.describe('saving and coming back', () => {
+  const VALUES = [
+    'Westminster City Council',
+    'WM12345678',
+    '12',
+    '2026-08-11',
+    '2026-08-14',
+    'STRAND',
+    '13000',
+  ];
+
+  async function verifyAndAssess(page: import('@playwright/test').Page) {
+    await page.goto('/analyse');
+    await page.getByRole('button', { name: /enter the details/i }).click();
+    const boxes = page.getByRole('textbox');
+    const ticks = page.getByRole('checkbox');
+    await expect(boxes).toHaveCount(VALUES.length);
+    for (let i = 0; i < VALUES.length; i++) {
+      await boxes.nth(i).fill(VALUES[i]!);
+      await ticks.nth(i).check();
+    }
+    await page.getByRole('button', { name: /confirm and continue/i }).click();
+    await page.getByRole('button', { name: /^skip for now$/i }).click();
+    await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
+  }
+
+  test('says plainly that nothing was saved when it could not be', async ({ page }) => {
+    /*
+     * This build has no Supabase configured, so the save genuinely cannot
+     * happen — which is the case that matters most. A user told their case is
+     * safe, who then finds it gone, has been misled by us rather than by their
+     * browser.
+     */
+    await verifyAndAssess(page);
+
+    await expect(page.getByText(/this assessment has not been saved/i)).toBeVisible();
+    await expect(page.getByText(/leaving this page will lose it/i)).toBeVisible();
+    // And it must not claim the opposite.
+    await expect(page.getByText(/saved privately in this browser/i)).toHaveCount(0);
+  });
+
+  test('no longer claims that nothing is stored', async ({ page }) => {
+    // The old copy said "Nothing about your notice is stored", which was true
+    // then and would be a lie the moment a case is saved.
+    await verifyAndAssess(page);
+    await expect(page.getByText(/nothing about your notice is stored/i)).toHaveCount(0);
+  });
+
+  test('offers a way back to saved cases', async ({ page }) => {
+    await page.goto('/cases');
+    await expect(page.getByRole('heading', { name: /your cases/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /analyse a notice/i })).toBeVisible();
+  });
+
+  test('is honest about what an anonymous session is', async ({ page }) => {
+    await page.goto('/cases');
+
+    // The limitation is stated rather than buried: there is no account, and the
+    // way back lives in this browser only.
+    await expect(page.getByText(/no account behind this list/i)).toBeVisible();
+    await expect(page.getByText(/clearing your browsing data/i)).toBeVisible();
+    // And the narrative boundary is restated where a user would ask about it.
+    await expect(page.getByText(/what you wrote in your own words was never saved/i)).toBeVisible();
+  });
+
+  test('shows an empty state rather than an error with no session', async ({ page }) => {
+    await page.goto('/cases');
+    // With no Supabase and no session, "you have nothing here" is the honest
+    // answer — not a failure, and not a sign-up wall.
+    await expect(page.getByText(/no cases in this browser|not saved a case yet|cannot reach your cases/i)).toBeVisible();
+    await expect(page.getByText(/sign up|create an account|password/i)).toHaveCount(0);
+  });
+
+  test('does not expose another user’s case by changing the id', async ({ request }) => {
+    // No session at all: the boundary must hold before any identity exists.
+    const response = await request.get('/case/55555555-5555-4555-8555-555555555555');
+    const body = await response.text();
+    expect(body).not.toMatch(/WM12345678/);
+    expect(body).toMatch(/not found|cannot|sign|no case|unavailable/i);
+  });
+
+  test('the cases page works at mobile width', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    await page.goto('/cases');
+    await expect(page.getByRole('heading', { name: /your cases/i })).toBeVisible();
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow, 'the cases page pushes the page sideways').toBeLessThanOrEqual(1);
   });
 });

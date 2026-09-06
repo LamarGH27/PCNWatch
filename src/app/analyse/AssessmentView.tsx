@@ -79,12 +79,15 @@ export function AssessmentView({
   onEdit,
   onEditContext,
   contextAnswered,
+  caseId,
 }: {
   result: VerifiedAssessment;
   facts: VerifiedFacts;
   onEdit: () => void;
   onEditContext?: () => void;
   contextAnswered?: boolean;
+  /** The saved case, when there is one. Null means this page is all there is. */
+  caseId?: string | null;
 }) {
   const { assessment } = result;
 
@@ -377,17 +380,57 @@ export function AssessmentView({
         </div>
       )}
 
-      <p
+      {/*
+        What this says has to be true, and it is not the same sentence in both
+        cases. It used to read "Nothing about your notice is stored — leave this
+        page and you will need to upload it again", which was accurate then and
+        would be a lie now that the case is saved. The other half matters just as
+        much: when the save did not happen, saying so is the only honest option,
+        because a user who believes their case is safe and finds it gone has been
+        misled by us rather than by their browser.
+      */}
+      <div
         style={{
           marginTop: 24,
+          padding: '12px 14px',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)',
           fontSize: 12.5,
-          color: 'var(--text-faint)',
-          lineHeight: 1.5,
+          color: 'var(--text-muted)',
+          lineHeight: 1.55,
         }}
       >
-        This assessment is worked out on the spot from what you confirmed. Nothing about your
-        notice is stored — leave this page and you will need to upload it again.
-      </p>
+        {caseId ? (
+          <>
+            <strong style={{ display: 'block', color: 'var(--text)', fontSize: 13 }}>
+              Your case is saved privately in this browser.
+            </strong>
+            <p style={{ margin: '6px 0 0' }}>
+              You can close this page and come back to it from{' '}
+              <Link href="/cases" style={{ color: 'inherit' }}>
+                your cases
+              </Link>
+              . Only you can open it. There is no account and no password — the way back is stored
+              in this browser, so clearing your browsing data or switching to another device will
+              lose it.
+            </p>
+            <p style={{ margin: '6px 0 0' }}>
+              What you wrote in your own words was not saved. That stays in this page only.
+            </p>
+          </>
+        ) : (
+          <>
+            <strong style={{ display: 'block', color: 'var(--text)', fontSize: 13 }}>
+              This assessment has not been saved.
+            </strong>
+            <p style={{ margin: '6px 0 0' }}>
+              We could not store your case, so leaving this page will lose it and you would need to
+              upload your notice again. Everything above is still worked out from what you
+              confirmed.
+            </p>
+          </>
+        )}
+      </div>
 
       <div
         style={{

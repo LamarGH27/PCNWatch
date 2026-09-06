@@ -21,7 +21,12 @@ function caseRecord(overrides: Partial<CaseRecord> = {}): CaseRecord {
     fullAmountPence: 13000,
     discountedAmountPence: 6500,
     proceduralStage: 'NEW',
-    userNarrative: 'I had a valid permit linked to my registration.',
+    // The account is not stored; only the fact that one was written.
+    narrativeProvided: true,
+    contextAnswers: [],
+    confirmedAssertions: [],
+    declaredEvidence: [],
+    resolvedFacts: [],
     assertedGroundKeys: ['GROUND-CONTRAVENTION_DID_NOT_OCCUR'],
     verifiedFields: {
       pcnNumber: true,

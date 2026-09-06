@@ -6,6 +6,7 @@ import type { VerifiedAssessment, VerifiedFacts } from '@/server/cases/assess-ve
 import type { UserContext } from '@/core/context/types';
 import { normaliseContraventionCode } from '@/core/reference/store';
 import { stageForNoticeType } from '@/core/case/stage-from-notice';
+import { ensureAnonymousIdentity } from '@/lib/supabase/anonymous';
 import { AssessmentView } from './AssessmentView';
 import {
   ContextStage,
@@ -103,7 +104,13 @@ type Step =
   // them exactly as they were left.
   | { kind: 'CONTEXT' }
   | { kind: 'ANALYSING' }
-  | { kind: 'ASSESSED'; assessment: VerifiedAssessment; facts: VerifiedFacts }
+  | {
+      kind: 'ASSESSED';
+      assessment: VerifiedAssessment;
+      facts: VerifiedFacts;
+      /** Set when the case reached the database. Null when it is session-only. */
+      caseId: string | null;
+    }
   // The assessment failed. The confirmed facts are held so nothing the user
   // typed is lost, and so the attempt can be repeated.
   | { kind: 'ASSESSMENT_FAILED'; facts: VerifiedFacts; message: string };
@@ -117,8 +124,54 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
    * Only what the user ticked is sent. An edited-but-unconfirmed value never
    * leaves this function, so it cannot reach a deadline or a finding.
    */
+  /**
+   * The id of the saved case, once there is one.
+   *
+   * Flow state rather than step state, so a second pass through the journey
+   * updates the case the user already has instead of creating a duplicate every
+   * time they correct a date.
+   */
+  const caseIdRef = useRef<string | null>(null);
+
+  /**
+   * Saves the case, then assesses it.
+   *
+   * In that order, and the order is the whole point. The assessment is the part
+   * that can fail — a rate limit, an outage, a refused request — and somebody
+   * who has just checked fourteen fields off a notice should not lose them to
+   * any of those. So the case is written first and the assessment attempted
+   * against a case that already exists; if the assessment fails, the work is
+   * still there and the retry is a retry rather than a re-entry.
+   *
+   * Saving is best-effort. A deployment without Supabase, or with anonymous
+   * sign-ins turned off, still produces an assessment — it just says plainly
+   * that nothing was saved rather than blocking the journey behind an identity
+   * the user never asked for.
+   */
+  const saveCase = useCallback(async (facts: VerifiedFacts, context: UserContext) => {
+    const identity = await ensureAnonymousIdentity();
+    if (identity.kind !== 'READY') return null;
+
+    try {
+      const response = await fetch('/api/cases', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        // The account is not here: `toUserContext` reduced it to a boolean in
+        // the browser, and there is no column for it either.
+        body: JSON.stringify({ ...facts, context, caseId: caseIdRef.current ?? undefined }),
+      });
+      const body = (await response.json()) as { ok: boolean; caseId?: string };
+      if (!body.ok || !body.caseId) return null;
+      caseIdRef.current = body.caseId;
+      return body.caseId;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const runAssessment = useCallback(async (facts: VerifiedFacts, context: UserContext) => {
     setStep({ kind: 'ANALYSING' });
+    const caseId = await saveCase(facts, context);
     try {
       const response = await fetch('/api/cases/assess', {
         method: 'POST',
@@ -139,11 +192,16 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
           message:
             body.reason === 'RATE_LIMITED'
               ? 'Too many requests just now. Wait a moment and try again.'
-              : 'We could not put your assessment together just now.',
+              : body.reason === 'UNRESOLVED_CONFLICT'
+                ? // The flow normally settles this before offering an assessment;
+                  // the endpoint refuses as a backstop. Saying which problem it
+                  // is beats a generic apology the user cannot act on.
+                  'Two of your answers still disagree with each other. Go back and choose which one is right.'
+                : 'We could not put your assessment together just now.',
         });
         return;
       }
-      setStep({ kind: 'ASSESSED', assessment: body.assessment, facts });
+      setStep({ kind: 'ASSESSED', assessment: body.assessment, facts, caseId });
     } catch {
       setStep({
         kind: 'ASSESSMENT_FAILED',
@@ -151,7 +209,7 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
         message: 'We could not reach the assessment service.',
       });
     }
-  }, []);
+  }, [saveCase]);
   const [values, setValues] = useState<Record<string, string>>({});
   /**
    * What the reader made of the notice type.
@@ -594,6 +652,7 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
       result={step.assessment}
       facts={step.facts}
       onEdit={editDetails}
+      caseId={step.caseId}
       onEditContext={() => setStep({ kind: 'CONTEXT' })}
       contextAnswered={
         contextDraft.narrative.trim().length > 0 ||

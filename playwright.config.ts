@@ -41,7 +41,20 @@ export default defineConfig({
     : {
         command: 'npx next start -p 3210',
         url: 'http://127.0.0.1:3210',
-        reuseExistingServer: !process.env.CI,
+        /*
+         * Never reuse a server this run did not start.
+         *
+         * `!process.env.CI` looked like a local convenience and was a way to
+         * test the wrong build. Two consecutive runs would attach to the first
+         * one's server while it was shutting down — pages stopped rendering
+         * mid-suite and tests timed out at twenty seconds against an app that
+         * renders in one. The same defect in scripts/e2e-data.sh produced a
+         * false pass and then a false failure earlier in this project's life.
+         *
+         * Owning the server costs a few seconds of startup and removes an
+         * entire class of result that means nothing.
+         */
+        reuseExistingServer: false,
         timeout: 120_000,
       },
 });
