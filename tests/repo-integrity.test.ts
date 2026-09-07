@@ -26,6 +26,26 @@ function git(args: readonly string[]): string {
   return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
+/**
+ * `git grep`, where finding nothing is an answer rather than a failure.
+ *
+ * git exits 1 when a pattern does not match, which is exactly the outcome these
+ * guards are hoping for — so an unguarded call fails the test it was meant to
+ * pass.
+ */
+function gitGrepLines(pattern: string, path: string): string[] {
+  try {
+    return git(['grep', '-n', pattern, '--', path])
+      .trim()
+      .split('\n')
+      .filter((line) => line !== '');
+  } catch (error) {
+    // Exit 1 means no matches. Anything else is a real failure worth surfacing.
+    if ((error as { status?: number }).status === 1) return [];
+    throw error;
+  }
+}
+
 const gitAvailable = (() => {
   try {
     git(['rev-parse', '--is-inside-work-tree']);
@@ -171,40 +191,94 @@ describe('a written account is not kept anywhere', () => {
     expect(source).toMatch(/hashText:\s*!isPrivateInput/);
   });
 
-  it('has no column the account could be written to', () => {
+  it('is removed by a migration of its own, not by the one that adds things', () => {
     /*
-     * The strongest form of this rule, and the reason it is a migration rather
-     * than a convention: `user_narrative` existed in 0004 and was never used,
-     * which is one `insert` away from being used. 0014 drops it.
+     * Expand → deploy → contract, enforced as a shape.
      *
-     * Checked against the migrations rather than a live database so it holds
-     * before anything is deployed.
+     * The first version of this work dropped `user_narrative` in the same
+     * migration that added the new columns. That would have run against the
+     * database Production was already using, and the deployed build still names
+     * that column in `getCase` — so the drop would have broken every case page
+     * until a deploy caught up. The removal belongs in a file that runs after
+     * the deploy, and this checks it is in one.
      */
-    const migrations = readdirSync(resolve(ROOT, 'supabase/migrations'))
-      .filter((f) => f.endsWith('.sql'))
-      .sort();
+    const dir = resolve(ROOT, 'supabase/migrations');
+    const migrations = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+    const sqlOf = (file: string) => readFileSync(resolve(dir, file), 'utf8');
 
-    const dropped = migrations.some((f) =>
-      /alter table pcn_cases drop column if exists user_narrative/i.test(
-        readFileSync(resolve(ROOT, 'supabase/migrations', f), 'utf8'),
-      ),
-    );
-    expect(dropped, 'the narrative column is no longer dropped by a migration').toBe(true);
+    const droppers = migrations.filter((f) => /drop column[^;]*user_narrative/i.test(sqlOf(f)));
+    expect(droppers, 'no migration removes the narrative column').toHaveLength(1);
 
-    // And nothing added it back afterwards.
-    const afterDrop = migrations.slice(
-      migrations.findIndex((f) =>
-        /drop column if exists user_narrative/i.test(
-          readFileSync(resolve(ROOT, 'supabase/migrations', f), 'utf8'),
-        ),
-      ) + 1,
+    const [dropper] = droppers;
+    // The contract migration does one thing. A file that also adds columns is a
+    // file somebody will feel safe running early.
+    expect(sqlOf(dropper as string)).not.toMatch(/add column/i);
+    expect(dropper).toMatch(/^0015_/);
+
+    // And it says, in the file, that it must not be run before the deploy.
+    expect(sqlOf(dropper as string)).toMatch(/until production is running code that does not name it/i);
+  });
+
+  it('adds the replacement before the removal, so the order is deployable', () => {
+    const dir = resolve(ROOT, 'supabase/migrations');
+    const migrations = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+    const sqlOf = (file: string) => readFileSync(resolve(dir, file), 'utf8');
+
+    const addsReplacement = migrations.findIndex((f) =>
+      /add column if not exists narrative_provided/i.test(sqlOf(f)),
     );
-    for (const file of afterDrop) {
-      expect(
-        readFileSync(resolve(ROOT, 'supabase/migrations', file), 'utf8'),
-        `${file} adds a narrative column back`,
-      ).not.toMatch(/add column[^;]*user_narrative/i);
+    const dropsLegacy = migrations.findIndex((f) =>
+      /drop column[^;]*user_narrative/i.test(sqlOf(f)),
+    );
+
+    expect(addsReplacement, 'nothing adds narrative_provided').toBeGreaterThan(-1);
+    expect(dropsLegacy, 'nothing drops user_narrative').toBeGreaterThan(-1);
+    expect(
+      addsReplacement,
+      'the column is dropped before its replacement exists',
+    ).toBeLessThan(dropsLegacy);
+  });
+
+  it('keeps the expand migration free of anything the old build could notice', () => {
+    const expand = readFileSync(
+      resolve(ROOT, 'supabase/migrations/0014_case_context_and_anonymous_owners.sql'),
+      'utf8',
+    );
+    for (const destructive of [/drop\s+column/i, /rename\s+column/i, /drop\s+table/i, /drop\s+constraint\s+(?!if\s+exists)/i]) {
+      expect(expand, `0014 contains ${destructive}`).not.toMatch(destructive);
     }
+  });
+
+  it('is queried by no application code', () => {
+    /*
+     * The invariant that actually protects the user, and the one that makes
+     * 0015 safe to run at all: nothing in the product reads or writes the
+     * column, whether or not it still exists.
+     *
+     * Checked across all of src/ rather than at the two files that used to name
+     * it, because the point is that there is no path — a reader added tomorrow
+     * is caught here rather than by a failed migration.
+     *
+     * A comment may mention it. Explaining why a column is not used is how the
+     * next person avoids reintroducing it, so only occurrences in code count.
+     */
+    const hits = gitGrepLines('user_narrative', 'src/')
+      .filter((line) => {
+        const code = line.slice(line.indexOf(':', line.indexOf(':') + 1) + 1).trim();
+        return !code.startsWith('*') && !code.startsWith('//') && !code.startsWith('--');
+      });
+
+    expect(hits, `application code still queries the narrative column:\n${hits.join('\n')}`).toEqual(
+      [],
+    );
+  });
+
+  it('no longer carries the narrative on the case record', () => {
+    // `CaseRecord.userNarrative` was the field the column was read into. It is
+    // gone; `narrativeProvided` replaced it. `userNarrativeProvided` — the
+    // engine's own boolean input — is a different thing and stays.
+    const hits = gitGrepLines('userNarrative[^P]', 'src/');
+    expect(hits, `the narrative field is still on the case record:\n${hits.join('\n')}`).toEqual([]);
   });
 
   it('never writes an owner it was given', () => {

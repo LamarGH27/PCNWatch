@@ -19,9 +19,10 @@ import { normaliseContraventionCode } from '@/core/reference/store';
  *
  * Two things are deliberately absent from everything below.
  *
- * The account itself. `user_narrative` was dropped in migration 0014; what is
- * kept is that an account exists, which is all the engine consumes. The words
- * stay in the browser for the session.
+ * The account itself. Nothing here reads or writes the legacy narrative column,
+ * which migration 0015 removes once this code is deployed; what is kept is that
+ * an account exists, which is all the engine consumes. The words stay in the
+ * browser for the session.
  *
  * Unconfirmed readings. Only assertions the user looked at and accepted are
  * written — the row has no shape that could hold an extraction nobody confirmed,
