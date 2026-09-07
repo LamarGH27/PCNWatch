@@ -38,8 +38,19 @@ export interface EvidenceRequirement {
 
 export interface EvidenceChecklistItem extends EvidenceRequirement {
   readonly definition: EvidenceDefinition;
+  /**
+   * Whether this requirement is actually met.
+   *
+   * Met means evidence that supports the case: held, read, and confirmed by the
+   * user. Not "a file exists". The two were the same number for as long as
+   * uploading was impossible, and keeping them the same afterwards is precisely
+   * how an unread upload would start closing a gap it has not closed.
+   */
   readonly provided: boolean;
+  /** How many items of this type support the case. */
   readonly itemCount: number;
+  /** How many files we hold of this type, whatever stage they have reached. */
+  readonly heldCount: number;
 }
 
 export interface EvidenceChecklist {
@@ -47,4 +58,6 @@ export interface EvidenceChecklist {
   readonly missingEssential: readonly EvidenceType[];
   readonly missingStrong: readonly EvidenceType[];
   readonly providedCount: number;
+  /** Requirements where a file is held but has not yet been confirmed. */
+  readonly awaitingCheckCount: number;
 }

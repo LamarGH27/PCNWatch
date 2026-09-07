@@ -6,7 +6,9 @@ import {
   type WindowStatus,
 } from '@/core/deadlines/projection';
 import { buildEvidenceChecklist } from '@/core/evidence/checklist';
-import type { EvidenceChecklist, EvidenceType } from '@/core/evidence/types';
+import type { EvidenceChecklist } from '@/core/evidence/types';
+import { countEvidence, supportsAssessment, type EvidenceItem } from '@/core/evidence/lifecycle';
+import { compareEvidence, type EvidenceComparison } from '@/core/evidence/compare';
 import { assessCase } from '@/core/assessment/engine';
 import type { Assessment } from '@/core/assessment/types';
 import { STAGE_LABELS, isTerminal } from '@/core/case/state-machine';
@@ -58,7 +60,11 @@ export interface CaseRecord {
   readonly resolvedFacts: UserContext['resolvedFacts'];
   readonly assertedGroundKeys: readonly string[];
   readonly verifiedFields: Readonly<Record<string, boolean>>;
-  readonly evidenceCounts: Partial<Record<EvidenceType, number>>;
+  /** Every evidence row on the case, at whatever stage it has reached. */
+  readonly evidenceItems: readonly EvidenceItem[];
+  /** Read off the notice and confirmed. Used to compare evidence against. */
+  readonly vehicleRegistration: string | null;
+  readonly incidentTime: string | null;
   readonly closedAt: string | null;
 }
 
@@ -93,6 +99,15 @@ export interface CaseView {
   readonly discountStatus: WindowStatus;
   readonly nextAction: NextAction;
   readonly evidence: EvidenceChecklist;
+  /** The items themselves, so the evidence page can show where each one is. */
+  readonly evidenceItems: readonly EvidenceItem[];
+  /**
+   * What the user's confirmed documents say beside what their notice says.
+   *
+   * Comparisons only, never conclusions — see compare.ts. Empty until something
+   * has been uploaded, read and confirmed.
+   */
+  readonly evidenceComparisons: readonly EvidenceComparison[];
   readonly assessment: Assessment;
   readonly outOfScopeMessage: string | null;
 }
@@ -133,11 +148,37 @@ export function buildCaseView(record: CaseRecord, today: string): CaseView {
     today,
   });
 
+  /*
+   * Two counts, and the smaller one decides.
+   *
+   * `held` is what the user has given us and is shown back to them, so an
+   * upload they are part-way through checking does not read as lost.
+   * `supporting` is what has been read and confirmed, and it is the only one
+   * the checklist and the engine see. Feeding `held` to either would close a
+   * gap on the strength of a file nobody has looked at.
+   */
+  const counts = countEvidence(record.evidenceItems);
+
   const evidence = buildEvidenceChecklist({
     contraventionCode: record.contraventionCode,
     assertedGroundKeys: record.assertedGroundKeys,
-    provided: record.evidenceCounts,
+    provided: counts.supporting,
+    held: counts.held,
   });
+
+  const evidenceComparisons = compareEvidence(
+    record.evidenceItems.filter(supportsAssessment).map((item) => ({
+      id: item.id,
+      type: item.type,
+      verifiedFacts: item.verifiedFacts,
+    })),
+    {
+      vehicleRegistration: record.vehicleRegistration,
+      incidentDate: record.incidentDate,
+      incidentTime: record.incidentTime,
+      contraventionCode: record.contraventionCode,
+    },
+  );
 
   const assessment = assessCase({
     contraventionCode: record.contraventionCode,
@@ -145,7 +186,8 @@ export function buildCaseView(record: CaseRecord, today: string): CaseView {
     proceduralStage: record.proceduralStage,
     noticeCategory: record.noticeCategory,
     assertedGroundKeys: record.assertedGroundKeys,
-    evidenceProvided: record.evidenceCounts,
+    evidenceProvided: counts.supporting,
+    evidenceComparisons,
     userNarrativeProvided: record.narrativeProvided,
     /*
      * The canonical context, rebuilt from the row rather than recomputed from
@@ -182,6 +224,8 @@ export function buildCaseView(record: CaseRecord, today: string): CaseView {
     discountStatus: projection.discountStatus,
     nextAction: nextAction(record, projection, evidence, today),
     evidence,
+    evidenceItems: record.evidenceItems,
+    evidenceComparisons,
     assessment,
     outOfScopeMessage: assessment.outOfScopeMessage,
   };

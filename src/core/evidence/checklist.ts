@@ -21,8 +21,22 @@ export interface ChecklistInput {
   readonly contraventionCode: string | null;
   /** Ground reference keys the user is asserting, e.g. "GROUND-ALREADY_PAID". */
   readonly assertedGroundKeys?: readonly string[];
-  /** Evidence already uploaded, by type. */
+  /**
+   * Evidence that actually supports the case, by type.
+   *
+   * Held, read and confirmed by the user — see `supportsAssessment` in
+   * lifecycle.ts. A file we hold but nobody has checked is not in this count.
+   */
   readonly provided?: Partial<Record<EvidenceType, number>>;
+  /**
+   * Files we hold, by type, whatever stage they have reached.
+   *
+   * Display only: it tells the user what they have already given us, so an
+   * uploaded-but-unchecked item does not read as lost. It never decides whether
+   * a requirement is met. Defaults to `provided`, so a caller that has only one
+   * number cannot accidentally credit uploads it has not verified.
+   */
+  readonly held?: Partial<Record<EvidenceType, number>>;
 }
 
 const BASELINE: readonly EvidenceRequirement[] = [
@@ -104,6 +118,7 @@ export function buildEvidenceRequirements(input: ChecklistInput): EvidenceRequir
 export function buildEvidenceChecklist(input: ChecklistInput): EvidenceChecklist {
   const requirements = buildEvidenceRequirements(input);
   const provided = input.provided ?? {};
+  const held = input.held ?? provided;
 
   const order = { ESSENTIAL: 0, STRONG: 1, SUPPORTING: 2 } as const;
   const items: EvidenceChecklistItem[] = requirements
@@ -114,6 +129,7 @@ export function buildEvidenceChecklist(input: ChecklistInput): EvidenceChecklist
         definition: EVIDENCE_DEFINITIONS[req.type],
         provided: itemCount > 0,
         itemCount,
+        heldCount: held[req.type] ?? 0,
       };
     })
     .sort((a, b) => {
@@ -129,5 +145,9 @@ export function buildEvidenceChecklist(input: ChecklistInput): EvidenceChecklist
     missingEssential: items.filter((i) => i.importance === 'ESSENTIAL' && !i.provided).map((i) => i.type),
     missingStrong: items.filter((i) => i.importance === 'STRONG' && !i.provided).map((i) => i.type),
     providedCount: items.filter((i) => i.provided).length,
+    // Held but not yet confirmed. Surfaced so the page can ask for the one
+    // thing that would move them, rather than showing a gap the user has
+    // already done their part to close.
+    awaitingCheckCount: items.filter((i) => !i.provided && i.heldCount > 0).length,
   };
 }

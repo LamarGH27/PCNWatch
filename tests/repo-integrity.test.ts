@@ -33,6 +33,18 @@ function git(args: readonly string[]): string {
  * guards are hoping for — so an unguarded call fails the test it was meant to
  * pass.
  */
+/**
+ * Source with its comments removed.
+ *
+ * Guards that read code should read the code. Several of these explain, in a
+ * comment beside the assertion, exactly the construct they are asserting is
+ * absent — and a guard that its own explanation can fail is a guard somebody
+ * silences by deleting the explanation.
+ */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+}
+
 function gitGrepLines(pattern: string, path: string): string[] {
   try {
     return git(['grep', '-n', pattern, '--', path])
@@ -224,11 +236,29 @@ describe('a written account is not kept anywhere', () => {
     expect(source.slice(start, source.indexOf(';', start))).toContain('NARRATIVE_EXTRACTION');
   });
 
-  it('does not persist the output of a private-input job', () => {
+  it('does not persist the output of a job whose output must not be logged', () => {
     const source = readFileSync(CLIENT, 'utf8');
     // The summaries are drawn from the account and can restate it nearly word
     // for word, so storing them stores the account under another name.
-    expect(source).toMatch(/output:\s*isPrivateInput\s*\?\s*null\s*:\s*raw/);
+    expect(source).toMatch(/output:\s*outputNotLogged\s*\?\s*null\s*:\s*raw/);
+  });
+
+  it('never writes evidence readings or narrative output to the audit trail', () => {
+    /*
+     * `ai_logs` is a service-role table, outside every user's RLS scope and
+     * beyond their reach to delete. Narrative output restates what someone
+     * wrote about their life; evidence readings are the registrations, permit
+     * numbers and badge serials transcribed off their documents. Both already
+     * live somewhere the user owns, so a second copy here would be keeping
+     * their private information for our convenience alone.
+     */
+    const source = readFileSync(CLIENT, 'utf8');
+    const start = source.indexOf('const OUTPUT_NOT_LOGGED');
+    expect(start, 'the output-logging policy is gone').toBeGreaterThan(-1);
+    const list = source.slice(start, source.indexOf(';', start));
+    for (const job of ['NARRATIVE_EXTRACTION', 'EVIDENCE_ANALYSIS']) {
+      expect(list, `${job} output would now be written to ai_logs`).toContain(job);
+    }
   });
 
   it('does not fingerprint a private-input job by its content', () => {
@@ -364,6 +394,156 @@ describe('a written account is not kept anywhere', () => {
  * A route is safe if it opts out of prerendering explicitly, or reads
  * `searchParams`, which makes it dynamic anyway.
  */
+/**
+ * The lifecycle is only as good as the wiring around it.
+ *
+ * `supportsAssessment` is covered by tests that call it directly, and those
+ * tests would keep passing if the case view stopped consulting it — one line
+ * changed from `counts.supporting` to `counts.held` and every upload starts
+ * closing gaps, with the whole lifecycle still passing its own suite.
+ *
+ * The behaviour is covered through `buildCaseView` in evidence-basis.test.ts.
+ * This pins the shape at the two places the decision is actually made, because
+ * they are the places the mistake would be silent.
+ */
+describe('an upload is not evidence until somebody has checked it', () => {
+  const CASE_VIEW = resolve(ROOT, 'src/server/cases/case-view.ts');
+
+  it('gives the checklist and the engine the supporting count, not the held one', () => {
+    const source = readFileSync(CASE_VIEW, 'utf8');
+    expect(source, 'the two counts are no longer computed').toContain('countEvidence(');
+
+    // The checklist decides what counts as a met requirement, and the engine
+    // decides the evidence basis. Both must see only confirmed evidence.
+    expect(source).toMatch(/provided:\s*counts\.supporting/);
+    expect(source).toMatch(/evidenceProvided:\s*counts\.supporting/);
+    expect(source, 'held files are being counted as support').not.toMatch(
+      /(provided|evidenceProvided):\s*counts\.held/,
+    );
+    // `held` may reach the checklist for display, and nowhere else.
+    expect(source).toMatch(/held:\s*counts\.held/);
+  });
+
+  it('compares only evidence that supports the case', () => {
+    const source = readFileSync(CASE_VIEW, 'utf8');
+    // A comparison drawn from an unconfirmed reading would put a model's guess
+    // about somebody's registration beside their notice as though they had
+    // agreed it was right.
+    expect(source).toMatch(/filter\(supportsAssessment\)/);
+  });
+});
+
+/**
+ * Evidence is private, and the checks that keep it private are structural.
+ *
+ * None of these fails loudly when it breaks. A service-role client reading
+ * evidence looks exactly like a working feature, right up to the day it returns
+ * somebody else's photographs.
+ */
+describe('evidence stays private', () => {
+  const STORE = resolve(ROOT, 'src/server/evidence/store.ts');
+
+  it('never touches evidence with the service role', () => {
+    const source = readFileSync(STORE, 'utf8');
+    /*
+     * RLS is the only thing standing between one user's documents and another,
+     * and the service role bypasses it entirely. Every query here runs through
+     * the caller's own session, so a missing ownership check fails closed
+     * rather than open — which is why there are no ownership checks in that
+     * file, and why this one line matters more than any of them would.
+     */
+    expect(source).not.toContain('createSupabaseServiceClient');
+    expect(source).toContain('createSupabaseServerClient');
+  });
+
+  it('refuses uploads until storage is actually safe', () => {
+    const source = readFileSync(STORE, 'utf8');
+    // Migration 0006 cannot create the storage.objects policies on hosted
+    // Supabase, so "the migration ran" says nothing about whether one user's
+    // photographs are readable by another.
+    const start = source.indexOf('export async function uploadEvidence');
+    expect(start, 'uploadEvidence is gone').toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf('\nexport ', start + 1));
+    expect(body).toContain('getStorageReadiness()');
+    expect(body).toMatch(/STORAGE_NOT_READY/);
+  });
+
+  it('never makes an evidence object public', () => {
+    const offenders = gitGrepLines('getPublicUrl', 'src');
+    expect(offenders, `a public object URL is being created:\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  it('signs a URL only for the person who owns the file, and briefly', () => {
+    const source = readFileSync(STORE, 'utf8');
+    const start = source.indexOf('export async function signedEvidenceUrl');
+    const body = source.slice(start, source.indexOf('\nexport ', start + 1));
+    // Minted with the caller's own session, so it cannot outrun RLS.
+    expect(body).toContain('session.value.supabase.storage');
+    expect(body).toMatch(/createSignedUrl\(path, 300\)/);
+  });
+
+  it('confirms readings by position, never by value', () => {
+    /*
+     * If the verify endpoint accepted values, a client could post any text it
+     * liked and have it recorded as something the user had confirmed reading
+     * off their own document.
+     */
+    const route = readFileSync(
+      resolve(ROOT, 'src/app/api/evidence/[evidenceId]/verify/route.ts'),
+      'utf8',
+    );
+    const start = route.indexOf('const bodySchema');
+    const schema = route.slice(start, route.indexOf('});', start));
+    expect(schema).toContain('z.array(z.number()');
+    expect(schema).not.toMatch(/z\.string\(\)/);
+    expect(schema).not.toMatch(/value/);
+  });
+
+  it('never echoes what the model said about a file back to the user', () => {
+    /*
+     * A rejection can quote the response — including a reading rejected for
+     * containing a conclusion. Putting that on the user's screen would show
+     * them a fabricated sentence presented as what their own document said,
+     * and writing it to the row would store it on their case.
+     *
+     * So the message and the stored reason are ours, written from the outcome.
+     * The model's words stay in the rejection log, where a person looking for
+     * a fabrication can find them.
+     */
+    const source = readFileSync(resolve(ROOT, 'src/server/evidence/analyse.ts'), 'utf8');
+    const start = source.indexOf('if (!result.ok || !result.data)');
+    expect(start, 'the failure branch is gone').toBeGreaterThan(-1);
+    // Comments stripped first: this branch explains why it does not use
+    // `result.errors`, and a guard that trips on its own reasoning is worse
+    // than no guard — the next person deletes the comment to make it pass.
+    const branch = withoutComments(source.slice(start, source.indexOf('\n  // Second line', start)));
+    expect(branch).not.toMatch(/result\.errors/);
+    expect(branch).toContain('reasonFor(result.outcome)');
+  });
+
+  it('keeps a failed reading from moving the case', () => {
+    const source = readFileSync(resolve(ROOT, 'src/server/evidence/store.ts'), 'utf8');
+    const start = source.indexOf('export async function recordAnalysisFailure');
+    const body = source.slice(start, source.indexOf('\nexport ', start + 1));
+    // The file is retained and the status is untouched: a failure is something
+    // that happened to us, not to the user's evidence.
+    expect(body).not.toMatch(/status:\s*'/);
+    expect(body).not.toMatch(/storage_path/);
+    expect(body).toContain('analysis_failure');
+  });
+
+  it('validates uploads on the server rather than trusting the browser', () => {
+    const route = readFileSync(
+      resolve(ROOT, 'src/app/api/cases/[id]/evidence/route.ts'),
+      'utf8',
+    );
+    // The route hands the file to the server-side validator; the allowlist is
+    // not re-stated here, so it cannot drift from the one the store enforces.
+    expect(route).toContain('uploadEvidence(');
+    expect(route).toMatch(/UNSUPPORTED_TYPE|result\.rejection\.reason/);
+  });
+});
+
 describe('routes that read live data are not prerendered', () => {
   const APP = resolve(ROOT, 'src/app');
   const REPOSITORIES = resolve(ROOT, 'src/server/repositories');

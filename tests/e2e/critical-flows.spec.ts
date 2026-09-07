@@ -168,6 +168,56 @@ test.describe('privacy', () => {
     ).toBeVisible();
   });
 
+  test('an anonymous visitor cannot open a case evidence page', async ({ page }) => {
+    await page.goto('/case/00000000-0000-0000-0000-000000000001/evidence');
+    // Uploading is the point of that page, so a stranger must not reach the
+    // control that does it — nor the name of anything on somebody's case.
+    await expect(page.getByRole('heading', { name: 'Evidence' })).toHaveCount(0);
+    await expect(page.locator('input[type="file"]')).toHaveCount(0);
+    await expect(
+      page.getByText(/Sign in to see this case|Case not found|Case temporarily unavailable/),
+    ).toBeVisible();
+  });
+
+  test('the evidence endpoints refuse an unauthenticated caller', async ({ request }) => {
+    const caseId = '00000000-0000-0000-0000-000000000001';
+
+    // No session, so RLS has nothing to match and there is no route to a file.
+    const list = await request.get(`/api/cases/${caseId}/evidence`);
+    expect([401, 503]).toContain(list.status());
+
+    // A confirmation posted at an item nobody owns confirms nothing.
+    const verify = await request.post(`/api/evidence/${caseId}/verify`, {
+      data: { confirmed: [0] },
+    });
+    expect([401, 404, 409, 503]).toContain(verify.status());
+
+    const remove = await request.delete(`/api/evidence/${caseId}`);
+    expect([401, 404, 503]).toContain(remove.status());
+  });
+
+  test('the upload endpoint rejects a file type it will not read', async ({ request }) => {
+    /*
+     * Server-side, and before anything else. The browser's `accept` filter is a
+     * courtesy; this is the control, and it has to hold for a caller that never
+     * opened a browser.
+     */
+    const body = new FormData();
+    body.set('evidenceType', 'PERMIT');
+    body.set(
+      'file',
+      new Blob(['MZ not a photograph'], { type: 'application/x-msdownload' }),
+      'payload.exe',
+    );
+    const response = await request.post(
+      '/api/cases/00000000-0000-0000-0000-000000000001/evidence',
+      { multipart: body },
+    );
+    // Never 201. Unsupported, or refused before it got that far.
+    expect(response.status()).not.toBe(201);
+    expect([400, 401, 413, 415, 503]).toContain(response.status());
+  });
+
   test('a malformed case id does not reveal whether any case exists', async ({ page }) => {
     await page.goto('/case/not-a-uuid');
     await expect(page.getByRole('heading', { name: 'Case not found' })).toBeVisible();

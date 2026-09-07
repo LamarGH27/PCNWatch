@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCaseView, type CaseRecord } from '@/server/cases/case-view';
+import { evidenceItem } from '../fixtures/evidence';
 
 const TODAY = '2026-01-15';
 
@@ -51,7 +52,10 @@ function caseRecord(overrides: Partial<CaseRecord> = {}): CaseRecord {
       location: true,
       fullAmountPence: true,
     },
-    evidenceCounts: { PCN_IMAGE: 1 },
+    // Held, read and confirmed. Anything short of that supports nothing.
+    evidenceItems: [evidenceItem('PCN_IMAGE', 'VERIFIED')],
+    vehicleRegistration: null,
+    incidentTime: null,
     closedAt: null,
     ...overrides,
   };
@@ -191,7 +195,7 @@ describe('case dashboard assembly', () => {
     const view = buildCaseView(
       caseRecord({
         issueDate: null,
-        evidenceCounts: {},
+        evidenceItems: [],
         verifiedFields: { pcnNumber: true, contraventionCode: true, incidentDate: true, location: true },
       }),
       TODAY,

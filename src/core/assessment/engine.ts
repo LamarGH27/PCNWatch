@@ -1,4 +1,6 @@
 import { buildEvidenceChecklist } from '../evidence/checklist';
+import { COMPARISON_CAUTION, type EvidenceComparison } from '../evidence/compare';
+import { EVIDENCE_FIELD_LABELS } from '../evidence/analysis';
 import type { EvidenceType } from '../evidence/types';
 import { EVIDENCE_DEFINITIONS } from '../evidence/definitions';
 import type { AnswerValue, UserContext } from '../context/types';
@@ -29,8 +31,29 @@ export interface AssessmentInput {
   readonly noticeCategory: 'LOCAL_AUTHORITY_PCN' | 'PRIVATE_PARKING_CHARGE' | 'UNKNOWN';
   /** Ground keys the user has said they want to rely on. */
   readonly assertedGroundKeys: readonly string[];
-  /** Evidence the user has actually uploaded. */
+  /**
+   * Evidence that supports the case, by type.
+   *
+   * Not "uploaded". A file only reaches this count once it has been read and
+   * the user has confirmed the readings — see `supportsAssessment` in
+   * evidence/lifecycle.ts. Three things are deliberately excluded, and each of
+   * them is a way this product could flatter someone:
+   *
+   *   - a file nobody has read, which supports nothing anyone has seen;
+   *   - a file that came back illegible, which supports nothing at all;
+   *   - a confident reading the user has not agreed with, which would let a
+   *     model's certainty stand in for a person's.
+   */
   readonly evidenceProvided: Partial<Record<EvidenceType, number>>;
+  /**
+   * What the user's confirmed documents say beside what their notice says.
+   *
+   * Reported, never scored. A matching registration does not raise the basis
+   * and a differing one does not lower it: the basis describes how well
+   * evidenced a case is, and a comparison is a fact about two documents that a
+   * person still has to weigh.
+   */
+  readonly evidenceComparisons?: readonly EvidenceComparison[];
   /** The user's own account, used only to decide which questions remain open. */
   readonly userNarrativeProvided: boolean;
   /**
@@ -390,6 +413,54 @@ export function assessCase(input: AssessmentInput): Assessment {
       confidence: 'HIGH',
       groundKey: null,
     });
+  }
+
+  /* ---- What the documents say beside what the notice says ------------------ */
+
+  /*
+   * Surfaced as a finding, not folded into the basis.
+   *
+   * Every comparison here rests on a reading the user confirmed, so it is worth
+   * showing. What it is not is an answer: a receipt whose registration matches
+   * the notice says nothing about whether the session covered the time, the
+   * place or the restriction that was enforced, and a receipt whose
+   * registration differs is not the end of a case either.
+   *
+   * The differences come first because they are the ones somebody needs to
+   * know about, including — especially — when they are unwelcome. A product
+   * that listed four matches and quietly omitted the one contradiction would be
+   * building its user a case out of the half of their own documents that agreed
+   * with them.
+   */
+  const comparisons = input.evidenceComparisons ?? [];
+  const compared = comparisons.filter((c) => c.outcome !== 'NOT_COMPARED');
+  if (compared.length > 0) {
+    const differing = compared.filter((c) => c.outcome === 'DIFFERS');
+    const consistent = compared.filter((c) => c.outcome === 'CONSISTENT');
+    findings.push({
+      id: 'evidence-comparison',
+      category: 'FACTUAL_DISPUTE',
+      issue: 'What your documents say, beside what your notice says',
+      whyItMayMatter:
+        [...differing, ...consistent].map((c) => c.statement).join(' ') + ' ' + COMPARISON_CAUTION,
+      evidenceNeeded: [...new Set(compared.map((c) => c.evidenceType))],
+      evidenceAvailable: [...new Set(compared.map((c) => c.evidenceType))],
+      citations: [],
+      /*
+       * Never HIGH. A comparison is arithmetic over two strings; the confidence
+       * on a finding is about how much weight to give the point, and two
+       * strings agreeing is not a strong point about anything on its own.
+       */
+      confidence: differing.length > 0 ? 'MEDIUM' : 'LOW',
+      groundKey: null,
+    });
+  }
+
+  for (const comparison of comparisons) {
+    if (comparison.outcome !== 'NOT_COMPARED') continue;
+    missingInformation.push(
+      `We could not compare the ${lowerFirst(EVIDENCE_FIELD_LABELS[comparison.field] ?? comparison.field)} on your evidence against your notice. ${comparison.statement}`,
+    );
   }
 
   const basisResult = determineBasis(input, findings, checklist.missingEssential.length);
