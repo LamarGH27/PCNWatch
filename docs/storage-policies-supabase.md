@@ -34,6 +34,19 @@ segment and the check needs no join.
 The names matter: `pcnwatch_storage_readiness()` looks for exactly these, and the
 application refuses uploads until all six are present.
 
+## What is closed while they are missing
+
+Evidence upload. `uploadEvidence` calls `getStorageReadiness()` before it writes
+a byte and returns `STORAGE_NOT_READY` if the report is anything but ready, so
+`/case/<id>/evidence` accepts nothing and says so. The rest of the case — the
+scanner, the assessment, saved cases — is unaffected.
+
+That is deliberate rather than defensive. Until every policy exists, one user's
+photographs could be readable by another, and accepting an upload into that
+state would be creating the exposure knowingly. The report is read from the
+catalogue on each attempt, so the feature opens by itself once the policies are
+created here; nothing needs redeploying.
+
 ## Dashboard steps
 
 Do this once per project, for each of the two buckets.

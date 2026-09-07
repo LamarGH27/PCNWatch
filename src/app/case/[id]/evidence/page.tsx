@@ -2,7 +2,9 @@ import Link from 'next/link';
 import { getCase } from '@/server/repositories/cases';
 import { buildCaseView } from '@/server/cases/case-view';
 import { Card } from '@/components/primitives';
+import { COMPARISON_CAUTION } from '@/core/evidence/compare';
 import { CaseUnavailable } from '../CaseUnavailable';
+import { EvidencePanel } from './EvidencePanel';
 
 export default async function EvidencePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -17,7 +19,9 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
   }
 
   const view = buildCaseView(result.record, new Date().toISOString().slice(0, 10));
-  const { evidence } = view;
+  const { evidence, evidenceItems, evidenceComparisons } = view;
+  const compared = evidenceComparisons.filter((c) => c.outcome !== 'NOT_COMPARED');
+  const differing = compared.filter((c) => c.outcome === 'DIFFERS');
 
   return (
     <div className="fr-container" style={{ paddingBlock: 28, maxWidth: 800 }}>
@@ -47,8 +51,13 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
           <strong className="fr-numeric" style={{ color: 'var(--text)' }}>
             {evidence.providedCount}
           </strong>{' '}
-          of {evidence.items.length} provided
+          of {evidence.items.length} checked
         </span>
+        {evidence.awaitingCheckCount > 0 && (
+          <span>
+            {evidence.awaitingCheckCount} uploaded and waiting for you to check
+          </span>
+        )}
         {evidence.missingEssential.length > 0 && (
           <span style={{ color: 'var(--color-urgent)' }}>
             {evidence.missingEssential.length} essential item
@@ -57,68 +66,44 @@ export default async function EvidencePage({ params }: { params: Promise<{ id: s
         )}
       </div>
 
-      <ul style={{ listStyle: 'none', margin: '24px 0 0', padding: 0, display: 'grid', gap: 12 }}>
-        {evidence.items.map((item) => (
-          <li key={item.type}>
-            <Card
-              style={{
-                borderColor:
-                  item.importance === 'ESSENTIAL' && !item.provided
-                    ? 'var(--color-urgent)'
-                    : 'var(--border)',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  gap: 14,
-                  alignItems: 'flex-start',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <div>
-                  <h2 style={{ fontSize: 16, fontWeight: 620 }}>{item.definition.label}</h2>
-                  <div
-                    className="fr-eyebrow"
-                    style={{
-                      marginTop: 4,
-                      color:
-                        item.importance === 'ESSENTIAL'
-                          ? 'var(--color-urgent)'
-                          : 'var(--text-faint)',
-                    }}
-                  >
-                    {item.importance.toLowerCase()}
-                  </div>
-                </div>
-                <span
+      <EvidencePanel caseId={id} items={evidence.items} evidence={evidenceItems} />
+
+      {compared.length > 0 && (
+        <Card style={{ marginTop: 24 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 620 }}>
+            What your documents say, beside what your notice says
+          </h2>
+          <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, display: 'grid', gap: 8 }}>
+            {/*
+              Differences first, and never omitted. A list of matches with a
+              contradiction left off the bottom would be the most flattering
+              and most dangerous thing this page could show.
+            */}
+            {[...differing, ...compared.filter((c) => c.outcome === 'CONSISTENT')].map(
+              (comparison, index) => (
+                <li
+                  key={`${comparison.evidenceId}-${comparison.field}-${index}`}
                   style={{
-                    fontSize: 13,
-                    fontWeight: 550,
-                    color: item.provided ? 'var(--color-ok)' : 'var(--text-faint)',
-                    whiteSpace: 'nowrap',
+                    fontSize: 14,
+                    color:
+                      comparison.outcome === 'DIFFERS' ? 'var(--color-urgent)' : 'var(--text)',
                   }}
                 >
-                  {item.provided ? `${item.itemCount} uploaded` : 'Not uploaded'}
-                </span>
-              </div>
-
-              <p style={{ margin: '10px 0 0', fontSize: 14.5 }}>{item.definition.howToCapture}</p>
-              <p style={{ margin: '7px 0 0', fontSize: 13.5, color: 'var(--text-muted)' }}>
-                {item.definition.whyItMatters}
-              </p>
-              <p style={{ margin: '7px 0 0', fontSize: 13, color: 'var(--text-faint)' }}>
-                Why this case needs it: {item.reason}
-              </p>
-            </Card>
-          </li>
-        ))}
-      </ul>
+                  {comparison.statement}
+                </li>
+              ),
+            )}
+          </ul>
+          <p style={{ margin: '12px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
+            {COMPARISON_CAUTION}
+          </p>
+        </Card>
+      )}
 
       <p style={{ marginTop: 24, fontSize: 13, color: 'var(--text-faint)', maxWidth: 620 }}>
         Everything you upload is stored privately and is readable only by you. You can delete any
-        item at any time.
+        item at any time. A file we hold is not the same as evidence supporting your case: nothing
+        counts until you have checked what we read off it.
       </p>
     </div>
   );

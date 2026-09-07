@@ -3,6 +3,11 @@ import {
   NARRATIVE_ASSERTION_KINDS,
   NARRATIVE_STANCES,
 } from '@/core/context/types';
+import {
+  EVIDENCE_FIELDS,
+  EVIDENCE_OBSERVATION_STATUSES,
+} from '@/core/evidence/analysis';
+import { EVIDENCE_LEGIBILITY_LEVELS } from '@/core/evidence/lifecycle';
 
 /**
  * Structured output schemas for every AI job.
@@ -226,6 +231,44 @@ export const narrativeExtractionSchema = z.object({
 });
 
 /* ------------------------------------------------------------------ */
+/* 8. Evidence analysis                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * One response shape for every kind of evidence; the *fields* an observation
+ * may use differ by type and are supplied per call (see
+ * EVIDENCE_ANALYSIS_PROFILES). A field outside the set authorised for the type
+ * is rejected in validate.ts rather than trimmed, because a reader returning a
+ * permit expiry date from a photograph of a road marking has not made a
+ * formatting mistake.
+ *
+ * There is no field here for what a document means. The vocabulary is closed
+ * and every member of it is something printed on paper or visible in a frame,
+ * so a conclusion has nowhere to be written down even if one were reached.
+ */
+export const evidenceAnalysisSchema = z.object({
+  legibility: z.enum(EVIDENCE_LEGIBILITY_LEVELS),
+  observations: z
+    .array(
+      z.object({
+        field: z.enum(EVIDENCE_FIELDS),
+        /**
+         * Verbatim. Ignored when the status is UNREADABLE — the observation
+         * then records that something was there and could not be made out,
+         * which is a different fact from its absence.
+         */
+        value: z.string().max(300),
+        confidence,
+        status: z.enum(EVIDENCE_OBSERVATION_STATUSES),
+      }),
+    )
+    .max(20),
+  unreadableRegions: z.array(z.string().max(200)).max(10),
+});
+
+export type EvidenceAnalysisResponse = z.infer<typeof evidenceAnalysisSchema>;
+
+/* ------------------------------------------------------------------ */
 
 export const AI_SCHEMAS = {
   DOCUMENT_EXTRACTION: pcnExtractionSchema,
@@ -235,6 +278,7 @@ export const AI_SCHEMAS = {
   CHALLENGE_DRAFTING: challengeDraftSchema,
   RESPONSE_COMPARISON: responseComparisonSchema,
   NARRATIVE_EXTRACTION: narrativeExtractionSchema,
+  EVIDENCE_ANALYSIS: evidenceAnalysisSchema,
 } as const;
 
 export type AiJobType = keyof typeof AI_SCHEMAS;
@@ -251,4 +295,5 @@ export const PROMPT_VERSIONS: Record<AiJobType, string> = {
   CHALLENGE_DRAFTING: 'draft-v1',
   RESPONSE_COMPARISON: 'compare-v1',
   NARRATIVE_EXTRACTION: 'narrative-v1',
+  EVIDENCE_ANALYSIS: 'evidence-v1',
 };

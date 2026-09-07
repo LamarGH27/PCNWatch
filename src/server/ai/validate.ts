@@ -36,6 +36,16 @@ export interface GroundingContext {
   readonly verifiedCaseFields?: readonly string[];
   /** Evidence item identifiers available on the case. */
   readonly availableEvidenceRefs?: readonly string[];
+  /**
+   * The observation fields authorised for this evidence type.
+   *
+   * Supplied by the deterministic layer from EVIDENCE_ANALYSIS_PROFILES, the
+   * same way permitted reference keys are. A reading outside the set is treated
+   * like a citation that was never offered: rejected, not trimmed. A reader
+   * returning a permit expiry from a photograph of a road marking has not made
+   * a formatting mistake, and quietly dropping it would hide that.
+   */
+  readonly permittedEvidenceFields?: readonly string[];
 }
 
 export function validateAiResponse<K extends AiJobType>(
@@ -161,9 +171,102 @@ export function validateAiResponse<K extends AiJobType>(
     }
   }
 
+  if (jobType === 'EVIDENCE_ANALYSIS') {
+    const analysis = data as z.infer<typeof AI_SCHEMAS.EVIDENCE_ANALYSIS>;
+    const permitted = new Set(context.permittedEvidenceFields ?? []);
+
+    const outside = analysis.observations
+      .map((o) => o.field)
+      .filter((field) => !permitted.has(field));
+    if (outside.length > 0) {
+      errors.push(
+        `Read fields that this kind of evidence was not authorised to carry: ${[...new Set(outside)].join(', ')}.`,
+      );
+    }
+
+    // One field, read twice, with two different values is a reader that could
+    // not decide. Showing the user both to confirm would invite them to confirm
+    // a contradiction into their own case.
+    const fields = analysis.observations.map((o) => o.field);
+    const duplicated = fields.filter((field, index) => fields.indexOf(field) !== index);
+    if (duplicated.length > 0) {
+      errors.push(`The same field was read more than once: ${[...new Set(duplicated)].join(', ')}.`);
+    }
+
+    /*
+     * An unreadable document with confident readings.
+     *
+     * These cannot both be true, and the combination is the one that would do
+     * damage: the item is flagged as illegible — so it never improves the
+     * evidence basis — while the confirmation screen offers the user a page of
+     * values to tick. Whichever half is wrong, the response is not usable.
+     */
+    if (analysis.legibility === 'UNREADABLE' && analysis.observations.some((o) => o.status === 'READ')) {
+      errors.push(
+        'The document was reported as unreadable while also returning readings from it.',
+      );
+    }
+
+    for (const observation of analysis.observations) {
+      if (observation.status !== 'READ') continue;
+      if (observation.value.trim() === '') {
+        errors.push(`${observation.field} was reported as read but came back empty.`);
+      }
+      for (const phrase of FORBIDDEN_DRAFT_PHRASES) {
+        if (phrase.pattern.test(observation.value)) {
+          errors.push(
+            `The reading for ${observation.field} contains ${phrase.description}. Evidence is transcribed, not interpreted.`,
+          );
+        }
+      }
+      for (const phrase of FORBIDDEN_EVIDENCE_PHRASES) {
+        if (phrase.pattern.test(observation.value)) {
+          errors.push(
+            `The reading for ${observation.field} contains ${phrase.description}, which is a judgement about the document rather than what is on it.`,
+          );
+        }
+      }
+    }
+  }
+
   if (errors.length > 0) return { outcome: 'CITATION_REJECTED', errors };
   return { outcome: 'ACCEPTED', data };
 }
+
+/**
+ * Conclusions dressed as transcriptions.
+ *
+ * The schema stops a reader from *labelling* an observation as a judgement —
+ * there is no field for one. It cannot stop the judgement being written into a
+ * value, and a value is quoted straight onto the confirmation screen, where a
+ * user ticking "yes, that's what it says" would be confirming our opinion back
+ * to us as their document's content.
+ *
+ * Narrow by design: each pattern needs the document itself as the subject, so a
+ * sign that genuinely reads "PERMIT HOLDERS ONLY — VALID PERMIT MUST BE
+ * DISPLAYED" transcribes normally.
+ */
+const FORBIDDEN_EVIDENCE_PHRASES: readonly { pattern: RegExp; description: string }[] = [
+  {
+    pattern: /\bthis\s+(permit|ticket|receipt|badge|session|document|photograph|sign)\b[^.]{0,40}\b(was|is|remains)\s+(not\s+)?(valid|current|in force|expired)/i,
+    description: 'a statement about whether the document was valid',
+  },
+  {
+    pattern: /\b(covers|does not cover|did not cover|proves|does not prove|shows that the|confirms that)\b[^.]{0,40}\b(contravention|restriction|penalty|notice|time of|date of)/i,
+    description: 'a statement about what the document proves',
+  },
+  {
+    pattern: /\b(no|a)\s+(contravention|offence)\s+(occurred|took place|was committed)/i,
+    description: 'a finding about whether a contravention occurred',
+  },
+  {
+    pattern: /\b(the\s+)?(pcn|notice|penalty)\b[^.]{0,30}\b(invalid|unlawful|wrongly issued|should be cancelled)/i,
+    description: 'a conclusion about the notice',
+  },
+];
+
+/** Test helper: the patterns an evidence reading is checked against. */
+export const __forbiddenEvidencePhrases = FORBIDDEN_EVIDENCE_PHRASES;
 
 /**
  * Patterns that indicate a draft has strayed into inventing authority.

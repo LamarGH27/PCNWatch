@@ -1,7 +1,7 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { logError } from '@/lib/errors';
 import type { CaseRecord } from '@/server/cases/case-view';
-import type { EvidenceType } from '@/core/evidence/types';
+import { toEvidenceItem } from '@/server/evidence/store';
 import type { ProceduralStage } from '@/core/reference/types';
 
 /**
@@ -37,14 +37,17 @@ export async function getCase(caseId: string): Promise<CaseResult> {
       .from('pcn_cases')
       .select(
         `id, pcn_number, authority_name_raw, notice_category, contravention_code,
-         contravention_suffix, incident_date, issue_date, location_text,
+         contravention_suffix, incident_date, incident_time, issue_date, location_text,
+         vehicle_registration_text,
          full_amount_pence, discounted_amount_pence, procedural_stage,
          discount_deadline_printed, representation_deadline_printed,
          narrative_provided, context_answers, confirmed_assertions, declared_evidence,
          resolved_facts, asserted_ground_keys, verified_fields, closed_at,
          authorities ( name, slug ),
          parking_locations ( slug ),
-         pcn_evidence ( evidence_type ),
+         pcn_evidence ( id, evidence_type, status, original_filename, content_type,
+                        byte_size, legibility, analysis, verified_facts,
+                        analysis_failure, analysis_attempts, created_at ),
          case_events ( event_type, to_stage, occurred_at )`,
       )
       .eq('id', caseId)
@@ -131,11 +134,18 @@ function toCaseRecord(row: Row): CaseRecord {
   const authority = firstOf(row.authorities) as { name?: string; slug?: string } | null;
   const location = firstOf(row.parking_locations) as { slug?: string } | null;
 
-  const evidenceCounts: Partial<Record<EvidenceType, number>> = {};
-  for (const item of asArray(row.pcn_evidence)) {
-    const type = (item as { evidence_type?: string }).evidence_type as EvidenceType | undefined;
-    if (type) evidenceCounts[type] = (evidenceCounts[type] ?? 0) + 1;
-  }
+  /*
+   * The evidence itself, not a tally of it.
+   *
+   * This used to count rows by type, which was the right shape for as long as
+   * a row could only mean "a file exists". It now has to distinguish a claim
+   * from an upload from a confirmed reading, and a count cannot: one number
+   * would have to answer both "what have I given them?" and "what is actually
+   * backing my case?", and the second answer is the smaller one.
+   */
+  const evidenceItems = asArray(row.pcn_evidence).map((item) =>
+    toEvidenceItem(item as Record<string, unknown>),
+  );
 
   // The dates that drive later-stage deadlines are recorded as case events rather
   // than columns, because a case can move through several of them.
@@ -152,6 +162,10 @@ function toCaseRecord(row: Row): CaseRecord {
     contraventionCode: (row.contravention_code as string | null) ?? null,
     contraventionSuffix: (row.contravention_suffix as string | null) ?? null,
     incidentDate: (row.incident_date as string | null) ?? null,
+    // Both confirmed off the notice by the user. Held so evidence can be
+    // compared against them rather than against a value nobody checked.
+    vehicleRegistration: (row.vehicle_registration_text as string | null) ?? null,
+    incidentTime: timeOrNull(row.incident_time),
     issueDate: (row.issue_date as string | null) ?? null,
     noticeToOwnerServedDate: stageDate('NOTICE_TO_OWNER'),
     noticeOfRejectionServedDate: stageDate('NOTICE_OF_REJECTION'),
@@ -175,7 +189,7 @@ function toCaseRecord(row: Row): CaseRecord {
       ? (row.asserted_ground_keys as string[])
       : [],
     verifiedFields: (row.verified_fields as Record<string, boolean>) ?? {},
-    evidenceCounts,
+    evidenceItems,
     closedAt: (row.closed_at as string | null) ?? null,
   };
 }
@@ -187,6 +201,13 @@ function firstOf(value: unknown): unknown {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+/** Postgres hands `time` back as HH:MM:SS; the comparison wants HH:MM. */
+function timeOrNull(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{2}:\d{2})/.exec(value);
+  return match ? match[1]! : null;
 }
 
 /** Postgres hands a date column back as a Date; the engines want the ISO day. */

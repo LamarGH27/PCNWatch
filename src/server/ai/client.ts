@@ -45,6 +45,27 @@ import { validateAiResponse, type GroundingContext, type ValidationOutcome } fro
  */
 const PRIVATE_INPUT_JOBS: ReadonlySet<AiJobType> = new Set<AiJobType>(['NARRATIVE_EXTRACTION']);
 
+/**
+ * Jobs whose output is not written to the audit trail.
+ *
+ * A superset of the above, and for a second reason. Narrative output is not
+ * logged because it restates what someone wrote about their life. Evidence
+ * readings are not logged because of what they are: a registration, a permit
+ * number, a Blue Badge serial, the transcription of somebody's parking session.
+ *
+ * `ai_logs` is a service-role table outside any user's RLS scope. The same
+ * readings are already stored on `pcn_evidence`, under the owning user's own
+ * policies, where they can be deleted with the case. Writing a second copy
+ * somewhere the user cannot reach and cannot delete would be keeping their
+ * documents' contents for our convenience, and the audit trail does not need
+ * the values to do its job — that a call happened, what it cost, and whether it
+ * was accepted or rejected are all still recorded.
+ */
+const OUTPUT_NOT_LOGGED: ReadonlySet<AiJobType> = new Set<AiJobType>([
+  'NARRATIVE_EXTRACTION',
+  'EVIDENCE_ANALYSIS',
+]);
+
 export interface AiCallOptions<K extends AiJobType> {
   readonly jobType: K;
   readonly system: string;
@@ -100,6 +121,7 @@ export async function runAiJob<K extends AiJobType>(
 
   const promptVersion = PROMPT_VERSIONS[options.jobType];
   const isPrivateInput = PRIVATE_INPUT_JOBS.has(options.jobType);
+  const outputNotLogged = OUTPUT_NOT_LOGGED.has(options.jobType);
   const fingerprint = fingerprintInput(options.system, options.userContent, {
     hashText: !isPrivateInput,
   });
@@ -152,13 +174,13 @@ export async function runAiJob<K extends AiJobType>(
       inputFingerprint: fingerprint,
       /*
        * Stored for accepted and rejected calls alike, so a fabrication is
-       * inspectable afterwards rather than discarded — except where the output
-       * is derived from something the user wrote about themselves, which is
-       * never written down at all. That costs us the ability to review those
-       * responses later, and it is the right trade: an audit trail is not worth
-       * a database full of people's private circumstances.
+       * inspectable afterwards rather than discarded — except for the jobs in
+       * OUTPUT_NOT_LOGGED, whose output is never written down at all. That
+       * costs us the ability to review those responses later, and it is the
+       * right trade: an audit trail is not worth a service-role table full of
+       * people's private circumstances and the contents of their documents.
        */
-      output: isPrivateInput ? null : raw,
+      output: outputNotLogged ? null : raw,
       validationResult: validation.outcome,
       validationErrors: validation.outcome === 'ACCEPTED' ? null : validation.errors,
       latencyMs,
