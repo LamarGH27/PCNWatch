@@ -40,10 +40,21 @@ function setNodeEnv(value: string) {
   vi.stubEnv('NODE_ENV', value);
 }
 
+/**
+ * The deployment, as Vercel reports it.
+ *
+ * `undefined` means off Vercel — local development or this suite — which is the
+ * only place the NODE_ENV fallback is ever consulted.
+ */
+function setVercelEnv(value: string | undefined) {
+  vi.stubEnv('VERCEL_ENV', value === undefined ? '' : value);
+}
+
 beforeEach(() => {
   state.flag = 'off';
   state.entitled = false;
   setNodeEnv('test');
+  setVercelEnv(undefined);
 });
 
 afterEach(() => vi.unstubAllEnvs());
@@ -82,8 +93,89 @@ describe('the paid boundary', () => {
     const access = await defencePackAccess(USER, CASE);
     expect(access.granted).toBe(false);
   });
+});
 
-  it('still honours a real purchase in production', async () => {
+/**
+ * On Vercel, where the original check was wrong.
+ *
+ * `NODE_ENV` is `production` for Preview and Production alike — Vercel builds
+ * both with `next build` — so the first version of this gate was statically
+ * false on Preview and webpack dropped the branch from the bundle entirely.
+ * Setting the flag did nothing, and no test noticed because they all stubbed
+ * `NODE_ENV` to a value Vercel never uses.
+ *
+ * Every test below therefore sets `NODE_ENV` to production, as Vercel does, so
+ * that a regression to the old logic fails rather than passing on a value that
+ * only occurs in this file.
+ */
+describe('the paid boundary on Vercel', () => {
+  beforeEach(() => setNodeEnv('production'));
+
+  it('grants preview access on a Preview deployment with the flag on', async () => {
+    setVercelEnv('preview');
+    state.flag = 'on';
+
+    expect(previewAccessAvailable()).toBe(true);
+    const access = await defencePackAccess(USER, CASE);
+    expect(access.granted && access.via).toBe('PREVIEW_FLAG');
+  });
+
+  it('refuses preview access on a Preview deployment with the flag off', async () => {
+    setVercelEnv('preview');
+    state.flag = 'off';
+
+    expect(previewAccessAvailable()).toBe(false);
+    expect((await defencePackAccess(USER, CASE)).granted).toBe(false);
+  });
+
+  it('refuses preview access on Production even with the flag set to on', async () => {
+    /*
+     * The accident the whole gate exists for: the variable copied from the
+     * Preview environment to Production. Two things have to be wrong at once,
+     * and one of them is not an environment variable anybody can copy.
+     */
+    setVercelEnv('production');
+    state.flag = 'on';
+
+    expect(previewAccessAvailable()).toBe(false);
+    expect((await defencePackAccess(USER, CASE)).granted).toBe(false);
+  });
+
+  it('still honours a real purchase on Production', async () => {
+    // Closing the preview door must not close the paid one.
+    setVercelEnv('production');
+    state.flag = 'off';
+    state.entitled = true;
+
+    const access = await defencePackAccess(USER, CASE);
+    expect(access.granted && access.via).toBe('ENTITLEMENT');
+  });
+
+  it('does not open the door to a deployment kind Vercel has not invented yet', async () => {
+    /*
+     * The reason the Vercel branch asks for `preview` rather than
+     * `!== 'production'`. A future third value would satisfy "not production"
+     * and quietly grant the paid product on it.
+     */
+    setVercelEnv('development');
+    state.flag = 'on';
+    expect(previewAccessAvailable()).toBe(false);
+
+    setVercelEnv('some-future-environment');
+    expect(previewAccessAvailable()).toBe(false);
+  });
+
+  it('falls back to NODE_ENV only when Vercel says nothing', async () => {
+    // Off Vercel the old behaviour is correct and is kept: a dev server is not
+    // production, and the flag works there as it always did.
+    setVercelEnv(undefined);
+    setNodeEnv('development');
+    state.flag = 'on';
+
+    expect(previewAccessAvailable()).toBe(true);
+  });
+
+  it('still honours a real purchase in a production build off Vercel', async () => {
     // Closing the preview door must not close the paid one.
     state.entitled = true;
     state.flag = 'off';

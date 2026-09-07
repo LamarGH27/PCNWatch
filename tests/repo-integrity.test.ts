@@ -645,10 +645,24 @@ describe('the Defence Pack is built before it is written', () => {
   it('cannot give the paid product away by copying an environment variable', () => {
     const source = withoutComments(readFileSync(resolve(ROOT, 'src/server/defence/access.ts'), 'utf8'));
     const start = source.indexOf('export function previewAccessAvailable');
-    const body = source.slice(start, source.indexOf('}', start) + 1);
+    // To the end of the function, not the first brace — the Vercel branch has
+    // braces of its own and slicing to the first one reads half the gate.
+    const body = source.slice(start, source.indexOf('\n}', start));
 
     // Two conditions, and one of them is not an environment variable.
     expect(body).toContain('featureFlags.defencePackPreview');
+
+    /*
+     * On Vercel the deployment is read from VERCEL_ENV, and the branch asks for
+     * `preview` rather than not-`production`. This version of the gate asked
+     * only about NODE_ENV, which Vercel sets to production for Preview builds
+     * too — so the guarantee held and the feature never opened.
+     */
+    expect(body).toMatch(/VERCEL_ENV === 'preview'/);
+    expect(body, 'the Vercel branch would open on any non-production deployment').not.toMatch(
+      /VERCEL_ENV !== 'production'/,
+    );
+    // The off-Vercel fallback is unchanged.
     expect(body).toMatch(/NODE_ENV !== 'production'/);
   });
 });

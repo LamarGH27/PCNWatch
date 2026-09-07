@@ -26,11 +26,29 @@ export type PackAccess =
 /**
  * Whether the preview door is open at all.
  *
- * `NODE_ENV` is set to production by `next build` for the deployed bundle, so
- * this is false in Production regardless of what the flag says. Read at call
- * time rather than at module load so a test can exercise both branches.
+ * This asked `NODE_ENV !== 'production'` and was wrong about the one deployment
+ * it existed for. Vercel builds Preview with `next build`, which sets
+ * `NODE_ENV=production` exactly as it does for Production — so the conjunct was
+ * statically false, webpack removed the whole branch from the emitted bundle,
+ * and setting the flag in Preview did nothing at all. The guarantee held; the
+ * feature it was guarding never opened.
+ *
+ * `VERCEL_ENV` is the variable that actually distinguishes the two. It is
+ * server-side and read at runtime rather than inlined at build, which is also
+ * why this function is called rather than a constant captured at module load.
+ *
+ * The Vercel branch is explicit about wanting `preview` rather than merely
+ * not-`production`. The difference matters if Vercel ever adds a third value:
+ * "anything except production" would silently open the door to it, and
+ * "exactly preview" would not.
  */
 export function previewAccessAvailable(): boolean {
+  if (process.env.VERCEL_ENV) {
+    return featureFlags.defencePackPreview && process.env.VERCEL_ENV === 'preview';
+  }
+
+  // Off Vercel — local development, `next dev`, the test suite. The original
+  // check, which is correct everywhere it was ever actually consulted.
   return featureFlags.defencePackPreview && process.env.NODE_ENV !== 'production';
 }
 
