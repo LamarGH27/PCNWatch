@@ -334,3 +334,47 @@ p {
     overflow-x: visible;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Printing a Defence Pack
+   ---------------------------------------------------------------------------
+   Export, without a document service.
+
+   The Pack is a page of structured text, and every browser — desktop and
+   mobile — already turns a page into a PDF. Building a server-side renderer to
+   produce the same thing would mean a second copy of the layout, a queue, a
+   place to store the file and a signed URL to fetch it back, for a document the
+   user can already save in two taps.
+
+   So this is the whole of the export path: hide what belongs to the app rather
+   than to the document, and let the page break sensibly.
+   --------------------------------------------------------------------------- */
+@media print {
+  .fr-no-print,
+  .fr-pack-actions,
+  header,
+  footer,
+  nav {
+    display: none !important;
+  }
+
+  .fr-pack {
+    max-width: none;
+    padding: 0;
+  }
+
+  /* A section split across a page break is unreadable in a printed bundle. */
+  .fr-pack-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .fr-panel {
+    border: 1px solid #ccc;
+    box-shadow: none;
+  }
+
+  a[href]::after {
+    content: '';
+  }
+}

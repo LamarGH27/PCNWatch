@@ -568,6 +568,91 @@ describe('evidence stays private', () => {
   });
 });
 
+/**
+ * The Defence Pack's order of operations.
+ *
+ * Rules and evidence first, model last. Every test of the pack itself would
+ * keep passing if the drafting layer quietly became the source — the pack would
+ * still be built correctly, and the letter would simply stop being bound to it.
+ * These pin the shape at the three places that decide it.
+ */
+describe('the Defence Pack is built before it is written', () => {
+  const BUILD = resolve(ROOT, 'src/server/defence/build.ts');
+
+  it('builds the pack without calling a model', () => {
+    /*
+     * The deterministic half is what the user is paying for. If a model ever
+     * reaches this file, the sections stop being derived from the record and
+     * start being proposed and checked, which is a different product with a
+     * different safety story.
+     */
+    const source = withoutComments(readFileSync(BUILD, 'utf8'));
+    expect(source).not.toMatch(/runAiJob|anthropic|@\/server\/ai\//i);
+  });
+
+  it('gives the drafting layer only what the pack established', () => {
+    const source = withoutComments(readFileSync(resolve(ROOT, 'src/server/defence/generate.ts'), 'utf8'));
+    const start = source.indexOf('grounding: {');
+    expect(start, 'the grounding block is gone').toBeGreaterThan(-1);
+    const grounding = source.slice(start, source.indexOf('},', start));
+
+    // Every handle comes off the pack. A field read straight from the record
+    // here would let the letter assert something no section contains.
+    for (const field of [
+      'permittedReferenceKeys',
+      'verifiedCaseFields',
+      'availableEvidenceRefs',
+      'permittedNarrativeRefs',
+      'reviewedLegalMaterial',
+    ]) {
+      expect(grounding, `${field} is no longer supplied to the drafter`).toContain(field);
+    }
+    expect(grounding).toMatch(/pack\.permittedReferences/);
+  });
+
+  it('never lets an unreviewed reference be quoted at a council', () => {
+    const source = withoutComments(readFileSync(BUILD, 'utf8'));
+    const start = source.indexOf('function permittedReferences');
+    const body = source.slice(start);
+    // Every ground, contravention and procedure record is PENDING_LEGAL_REVIEW,
+    // so this filter is currently the difference between citing nothing and
+    // citing something nobody has checked.
+    expect(body).toMatch(/reviewStatus === 'REVIEWED'/);
+  });
+
+  it('keeps the letter out of the record', () => {
+    /*
+     * Section 7: editing the challenge must not alter a case fact, an evidence
+     * fact or a finding. The guarantee is that the edit path writes one column,
+     * so the rest is not addressable rather than merely protected.
+     */
+    const source = withoutComments(readFileSync(resolve(ROOT, 'src/server/defence/persist.ts'), 'utf8'));
+    const start = source.indexOf('export async function saveEditedBody');
+    const body = source.slice(start, source.indexOf('\n/* ---', start));
+
+    /*
+     * Read the update's own object literal rather than the whole function.
+     * Scanning the function for column names catches its own `packId`
+     * parameter, and a guard that trips on the correct code is one the next
+     * person loosens until it stops complaining.
+     */
+    const update = body.slice(body.indexOf('.update({'), body.indexOf('})', body.indexOf('.update({')));
+    const columns = [...update.matchAll(/(\w+):/g)].map((match) => match[1]);
+
+    expect(columns.sort()).toEqual(['edited_at', 'edited_body']);
+  });
+
+  it('cannot give the paid product away by copying an environment variable', () => {
+    const source = withoutComments(readFileSync(resolve(ROOT, 'src/server/defence/access.ts'), 'utf8'));
+    const start = source.indexOf('export function previewAccessAvailable');
+    const body = source.slice(start, source.indexOf('}', start) + 1);
+
+    // Two conditions, and one of them is not an environment variable.
+    expect(body).toContain('featureFlags.defencePackPreview');
+    expect(body).toMatch(/NODE_ENV !== 'production'/);
+  });
+});
+
 describe('routes that read live data are not prerendered', () => {
   const APP = resolve(ROOT, 'src/app');
   const REPOSITORIES = resolve(ROOT, 'src/server/repositories');

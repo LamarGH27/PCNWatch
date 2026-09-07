@@ -34,6 +34,24 @@ export interface GroundingContext {
   readonly permittedFindingIds?: readonly string[];
   /** Case fields the user has verified, for drafting jobs. */
   readonly verifiedCaseFields?: readonly string[];
+  /**
+   * Assertion kinds the user confirmed, for drafting jobs.
+   *
+   * A draft attributing something to the user must attribute something they
+   * actually said. Without this, `USER_NARRATIVE` was the one `supportedBy`
+   * value that checked nothing — a model could put any sentence in somebody's
+   * mouth by labelling it as theirs.
+   */
+  readonly permittedNarrativeRefs?: readonly string[];
+  /**
+   * Whether any reviewed legal material was supplied for this draft.
+   *
+   * False today for every case: all three statutory grounds, every
+   * contravention record and every procedure record are PENDING_LEGAL_REVIEW.
+   * When it is false the draft argues facts and may not state a legal
+   * proposition at all — see LEGAL_PROPOSITIONS.
+   */
+  readonly reviewedLegalMaterial?: boolean;
   /** Evidence item identifiers available on the case. */
   readonly availableEvidenceRefs?: readonly string[];
   /**
@@ -126,9 +144,40 @@ export function validateAiResponse<K extends AiJobType>(
       }
     }
 
+    const narrative = new Set(context.permittedNarrativeRefs ?? []);
+    for (const assertion of draft.factualAssertions) {
+      if (assertion.supportedBy === 'USER_NARRATIVE' && !narrative.has(assertion.reference)) {
+        errors.push(
+          `The draft attributes "${assertion.reference}" to the user, which is not something they confirmed.`,
+        );
+      }
+    }
+
     for (const phrase of FORBIDDEN_DRAFT_PHRASES) {
       if (phrase.pattern.test(draft.body)) {
         errors.push(`The draft contains ${phrase.description}, which PCNWatch must never produce.`);
+      }
+    }
+
+    /*
+     * A legal proposition with nothing reviewed behind it.
+     *
+     * The citation check above catches a *cited* key that does not exist. It
+     * cannot catch a sentence that simply states the law without citing
+     * anything, which is the more likely failure by far — a model that knows
+     * roughly what the Traffic Management Act says will write it out fluently
+     * and attach no reference at all.
+     *
+     * So when no reviewed legal material was supplied, propositions of law are
+     * rejected outright. This is currently every case.
+     */
+    if (context.reviewedLegalMaterial !== true) {
+      for (const phrase of LEGAL_PROPOSITIONS) {
+        if (phrase.pattern.test(draft.body)) {
+          errors.push(
+            `The draft states ${phrase.description}, and PCNWatch holds no legally reviewed material to support it.`,
+          );
+        }
       }
     }
   }
@@ -264,6 +313,49 @@ const FORBIDDEN_EVIDENCE_PHRASES: readonly { pattern: RegExp; description: strin
     description: 'a conclusion about the notice',
   },
 ];
+
+/**
+ * Statements of law, in a document that may not make one.
+ *
+ * Deliberately about the *form* of a legal claim rather than its subject, so
+ * that describing what happened stays possible. "The registration on the
+ * session differs from the registration on the notice" is a fact and passes.
+ * "The contravention did not occur within the meaning of the Regulations" is a
+ * legal proposition and does not.
+ */
+const LEGAL_PROPOSITIONS: readonly { pattern: RegExp; description: string }[] = [
+  {
+    pattern: /\b(Traffic Management Act|Road Traffic Regulation Act|London Local Authorities Act|Civil Enforcement of Parking Contraventions|the Regulations|the 2004 Act)\b/i,
+    description: 'a named statute or set of regulations',
+  },
+  {
+    pattern: /\b(statutory )?ground(s)?\s+(of|for)\s+(appeal|representation)/i,
+    description: 'a statutory ground of representation or appeal',
+  },
+  {
+    pattern: /\b(under|pursuant to|by virtue of|contrary to)\s+(section|schedule|regulation|paragraph|article)\b/i,
+    description: 'a claim that something falls under a specific legal provision',
+  },
+  {
+    pattern: /\bthe (pcn|notice|penalty charge)\b[^.]{0,60}\b(is|was|are|were)\b[^.]{0,30}\b(invalid|unlawful|void|ultra vires|not lawfully|improperly issued)/i,
+    description: 'a conclusion that the notice is legally invalid',
+  },
+  {
+    pattern: /\b(I am|you are|the authority is|the council is)\s+(legally\s+)?(entitled|obliged|required|bound)\s+to\b/i,
+    description: 'a claim about a legal entitlement or obligation',
+  },
+  {
+    pattern: /\b(adjudicator|tribunal)\b[^.]{0,40}\b(has held|has found|has ruled|decided in)/i,
+    description: 'a claim about what an adjudicator has decided',
+  },
+  {
+    pattern: /\bexempt(ion)?\b[^.]{0,40}\b(applies|applied|under|by law)/i,
+    description: 'a claim that a legal exemption applies',
+  },
+];
+
+/** Test helper: the patterns a draft is checked against for legal claims. */
+export const __legalPropositions = LEGAL_PROPOSITIONS;
 
 /** Test helper: the patterns an evidence reading is checked against. */
 export const __forbiddenEvidencePhrases = FORBIDDEN_EVIDENCE_PHRASES;

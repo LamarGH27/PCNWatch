@@ -8,6 +8,10 @@ const CONTEXT: GroundingContext = {
   permittedFindingIds: ['finding-a', 'finding-b'],
   verifiedCaseFields: ['pcnNumber', 'incidentDate', 'location'],
   availableEvidenceRefs: ['evidence-1', 'evidence-2'],
+  // Assertion kinds the user actually confirmed. Before this existed,
+  // USER_NARRATIVE was the one supportedBy value that checked nothing, so a
+  // draft could put any sentence in somebody's mouth by labelling it as theirs.
+  permittedNarrativeRefs: ['LOADING_OR_UNLOADING', 'PAYMENT_MADE'],
 };
 
 function validDraft(overrides: Record<string, unknown> = {}) {
@@ -139,7 +143,7 @@ describe('draft groundedness', () => {
     expect(result.errors.join(' ')).toContain('not attached to this case');
   });
 
-  it('allows an assertion drawn from the user’s own account', () => {
+  it('allows an assertion drawn from something the user actually confirmed', () => {
     const result = validateAiResponse(
       'CHALLENGE_DRAFTING',
       validDraft({
@@ -147,13 +151,38 @@ describe('draft groundedness', () => {
           {
             assertion: 'I was loading goods into the premises at the time.',
             supportedBy: 'USER_NARRATIVE',
-            reference: 'narrative',
+            reference: 'LOADING_OR_UNLOADING',
           },
         ],
       }),
       CONTEXT,
     );
     expect(result.outcome).toBe('ACCEPTED');
+  });
+
+  it('rejects an assertion attributed to the user that they never made', () => {
+    /*
+     * The other half, and the reason the check above needs a real reference.
+     * This test used to pass a reference of "narrative", which nothing looked
+     * at — so a draft claiming the user had said they held a permit was
+     * indistinguishable from one repeating what they had actually told us.
+     */
+    const result = validateAiResponse(
+      'CHALLENGE_DRAFTING',
+      validDraft({
+        factualAssertions: [
+          {
+            assertion: 'I held a valid resident permit at the time.',
+            supportedBy: 'USER_NARRATIVE',
+            reference: 'HELD_PERMIT',
+          },
+        ],
+      }),
+      CONTEXT,
+    );
+    expect(result.outcome).toBe('CITATION_REJECTED');
+    if (result.outcome === 'ACCEPTED') return;
+    expect(result.errors.join(' ')).toContain('HELD_PERMIT');
   });
 
   it('rejects a fabricated case citation in the body', () => {

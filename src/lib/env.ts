@@ -73,6 +73,7 @@ const publicSchema = z.object({
   NEXT_PUBLIC_POSTHOG_HOST: optionalUrl,
   NEXT_PUBLIC_FLAG_DTRO: z.enum(['on', 'off']).default('off'),
   NEXT_PUBLIC_FLAG_PAYMENTS: z.enum(['on', 'off']).default('off'),
+  NEXT_PUBLIC_FLAG_DEFENCE_PACK_PREVIEW: z.enum(['on', 'off']).default('off'),
 });
 
 const publicParsed = publicSchema.safeParse({
@@ -85,6 +86,7 @@ const publicParsed = publicSchema.safeParse({
   NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
   NEXT_PUBLIC_FLAG_DTRO: process.env.NEXT_PUBLIC_FLAG_DTRO,
   NEXT_PUBLIC_FLAG_PAYMENTS: process.env.NEXT_PUBLIC_FLAG_PAYMENTS,
+  NEXT_PUBLIC_FLAG_DEFENCE_PACK_PREVIEW: process.env.NEXT_PUBLIC_FLAG_DEFENCE_PACK_PREVIEW,
 });
 
 if (!publicParsed.success) {
@@ -246,4 +248,14 @@ export const supabasePublicConfigured =
 export const featureFlags = {
   dtro: publicEnv.NEXT_PUBLIC_FLAG_DTRO === 'on',
   payments: publicEnv.NEXT_PUBLIC_FLAG_PAYMENTS === 'on',
+  /**
+   * The Defence Pack, before there is anything to buy it with.
+   *
+   * It is a paid product with no payment behind it yet, so it needs a way to be
+   * used in Preview and no way to be reached by accident in Production. The
+   * flag is opt-in — an unset variable is off — and `defencePackAccess` refuses
+   * it outright in a production build even when it is set, so a variable copied
+   * between environments cannot give the product away permanently.
+   */
+  defencePackPreview: publicEnv.NEXT_PUBLIC_FLAG_DEFENCE_PACK_PREVIEW === 'on',
 } as const;

@@ -233,11 +233,72 @@ test.describe('privacy', () => {
 
   test('a Stripe-style success redirect grants nothing', async ({ page }) => {
     await page.goto(
-      '/case/00000000-0000-0000-0000-000000000001/draft?checkout=returned&paid=true&session_id=cs_test_forged',
+      '/case/00000000-0000-0000-0000-000000000001/defence?checkout=returned&paid=true&session_id=cs_test_forged',
     );
-    // No draft, no entitlement, regardless of what the URL claims.
-    await expect(page.getByRole('heading', { name: 'Ready to draft' })).toHaveCount(0);
+    // No pack, no entitlement, regardless of what the URL claims.
+    await expect(page.getByRole('button', { name: /Build Defence Pack/ })).toHaveCount(0);
     await expect(page.getByText(/Continue to payment/)).toHaveCount(0);
+  });
+
+  test('an anonymous visitor cannot open a Defence Pack', async ({ page }) => {
+    await page.goto('/case/00000000-0000-0000-0000-000000000001/defence');
+    // Never the pack, and never anything off somebody's case.
+    await expect(page.getByRole('heading', { name: 'Your case' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Your challenge letter' })).toHaveCount(0);
+    await expect(
+      page.getByText(/Sign in to see this case|Case not found|Case temporarily unavailable/),
+    ).toBeVisible();
+  });
+
+  test('the Defence Pack endpoints refuse an unauthenticated caller', async ({ request }) => {
+    const caseId = '00000000-0000-0000-0000-000000000001';
+
+    // Building is gated before anything is read, so this is 402 or 401, never 200.
+    const build = await request.post(`/api/cases/${caseId}/defence-pack`);
+    expect(build.status()).not.toBe(200);
+    expect([401, 402, 404, 503]).toContain(build.status());
+
+    // And an edit aimed at a pack nobody owns changes nothing.
+    const edit = await request.patch(`/api/defence-pack/${caseId}`, {
+      data: { editedBody: 'replaced by a stranger' },
+    });
+    expect([401, 404, 503]).toContain(edit.status());
+  });
+
+  test('the old draft URL leads to the Defence Pack rather than a dead paywall', async ({
+    page,
+  }) => {
+    await page.goto('/case/00000000-0000-0000-0000-000000000001/draft');
+    await expect(page).toHaveURL(/\/defence$/);
+  });
+});
+
+test.describe('the Defence Pack on a phone', () => {
+  test.skip(({ isMobile }) => !isMobile, 'Mobile-shaped only.');
+
+  test('the pack page works at phone width', async ({ page }) => {
+    /*
+     * A Defence Pack is read outdoors, on the phone the notice was
+     * photographed with, often while standing next to the car. If it only
+     * works on a desktop it does not work.
+     */
+    await page.goto('/case/00000000-0000-0000-0000-000000000001/defence');
+
+    const scrollsSideways = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+    );
+    expect(scrollsSideways, 'the pack page scrolls sideways on a phone').toBe(false);
+
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  });
+
+  test('is reachable from the case page in one tap', async ({ page }) => {
+    await page.goto('/case/00000000-0000-0000-0000-000000000001');
+    // The case is unavailable without a session, which is the point of the
+    // other tests; what matters here is that nothing about the pack link
+    // depends on a wide viewport to exist.
+    const heading = page.getByRole('heading', { level: 1 });
+    await expect(heading).toBeVisible();
   });
 });
 

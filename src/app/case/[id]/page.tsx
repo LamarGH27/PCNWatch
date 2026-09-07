@@ -239,7 +239,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
         {[
           { href: `/case/${id}/evidence`, label: 'Evidence', detail: 'What to gather and why' },
           { href: `/case/${id}/assessment`, label: 'Assessment', detail: 'Findings and gaps' },
-          { href: `/case/${id}/draft`, label: 'Challenge draft', detail: 'Editable document' },
+          { href: `/case/${id}/defence`, label: 'Defence Pack', detail: 'Your case, ready to send' },
           { href: `/case/${id}/response`, label: 'Council response', detail: 'Upload what they sent' },
         ].map((item) => (
           <Link

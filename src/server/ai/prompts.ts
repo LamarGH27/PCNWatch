@@ -299,3 +299,98 @@ export function evidenceAnalysisInstruction(profile: {
     'Return an observation only for what is actually on this document.',
   ].join('\n');
 }
+
+
+/* ------------------------------------------------------------------ */
+
+export const CHALLENGE_DRAFT_SYSTEM = `
+You write the body of a letter that a member of the public in the UK will send
+to a local authority about a parking penalty charge notice.
+
+Everything the letter may say has already been decided. You are given a set of
+established facts, each with a reference, and you may assert nothing else. Your
+job is to say those facts clearly and courteously in a letter, not to work out
+what the case is.
+
+Return:
+- subject             one line identifying the notice
+- body                the letter, in professional UK English
+- citedReferenceKeys  reference keys you relied on, from the list given
+- factualAssertions   one entry per factual claim the letter makes
+- omittedBecauseUnsupported  anything you would have said and could not
+
+Every factualAssertion is { assertion, supportedBy, reference }:
+- VERIFIED_CASE_FIELD      a field the user confirmed from their notice
+- USER_NARRATIVE           something the user told us, which the letter must
+                           attribute to them and never state as established
+- EVIDENCE_ITEM            a document the user provided and confirmed
+
+The reference must be one of the identifiers supplied for that kind. An
+identifier you were not given is a failure, not a guess.
+
+Rules:
+- Assert only what you were given. If a fact is not in the material, it is not
+  in the letter, however obviously true it seems and however much it would help.
+- Attribute the user's account. "My recollection is that I paid using the
+  RingGo app" — never "I paid using the RingGo app" stated as a finding, and
+  never anything implying we have verified what only they have told us.
+- Never claim a document exists unless it is in the evidence you were given.
+  Do not write "as shown in the enclosed receipt" for a receipt nobody has seen.
+- Never state, imply or paraphrase a legal ground, a statutory provision, a
+  regulation, a case, an adjudicator's decision or an exemption. If you were
+  given no reviewed legal material, the letter argues facts only. This is not a
+  stylistic preference: wording nobody has reviewed is wording we will not send
+  to a council in somebody's name.
+- Never predict the outcome. No probability, no "should succeed", no "strong
+  case", no "the PCN is invalid", no "this is a valid ground of appeal".
+- Never threaten, never demand, never accuse anyone of bad faith, and do not
+  argue that the authority is acting unlawfully.
+- Where the material records something that cuts against the writer, do not
+  conceal it. A letter that hides what the authority can already see is worse
+  than useless to them.
+- Ask for the notice to be reconsidered in light of the facts set out, and say
+  the writer is willing to provide anything further that would help.
+- Keep it short. One page. No headings, no bullet lists, no letterhead, no
+  addresses, no signature block — those are added around your text.
+
+${JSON_ONLY}
+`.trim();
+
+/**
+ * The established facts, rendered for the model.
+ *
+ * Built from the Defence Pack, which was built from the record. The model never
+ * sees the case — it sees this, and this contains only what survived
+ * verification.
+ */
+export function challengeDraftInstruction(pack: {
+  caseSummary: Record<string, unknown>;
+  established: readonly { text: string; supportedBy: string; reference: string }[];
+  weaknesses: readonly string[];
+  legalPosition: string;
+}): string {
+  const lines: string[] = [];
+
+  lines.push('THE NOTICE');
+  for (const [key, value] of Object.entries(pack.caseSummary)) {
+    if (value === null || value === undefined || value === '') continue;
+    lines.push(`- ${key}: ${String(value)}`);
+  }
+
+  lines.push('', 'ESTABLISHED FACTS — the only things the letter may assert');
+  for (const fact of pack.established) {
+    lines.push(`- [${fact.supportedBy}] [${fact.reference}] ${fact.text}`);
+  }
+
+  if (pack.weaknesses.length > 0) {
+    lines.push(
+      '',
+      'KNOWN AGAINST THE WRITER — do not conceal these, and do not argue them away',
+    );
+    for (const weakness of pack.weaknesses) lines.push(`- ${weakness}`);
+  }
+
+  lines.push('', 'LEGAL POSITION', pack.legalPosition);
+
+  return lines.join('\n');
+}
