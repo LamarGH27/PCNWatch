@@ -63,9 +63,26 @@ export function EvidencePanel({ caseId, items, evidence }: PanelProps) {
         ok?: boolean;
         item?: EvidenceItem;
         message?: string;
+        correlationId?: string;
+        stage?: string | null;
       };
       if (!result.ok || !result.item) {
-        setProblem(result.message ?? 'We could not save that file. Nothing was stored.');
+        /*
+         * The reference is shown, not hidden.
+         *
+         * It is a random id that means nothing outside our logs, and quoting it
+         * turns "it didn't work" into a line somebody can actually find. The
+         * stage stays out of the sentence — it is for the log, not for someone
+         * trying to upload a photograph.
+         */
+        setProblem(
+          [
+            result.message ?? 'We could not save that file. Nothing was stored.',
+            result.correlationId ? `Reference: ${result.correlationId}` : null,
+          ]
+            .filter(Boolean)
+            .join(' '),
+        );
         return;
       }
       replace(result.item);

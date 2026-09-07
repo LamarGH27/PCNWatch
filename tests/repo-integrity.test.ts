@@ -468,6 +468,30 @@ describe('evidence stays private', () => {
     expect(body).toMatch(/STORAGE_NOT_READY/);
   });
 
+  it('names the owner on every evidence insert', () => {
+    /*
+     * The shape mistake that broke the first real upload in Preview.
+     *
+     * `pcn_cases` takes its owner from a column default, so its save endpoint
+     * correctly sends none — and this file was written in that shape without
+     * `pcn_evidence` having the same default. RLS read `NULL = auth.uid()` as
+     * NULL rather than true and refused every row with 42501.
+     *
+     * Migration 0017 adds the default too, so this is belt and braces rather
+     * than the only thing holding it up. It is here because the failure was
+     * invisible in every other kind of test: an insert that omits a column
+     * looks exactly like one that does not need it.
+     */
+    const source = readFileSync(STORE, 'utf8');
+    const start = source.indexOf("from('pcn_evidence')\n      .insert({");
+    expect(start, 'the evidence insert is gone or reshaped').toBeGreaterThan(-1);
+    const call = withoutComments(source.slice(start, source.indexOf('})', start)));
+
+    expect(call, 'the insert no longer names the owner').toMatch(/user_id:\s*userId/);
+    // From the verified session, never from the request.
+    expect(call).not.toMatch(/user_id:\s*request\./);
+  });
+
   it('never makes an evidence object public', () => {
     const offenders = gitGrepLines('getPublicUrl', 'src');
     expect(offenders, `a public object URL is being created:\n${offenders.join('\n')}`).toEqual([]);

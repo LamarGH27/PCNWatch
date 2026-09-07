@@ -98,6 +98,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     logError(
       'api.evidence.upload.storageNotReady',
       new Error(`Storage policies missing: ${result.missing.join(', ') || 'unknown'}`),
+      { caseId: id, stage: 'STORAGE_READINESS' },
     );
     return NextResponse.json(
       {
@@ -116,10 +117,21 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ ok: false, reason: 'NOT_FOUND' as const }, { status: 404 });
   }
   if (result.kind !== 'OK') {
+    /*
+     * The stage and the correlation id cross to the client.
+     *
+     * Neither says anything about the case, the file or the session — `stage`
+     * is one of five words from our own vocabulary and the id is a random uuid
+     * whose only meaning is in our logs. Sending them means somebody testing a
+     * deployment can say which step failed and quote the line to look for,
+     * instead of reporting "it said something went wrong".
+     */
     return NextResponse.json(
       {
         ok: false,
         reason: 'UNAVAILABLE' as const,
+        stage: result.stage ?? null,
+        correlationId: result.correlationId,
         message: 'Something went wrong while saving your file. Nothing was saved.',
       },
       { status: 503 },

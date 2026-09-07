@@ -38,13 +38,41 @@ import {
 
 export const EVIDENCE_BUCKET = 'pcn-evidence';
 
+/**
+ * Where in the upload an attempt got to.
+ *
+ * The first real upload in Preview failed with "Something went wrong while
+ * saving your file", one correlation id, and a log line reading
+ * `message: "[object Object]"`. Every stage below fails the same way from the
+ * outside, so that told us the request had failed and nothing else — not
+ * whether the case was ours, whether the bucket had taken the bytes, or whether
+ * the row had been refused.
+ *
+ * So a failure now names its stage. It costs one field and it is the difference
+ * between reading a log and guessing at one.
+ */
+export const UPLOAD_STAGES = [
+  'OWNERSHIP',
+  'STORAGE_READINESS',
+  'STORAGE_UPLOAD',
+  'ROW_INSERT',
+  'CLEANUP',
+] as const;
+
+export type UploadStage = (typeof UPLOAD_STAGES)[number];
+
 export type EvidenceOutcome<T> =
   | { readonly kind: 'OK'; readonly value: T }
   | { readonly kind: 'NOT_SIGNED_IN' }
   | { readonly kind: 'NOT_FOUND' }
   | { readonly kind: 'REJECTED'; readonly rejection: UploadRejection }
   | { readonly kind: 'STORAGE_NOT_READY'; readonly missing: readonly string[] }
-  | { readonly kind: 'UNAVAILABLE'; readonly correlationId: string };
+  | {
+      readonly kind: 'UNAVAILABLE';
+      readonly correlationId: string;
+      /** Which step failed. Absent for reads, which have only one. */
+      readonly stage?: UploadStage;
+    };
 
 const ROW_COLUMNS =
   'id, evidence_type, status, original_filename, content_type, byte_size, legibility, ' +
@@ -199,6 +227,7 @@ export async function uploadEvidence(
   const { supabase, userId } = session.value;
 
   let path: string | null = null;
+  let stage: UploadStage = 'OWNERSHIP';
   try {
     /*
      * Ownership before bytes.
@@ -216,6 +245,7 @@ export async function uploadEvidence(
     if (ownedError) throw ownedError;
     if (!owned) return { kind: 'NOT_FOUND' };
 
+    stage = 'STORAGE_UPLOAD';
     path = evidenceObjectPath(userId, request.caseId, validation.mediaType, randomUUID());
 
     const upload = await supabase.storage
@@ -223,10 +253,31 @@ export async function uploadEvidence(
       .upload(path, request.file, { contentType: validation.mediaType, upsert: false });
     if (upload.error) throw upload.error;
 
+    stage = 'ROW_INSERT';
     const { data, error } = await supabase
       .from('pcn_evidence')
       .insert({
         case_id: request.caseId,
+        /*
+         * The owner, from the session that was just verified.
+         *
+         * Omitting this is what broke the first real upload. `pcn_cases` takes
+         * its owner from a column default added in 0014, so the save endpoint
+         * correctly sends no user_id — and this file was written in that shape
+         * without noticing that `pcn_evidence.user_id` never got the same
+         * default. RLS then evaluated `with check (user_id = auth.uid())` as
+         * `NULL = uuid`, which is NULL rather than true, and refused the row
+         * with 42501 before the NOT NULL constraint was ever reached.
+         *
+         * Sending it does not make this endpoint trusted with the answer.
+         * `userId` comes from `supabase.auth.getUser()`, which verifies the
+         * session against the auth server rather than decoding a cookie, and
+         * the same RLS check plus `assert_case_belongs_to_user` reject any
+         * other value — a crafted request gets 42501 exactly as before.
+         * Migration 0017 adds the default as well, so an insert that omits the
+         * column again gets the right owner instead of this failure.
+         */
+        user_id: userId,
         evidence_type: request.evidenceType,
         status: 'UPLOADED' satisfies EvidenceStatus,
         storage_path: path,
@@ -242,9 +293,19 @@ export async function uploadEvidence(
 
     return { kind: 'OK', value: toEvidenceItem(asRow(data)) };
   } catch (error) {
-    // A stored object with no row is unreachable and undeletable by its owner.
-    if (path) await removeObject(supabase, path);
-    return unavailable('evidence.upload', error, { caseId: request.caseId });
+    /*
+     * Nothing half-saved.
+     *
+     * A stored object with no row is unreachable and undeletable by its owner:
+     * nothing lists it, the evidence page cannot show it, and the delete button
+     * it would need does not exist. The row is the only handle on the object,
+     * so if the row does not exist the object must not either.
+     *
+     * Only reached from STORAGE_UPLOAD onwards, because `path` is null until
+     * then — an ownership failure has nothing to clean up.
+     */
+    if (path) await removeObject(supabase, path, request.caseId);
+    return unavailable('evidence.upload', error, { caseId: request.caseId, stage });
   }
 }
 
@@ -418,23 +479,39 @@ async function sessionFor(
   }
 }
 
-async function removeObject(supabase: Supabase, path: string): Promise<void> {
+async function removeObject(
+  supabase: Supabase,
+  path: string,
+  caseId?: string,
+): Promise<void> {
   try {
-    await supabase.storage.from(EVIDENCE_BUCKET).remove([path]);
+    const { error } = await supabase.storage.from(EVIDENCE_BUCKET).remove([path]);
+    // The client reports a failed removal in `error` rather than throwing, so
+    // an unchecked call would report success for an object still in the bucket.
+    if (error) throw error;
   } catch (error) {
-    // The row is already gone, so the object is orphaned rather than exposed.
-    // Logged with the case-scoped path only; it carries no filename.
-    logError('evidence.removeObject', error);
+    // The row is gone or was never written, so the object is orphaned rather
+    // than exposed — it stays inside the owner's own prefix and no policy lets
+    // anyone else read it. Logged so it can be swept, without the path itself.
+    logError('evidence.removeObject', error, { caseId, stage: 'CLEANUP' satisfies UploadStage });
   }
 }
 
 function unavailable(
   scope: string,
   error: unknown,
-  context: Record<string, string>,
+  context: { caseId?: string; evidenceId?: string; stage?: UploadStage },
 ): EvidenceOutcome<never> {
-  // Ids only. A filename, a PCN number or a reading never reaches a log line.
-  return { kind: 'UNAVAILABLE', correlationId: logError(scope, error, context) };
+  /*
+   * Ids and a stage. Never a filename, a PCN number, a registration, a reading
+   * or a storage path — the path embeds the user and case ids, which are
+   * already here as fields, and adds nothing a log needs.
+   */
+  return {
+    kind: 'UNAVAILABLE',
+    correlationId: logError(scope, error, context),
+    stage: context.stage,
+  };
 }
 
 /*
