@@ -1,9 +1,14 @@
--- Case persistence for the analyse journey, and the end of the narrative column.
+-- Case persistence for the analyse journey. Expand only.
 --
 -- Until now nothing in the product wrote a case: the journey ran entirely in the
 -- browser and was lost on refresh. This adds the columns needed to rebuild a
--- case from what the user confirmed, and removes the one column that must never
--- be written.
+-- case from what the user confirmed.
+--
+-- Nothing here is dropped or renamed, and nothing existing changes shape. The
+-- database this runs against is the one Production is using, and Production is
+-- older than this branch — so every change has to be one the currently deployed
+-- code cannot notice. The one removal this work implies (`user_narrative`) is
+-- held back to 0015, which runs after the deploy rather than before it.
 --
 -- The RLS model is deliberately untouched. `pcn_cases` already carries
 -- `user_id uuid not null references auth.users(id)` with a policy of
@@ -13,20 +18,29 @@
 -- weakening it. Nothing here grants anything to `anon`.
 
 -- ---------------------------------------------------------------------------
--- 1. The user's own words are no longer storable
+-- 1. The user's own words stop being written (but the column stays, for now)
 -- ---------------------------------------------------------------------------
 
 -- `user_narrative` was defined in 0004 and never written to. The product now
 -- deliberately keeps the account in the browser: it may name a hospital, a
 -- child, an employer or an illness, no deterministic rule can read prose, and
--- the assessment needs only to know that an account exists.
+-- the assessment needs only to know that an account exists. This column records
+-- that, and is what the new code reads.
 --
--- Dropping the column rather than documenting a rule about it is the point. A
--- column that must never be written is one `insert` away from being written,
--- and a privacy boundary enforced by the schema cannot be forgotten by a future
--- code path. What replaces it records the only thing the engine consumes.
-alter table pcn_cases drop column if exists user_narrative;
-
+-- The old column is NOT dropped here, and that is the whole point of this file.
+--
+-- A migration runs against the database that Production is talking to right
+-- now, not against the branch that motivated it. The currently deployed code
+-- still names `user_narrative` in the select list of `getCase`
+-- (src/server/repositories/cases.ts), so dropping it in this migration would
+-- take every existing case page down the moment the migration ran and leave it
+-- down until a deploy caught up — an outage caused entirely by doing two
+-- separable things at once.
+--
+-- So this migration only expands: everything it adds is invisible to the old
+-- code, and everything the old code reads is still there. The removal is
+-- 0015_drop_user_narrative.sql, which is safe only after the deploy. See the
+-- header of that file for the order.
 alter table pcn_cases
   add column if not exists narrative_provided boolean not null default false;
 
