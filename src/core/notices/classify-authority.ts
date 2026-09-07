@@ -1,4 +1,5 @@
 import { LONDON_AUTHORITIES } from '@/server/repositories/authorities-data';
+import { AUTHORITY_ALIASES } from './authority-aliases';
 
 /**
  * Who issued the notice, judged from the name printed on it.
@@ -89,6 +90,23 @@ const KNOWN_AUTHORITIES = new Map(
   LONDON_AUTHORITIES.map((authority) => [normalise(authority.name), authority.slug]),
 );
 
+/**
+ * Reviewed legal names, normalised once.
+ *
+ * Kept apart from `KNOWN_AUTHORITIES` because the two answer different
+ * questions. That map is the directory PCNWatch holds records for, and a hit
+ * there yields a slug that means something downstream. This one is a list of
+ * names that identify a real authority, some of which we hold nothing about —
+ * so an entry may legitimately carry no slug at all.
+ *
+ * Longest first, so "city of london corporation" is preferred over the "city of
+ * london" it contains and `matchedOn` names the fuller thing the notice said.
+ */
+const ALIASES = AUTHORITY_ALIASES.map((alias) => ({
+  phrase: normalise(alias.name),
+  slug: alias.slug,
+})).sort((a, b) => b.phrase.length - a.phrase.length);
+
 export function classifyAuthorityName(rawName: string | undefined): AuthorityClassification {
   if (!rawName || rawName.trim() === '') {
     return { kind: 'UNRECOGNISED', authoritySlug: null, matchedOn: null };
@@ -109,6 +127,28 @@ export function classifyAuthorityName(rawName: string | undefined): AuthorityCla
   );
   if (privateMatch) {
     return { kind: 'PRIVATE_OPERATOR', authoritySlug: null, matchedOn: privateMatch };
+  }
+
+  /*
+   * A reviewed legal name, checked after the private-operator patterns above.
+   *
+   * That order matters: "City of Westminster Parking Ltd" is a limited company
+   * whatever it has put in front of the "Ltd", and it is refused before it can
+   * reach this list. Matching a whole phrase rather than the entire string lets
+   * a notice printed "City of Westminster — Parking Services" through, which is
+   * how they actually arrive.
+   */
+  const aliasMatch = ALIASES.find((alias) =>
+    new RegExp(`\\b${alias.phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(name),
+  );
+  if (aliasMatch) {
+    return {
+      kind: 'LOCAL_AUTHORITY',
+      // Only where we hold a record. The alias list is about who issued the
+      // notice, never about what we know of them.
+      authoritySlug: aliasMatch.slug,
+      matchedOn: aliasMatch.phrase,
+    };
   }
 
   const councilMatch = LOCAL_AUTHORITY_PATTERNS.find((pattern) => name.includes(pattern));
