@@ -31,6 +31,14 @@ export const viewport: Viewport = {
   ],
 };
 
+/**
+ * The public pages, for the header strip and the footer's Explore column.
+ *
+ * "Your cases" is deliberately not in here. It is one person's private, noindex
+ * list rather than something to explore, and the footer column is about what
+ * the site holds — so it appears in the header only, where somebody looking for
+ * their own case will actually be.
+ */
 const NAV = [
   { href: '/map', label: 'Map' },
   { href: '/hotspots', label: 'Hotspots' },
@@ -57,6 +65,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 than a hamburger menu: the map is the hero product and hiding it
                 behind a menu would bury it. */}
             <nav aria-label="Primary" className="fr-nav">
+              {/*
+                First in the strip, ahead of the public pages.
+
+                The strip scrolls horizontally on a phone, so anything appended
+                to the end of it is off-screen until someone thinks to swipe a
+                navigation bar — which nobody does when they are looking for
+                something they are not sure exists. A case somebody saved is the
+                one thing on this site they already know they want back, so it
+                goes where it is visible without being hunted for. The map is
+                still on screen beside it at 375px; it has not been buried.
+              */}
+              <Link href="/cases" className="fr-touch fr-nav-link">
+                Your cases
+              </Link>
               {NAV.map((item) => (
                 <Link key={item.href} href={item.href} className="fr-touch fr-nav-link">
                   {item.label}

@@ -1153,3 +1153,124 @@ test.describe('saving and coming back', () => {
     expect(overflow, 'the cases page pushes the page sideways').toBeLessThanOrEqual(1);
   });
 });
+
+test.describe('finding your way back to a saved case', () => {
+  /**
+   * Navigation to /cases.
+   *
+   * Persistence worked in Preview and was still unreachable: the case was
+   * saved, the page rendered, and nothing in the site pointed at it. A feature
+   * nobody can find is a feature nobody has.
+   */
+
+  const navLink = (page: import('@playwright/test').Page) =>
+    page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: /your cases/i });
+
+  test('the primary navigation offers it on desktop', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/');
+
+    await expect(navLink(page)).toBeVisible();
+    await navLink(page).click();
+    await expect(page).toHaveURL(/\/cases$/);
+    await expect(page.getByRole('heading', { name: /your cases/i })).toBeVisible();
+  });
+
+  test('the primary navigation offers it on a phone', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    await page.goto('/');
+
+    await expect(navLink(page)).toBeVisible();
+    await navLink(page).click();
+    await expect(page).toHaveURL(/\/cases$/);
+  });
+
+  test('it is reachable without swiping the navigation on the narrowest phone', async ({ page }) => {
+    /*
+     * The strip scrolls horizontally, so "somewhere in the navigation" is not
+     * the same as "findable". Anything appended to the end of it sits
+     * off-screen until a user thinks to swipe a navigation bar, which nobody
+     * does when looking for something they are not sure exists.
+     */
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto('/');
+
+    const position = await navLink(page).evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return { left: box.left, right: box.right, width: window.innerWidth, height: box.height };
+    });
+
+    expect(position.left, 'the link starts off the left of the screen').toBeGreaterThanOrEqual(0);
+    expect(position.right, 'the link is off the right of the screen until scrolled').toBeLessThanOrEqual(
+      position.width,
+    );
+    // And it is still a real touch target.
+    expect(position.height).toBeGreaterThanOrEqual(44);
+  });
+
+  test('does not bury the map to make room', async ({ page }) => {
+    // The header comment is explicit that the map is the hero and must not be
+    // hidden. Adding a link ahead of it must not push it off the screen.
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto('/');
+
+    const map = page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Map' });
+    const visible = await map.evaluate(
+      (el) => el.getBoundingClientRect().right <= window.innerWidth,
+    );
+    expect(visible, 'the map link was pushed off screen').toBe(true);
+  });
+
+  test('leaves Analyse my PCN as the primary action at every width', async ({ page }) => {
+    for (const [width, height] of [[320, 568], [375, 720], [1280, 900]] as const) {
+      await page.setViewportSize({ width, height });
+      await page.goto('/');
+
+      const cta = page.getByRole('link', { name: /analyse my pcn/i }).first();
+      await expect(cta, `the call to action is missing at ${width}px`).toBeVisible();
+
+      // Still the styled primary, not demoted to a plain nav link.
+      const isCta = await cta.evaluate((el) => el.classList.contains('fr-cta'));
+      expect(isCta, `the call to action lost its styling at ${width}px`).toBe(true);
+
+      // And it sits outside the navigation strip, where it always has.
+      const insideNav = await cta.evaluate((el) => el.closest('nav') !== null);
+      expect(insideNav, `the call to action moved into the navigation at ${width}px`).toBe(false);
+    }
+  });
+
+  test('adds nothing sideways at any width', async ({ page }) => {
+    for (const [width, height] of [[320, 568], [375, 720], [768, 900], [1280, 900]] as const) {
+      await page.setViewportSize({ width, height });
+      await page.goto('/');
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, `the header pushes the page sideways at ${width}px`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test('still handles having no cases gracefully', async ({ page }) => {
+    // Arriving from the navigation is the common way a first-time visitor will
+    // reach this page, so the empty state matters more than before.
+    await page.goto('/');
+    await navLink(page).click();
+
+    await expect(page.getByRole('heading', { name: /your cases/i })).toBeVisible();
+    await expect(
+      page.getByText(/no cases in this browser|not saved a case yet|cannot reach your cases/i),
+    ).toBeVisible();
+    await expect(page.getByRole('link', { name: /analyse a notice/i })).toBeVisible();
+    // No sign-up wall, then or now.
+    await expect(page.getByText(/sign up|create an account|password/i)).toHaveCount(0);
+  });
+
+  test('keeps the private list out of the public footer', async ({ page }) => {
+    // The footer's Explore column is about what the site holds. One person's
+    // noindex case list is not that, and listing it there would imply it is
+    // somewhere to browse.
+    await page.goto('/');
+    const footerLinks = page.locator('footer').getByRole('link', { name: /your cases/i });
+    await expect(footerLinks).toHaveCount(0);
+  });
+});
