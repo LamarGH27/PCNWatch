@@ -48,6 +48,68 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- 1b. The insert the application actually makes
+-- ---------------------------------------------------------------------------
+--
+-- Every other block in this file names `user_id` explicitly, which is a shape
+-- the application never uses — and that is exactly why the first real upload in
+-- Preview failed with this suite passing. `pcn_cases.user_id` has defaulted to
+-- `auth.uid()` since 0014 so the save endpoint sends no owner; the evidence
+-- upload was written in that shape, and `pcn_evidence.user_id` had no such
+-- default. RLS evaluated `with check (user_id = (select auth.uid()))` as
+-- `NULL = uuid` — NULL, not true — and refused the row with 42501 before the
+-- NOT NULL constraint was ever reached.
+--
+-- So this block inserts the way the application does, with the columns it sends
+-- and no others. It fails on a database without 0017.
+
+do $$
+declare
+  owned_case uuid;
+  created    uuid;
+  owner      uuid;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', 'c0000000-0000-0000-0000-00000000000c', true);
+  select id into owned_case from pcn_cases where pcn_number = 'CM90000001';
+
+  insert into pcn_evidence
+    (case_id, evidence_type, status, storage_path, original_filename, content_type, byte_size)
+  values
+    (owned_case, 'PARKING_APP_RECEIPT', 'UPLOADED',
+     'c0000000-0000-0000-0000-00000000000c/case/receipt.jpg', 'receipt.jpg', 'image/jpeg', 120000)
+  returning id into created;
+
+  select user_id into owner from pcn_evidence where id = created;
+  assert owner = 'c0000000-0000-0000-0000-00000000000c',
+    format('An upload with no user_id was attributed to %s', owner);
+end;
+$$;
+
+-- And the default is not a way round the policy: a row naming somebody else is
+-- still refused, so supplying the owner and omitting it are equally safe.
+do $$
+declare
+  owned_case uuid;
+  failed     boolean := false;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', 'c0000000-0000-0000-0000-00000000000c', true);
+  select id into owned_case from pcn_cases where pcn_number = 'CM90000001';
+
+  begin
+    insert into pcn_evidence (case_id, user_id, evidence_type, status, storage_path)
+    values (owned_case, 'd0000000-0000-0000-0000-00000000000d', 'PERMIT', 'UPLOADED',
+            'c0000000-0000-0000-0000-00000000000c/case/forged.jpg');
+  exception when insufficient_privilege or foreign_key_violation then
+    failed := true;
+  end;
+
+  assert failed, 'A row naming another user as its owner was accepted.';
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 2. Anything past DECLARED must have a file behind it
 -- ---------------------------------------------------------------------------
 --
