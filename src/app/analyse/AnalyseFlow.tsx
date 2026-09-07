@@ -291,7 +291,33 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
           setValues(
             Object.fromEntries(fields.map((f) => [f.key, f.value === null ? '' : String(f.value)])),
           );
-          setConfirmed({});
+          /*
+           * A field we are not asking the user to check starts out accepted.
+           *
+           * `collectVerifiedFacts` sends only ticked fields, but the submit
+           * button only ever demanded ticks on the fields in ALWAYS_VERIFY. So
+           * anything read confidently outside that list — the issuing
+           * authority, the registration, the location, the printed deadlines —
+           * was displayed on the verification screen, left unticked because
+           * nothing asked for a tick, and then silently discarded on submit. A
+           * real Westminster case reached the saved-case page reading
+           * "Authority not identified" after the user had watched
+           * "Issuing authority: City of Westminster" on the previous screen.
+           *
+           * Starting these ticked makes the screen mean what it appears to
+           * mean: this is what we read, and pressing continue accepts it. The
+           * value is still shown, still editable, and still untickable, so
+           * accepting is visible rather than assumed — which is the opposite of
+           * what happened before, where it was discarded invisibly.
+           *
+           * Fields in ALWAYS_VERIFY are untouched: they start unticked and
+           * still block the button.
+           */
+          setConfirmed(
+            Object.fromEntries(
+              fields.filter((f) => !f.requiresVerification).map((f) => [f.key, true]),
+            ),
+          );
           // Reported separately from the editable fields, so it has to be
           // carried separately too.
           setReadNoticeType(result.noticeType as VerifiedFacts['noticeType']);

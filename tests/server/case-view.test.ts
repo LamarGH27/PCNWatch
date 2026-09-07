@@ -3,6 +3,19 @@ import { buildCaseView, type CaseRecord } from '@/server/cases/case-view';
 
 const TODAY = '2026-01-15';
 
+/*
+ * A case whose deadlines came off the notice.
+ *
+ * Every timing rule PCNWatch holds is still PENDING_LEGAL_REVIEW, so a
+ * calculated date is withheld and cannot drive anything. A date the user read
+ * off their own notice can — it is theirs, not ours — and these tests use one
+ * so that the behaviour they cover (discount window, urgency, overdue) is still
+ * exercised rather than quietly dropped along with the unsafe path.
+ */
+function printedRecord(discountDeadline: string, overrides: Partial<CaseRecord> = {}): CaseRecord {
+  return caseRecord({ discountDeadlinePrinted: discountDeadline, ...overrides });
+}
+
 function caseRecord(overrides: Partial<CaseRecord> = {}): CaseRecord {
   return {
     id: 'case-1',
@@ -17,6 +30,8 @@ function caseRecord(overrides: Partial<CaseRecord> = {}): CaseRecord {
     noticeToOwnerServedDate: null,
     noticeOfRejectionServedDate: null,
     locationText: 'Eversholt Street',
+    discountDeadlinePrinted: null,
+    representationDeadlinePrinted: null,
     parkingLocationSlug: 'eversholt-street',
     fullAmountPence: 13000,
     discountedAmountPence: 6500,
@@ -51,16 +66,33 @@ describe('case dashboard assembly', () => {
   });
 
   it('shows the discounted amount as payable while the discount period is open', () => {
-    // Issued 5 Jan, 14-day discount → 19 Jan. Today is 15 Jan.
-    const view = buildCaseView(caseRecord(), TODAY);
+    // The discount deadline printed on the notice is 19 Jan; today is 15 Jan.
+    const view = buildCaseView(printedRecord('2026-01-19'), TODAY);
+    expect(view.discountStatus).toBe('OPEN');
     expect(view.financialExposure.currentlyPayablePence).toBe(6500);
     expect(view.financialExposure.note).toContain('reduced amount');
   });
 
   it('shows the full amount once the discount period has passed', () => {
-    const view = buildCaseView(caseRecord(), '2026-01-25');
+    const view = buildCaseView(printedRecord('2026-01-19'), '2026-01-25');
     expect(view.financialExposure.currentlyPayablePence).toBe(13000);
     expect(view.financialExposure.note).toContain('passed');
+  });
+
+  it('will not decide the payable amount from a rule awaiting review', () => {
+    /*
+     * The regression this file did not catch. With no printed deadline the only
+     * thing that could answer "has the discount period passed?" is an unreviewed
+     * calculation — so the answer is that we cannot say, and the reduced figure
+     * stays on the page for the user to consider.
+     */
+    const view = buildCaseView(caseRecord(), '2026-02-25');
+    expect(view.discountStatus).toBe('UNKNOWN');
+    expect(view.financialExposure.currentlyPayablePence).toBeNull();
+    expect(view.financialExposure.note).toContain('check the dates');
+    expect(view.financialExposure.note).not.toContain('passed');
+    // The reduced amount is still reported, not removed.
+    expect(view.financialExposure.discountedPence).toBe(6500);
   });
 
   it('shows no figure at all when the amounts are unknown', () => {
@@ -82,24 +114,31 @@ describe('case dashboard assembly', () => {
   });
 
   it('surfaces the soonest upcoming deadline as the next action', () => {
-    const view = buildCaseView(caseRecord(), TODAY);
+    const view = buildCaseView(printedRecord('2026-01-19'), TODAY);
     expect(view.nextAction.daysRemaining).toBe(4);
     expect(view.nextAction.urgency).toBe('SOON');
     expect(view.nextAction.headline).toContain('4 days left');
   });
 
   it('escalates urgency as a deadline approaches', () => {
-    expect(buildCaseView(caseRecord(), '2026-01-17').nextAction.urgency).toBe('URGENT');
-    expect(buildCaseView(caseRecord(), '2026-01-19').nextAction.urgency).toBe('URGENT');
-    expect(buildCaseView(caseRecord(), '2026-01-06').nextAction.urgency).toBe('ROUTINE');
+    expect(buildCaseView(printedRecord('2026-01-19'), '2026-01-17').nextAction.urgency).toBe('URGENT');
+    expect(buildCaseView(printedRecord('2026-01-19'), '2026-01-19').nextAction.urgency).toBe('URGENT');
+    expect(buildCaseView(printedRecord('2026-01-19'), '2026-01-06').nextAction.urgency).toBe('ROUTINE');
   });
 
   it('reports an overdue deadline without pretending it is still open', () => {
-    const view = buildCaseView(caseRecord(), '2026-02-20');
+    const view = buildCaseView(printedRecord('2026-01-19'), '2026-02-20');
     expect(view.nextAction.urgency).toBe('OVERDUE');
     expect(view.nextAction.headline).toContain('has passed');
-    // And tells the user our date is calculated, not authoritative.
     expect(view.nextAction.detail).toContain('printed on your notice');
+  });
+
+  it('never reports anything as passed on the strength of an unreviewed rule', () => {
+    // Long after every calculated date would have expired. Without a printed
+    // deadline there is nothing safe to be overdue against.
+    const view = buildCaseView(caseRecord(), '2027-06-01');
+    expect(view.nextAction.urgency).not.toBe('OVERDUE');
+    expect(view.nextAction.headline).not.toMatch(/passed/i);
   });
 
   it('says nothing is required once the case is closed', () => {
@@ -115,24 +154,29 @@ describe('case dashboard assembly', () => {
     expect(view.assessment.findings).toHaveLength(0);
   });
 
-  it('does not calculate a deadline from an unconfirmed date', () => {
-    const view = buildCaseView(
-      caseRecord({ verifiedFields: { pcnNumber: true, contraventionCode: true } }),
-      TODAY,
-    );
-    const discount = view.deadlines.find((d) => d.deadlineType === 'DISCOUNT_EXPIRY');
-    expect(discount).toBeDefined();
-    if (discount && 'calculated' in discount && discount.calculated) {
-      // It may still be calculated, but never at HIGH confidence, and it warns.
-      expect(discount.confidence).not.toBe('HIGH');
-      expect(discount.warnings.length).toBeGreaterThan(0);
-    }
+  it('shows no date at all from a rule awaiting review', () => {
+    /*
+     * This test used to accept an unreviewed date so long as it carried a
+     * warning and a lowered confidence. That is what a real saved case
+     * displayed: two dates from PENDING_LEGAL_REVIEW rules, one badged
+     * "Passed". People act on the date, not the warning under it.
+     */
+    const view = buildCaseView(caseRecord(), TODAY);
+
+    const discount = view.deadlines.find((d) => d.label === 'Discounted amount deadline');
+    expect(discount, 'an unreviewed rule produced a date').toBeUndefined();
+
+    // Named as refused rather than silently missing.
+    const refused = view.refusedDeadlines.find((d) => d.label === 'Discounted amount deadline');
+    expect(refused).toBeDefined();
+    expect(refused!.reason).toBe('RULE_AWAITING_REVIEW');
   });
 
   it('refuses a deadline whose trigger date we do not have', () => {
     const view = buildCaseView(caseRecord(), TODAY);
-    const tribunal = view.deadlines.find((d) => d.deadlineType === 'TRIBUNAL_APPEAL_DEADLINE');
-    expect(tribunal).toMatchObject({ calculated: false, reason: 'MISSING_TRIGGER_DATE' });
+    const tribunal = view.refusedDeadlines.find((d) => d.label === 'Tribunal appeal deadline');
+    expect(tribunal).toBeDefined();
+    expect(tribunal!.reason).toBe('MISSING_TRIGGER_DATE');
   });
 
   it('builds an evidence checklist that reflects the contravention and grounds', () => {

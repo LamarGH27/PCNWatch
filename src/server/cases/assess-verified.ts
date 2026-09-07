@@ -1,8 +1,12 @@
 import { assessCase, formatPence } from '@/core/assessment/engine';
 import type { Assessment } from '@/core/assessment/types';
-import { calculateAllDeadlines } from '@/core/deadlines/calculate';
-import type { DeadlineResult, ServiceMethod } from '@/core/deadlines/types';
-import { findRule } from '@/core/deadlines/rules';
+import {
+  projectDeadlines,
+  type RefusedDeadline,
+  type SafeDeadline,
+  type WindowStatus,
+} from '@/core/deadlines/projection';
+import type { ServiceMethod } from '@/core/deadlines/types';
 import { getContravention, normaliseContraventionCode, toCitation } from '@/core/reference/store';
 import type { NoticeType, ProceduralStage, ReferenceCitation } from '@/core/reference/types';
 import { isDisplayableStage, stageForNoticeType } from '@/core/case/stage-from-notice';
@@ -57,27 +61,14 @@ export interface VerifiedFacts {
   readonly representationDeadlinePrinted?: string;
 }
 
-export interface PrintedDeadline {
-  readonly label: string;
-  readonly date: string;
-  readonly source: 'PRINTED_ON_NOTICE';
-}
-
-export interface CalculatedDeadline {
-  readonly label: string;
-  readonly date: string;
-  readonly source: 'CALCULATED_BY_PCNWATCH';
-  readonly basis: string;
-  readonly confidence: string;
-  readonly warnings: readonly string[];
-}
-
-export interface RefusedDeadline {
-  /** The deadline's own name, so the user knows which one is missing. */
-  readonly label: string;
-  readonly reason: string;
-  readonly message: string;
-}
+/*
+ * The deadline shapes come from the shared boundary rather than being declared
+ * here. A second declaration is a second thing that can be constructed, and the
+ * point of the boundary is that only one function produces a showable date.
+ */
+export type PrintedDeadline = SafeDeadline;
+export type CalculatedDeadline = SafeDeadline;
+export type { RefusedDeadline };
 
 /**
  * A piece of evidence to gather, and how prominently to ask for it.
@@ -123,9 +114,11 @@ export interface VerifiedAssessment {
   readonly contravention: ContraventionMeaning;
   readonly stage: ProceduralStage;
   readonly stageIsKnown: boolean;
-  readonly printedDeadlines: readonly PrintedDeadline[];
-  readonly calculatedDeadlines: readonly CalculatedDeadline[];
+  readonly printedDeadlines: readonly SafeDeadline[];
+  readonly calculatedDeadlines: readonly SafeDeadline[];
   readonly refusedDeadlines: readonly RefusedDeadline[];
+  /** Whether the discount period has passed, or that we cannot say. */
+  readonly discountStatus: WindowStatus;
   readonly amountSummary: {
     readonly full: string | null;
     readonly discounted: string | null;
@@ -159,6 +152,11 @@ const SERVICE_METHOD: Partial<Record<NoticeType, ServiceMethod>> = {
 export function assessVerifiedNotice(
   facts: VerifiedFacts,
   context: UserContext = EMPTY_USER_CONTEXT,
+  /**
+   * Today, as ISO. Passed in rather than read from the clock so an assessment
+   * is a pure function of its inputs and a test can pin the date.
+   */
+  today: string = new Date().toISOString().slice(0, 10),
 ): VerifiedAssessment {
   const code = facts.contraventionCode
     ? normaliseContraventionCode(facts.contraventionCode)
@@ -242,90 +240,29 @@ export function assessVerifiedNotice(
 
   /* -- Deadlines ---------------------------------------------------------- */
 
-  // Printed dates are reported exactly as the notice gave them.
-  const printedDeadlines: PrintedDeadline[] = [];
-  if (facts.discountDeadlinePrinted) {
-    printedDeadlines.push({
-      label: 'Discount period ends',
-      date: facts.discountDeadlinePrinted,
-      source: 'PRINTED_ON_NOTICE',
-    });
-  }
-  if (facts.representationDeadlinePrinted) {
-    printedDeadlines.push({
-      label: 'Representations due',
-      date: facts.representationDeadlinePrinted,
-      source: 'PRINTED_ON_NOTICE',
-    });
-  }
+  /*
+   * One boundary, shared with the saved-case view.
+   *
+   * This gate used to live here as a passage of code, which protected this one
+   * route and nothing else — the saved-case page built its own view from the
+   * raw engine and displayed exactly what the gate existed to prevent. It is a
+   * module now, and both callers go through it.
+   */
+  const projection = projectDeadlines({
+    pcnServedDate: facts.issueDate,
+    serviceMethod: SERVICE_METHOD[facts.noticeType],
+    verifiedDates: facts.issueDate ? { pcnServedDate: true } : undefined,
+    printedDeadlines: {
+      discountDeadline: facts.discountDeadlinePrinted,
+      representationDeadline: facts.representationDeadlinePrinted,
+    },
+    calculationApplies: noticeCategory === 'LOCAL_AUTHORITY_PCN',
+    today,
+  });
 
-  // Calculated dates come only from a confirmed issue date. Without one the
-  // engine refuses, and the refusal is shown rather than hidden.
-  const results: DeadlineResult[] =
-    noticeCategory === 'LOCAL_AUTHORITY_PCN'
-      ? calculateAllDeadlines({
-          pcnServedDate: facts.issueDate,
-          serviceMethod: SERVICE_METHOD[facts.noticeType],
-          verifiedDates: facts.issueDate ? { pcnServedDate: true } : undefined,
-        })
-      : [];
-
-  const calculatedDeadlines: CalculatedDeadline[] = [];
-  const refusedDeadlines: RefusedDeadline[] = [];
-
-  for (const result of results) {
-    const rule = findRule(result.deadlineType);
-    // A rule's own name, not the enum. "We do not have the date this deadline
-    // runs from" repeated five times told nobody which deadline was missing.
-    const label = rule?.label ?? humaniseDeadlineType(result.deadlineType);
-
-    if (!result.calculated) {
-      // Named. The engine's message is the same sentence for every deadline
-      // that shares a trigger date, so five of them read as one problem
-      // repeated rather than five distinct things we could not tell you.
-      refusedDeadlines.push({
-        label,
-        reason: result.reason,
-        message: `${label}: ${lowerFirst(result.message)}`,
-      });
-      continue;
-    }
-
-    /*
-     * A timing rule still awaiting legal review does not produce a date the
-     * user sees.
-     *
-     * The engine computed one and attached "This timing rule is awaiting
-     * review by a qualified person" beside it — which is a date and a
-     * disclaimer occupying the same space, and people act on the date. Someone
-     * missing a statutory deadline because we showed an unreviewed calculation
-     * is the harm this exists to prevent, and it is worse than showing nothing.
-     *
-     * The arithmetic is unchanged and still deterministic; it is only withheld
-     * from display. When a rule is signed off, its date appears with no other
-     * change.
-     */
-    if (rule && rule.reviewStatus !== 'REVIEWED') {
-      refusedDeadlines.push({
-        label,
-        reason: 'RULE_AWAITING_REVIEW',
-        message:
-          `${label}: PCNWatch can work this date out, but the timing rule behind it has not ` +
-          'yet been checked by a qualified person, so we will not show you a date to act on. ' +
-          'Use the deadline printed on your notice.',
-      });
-      continue;
-    }
-
-    calculatedDeadlines.push({
-      label,
-      date: result.calculatedDueDate,
-      source: 'CALCULATED_BY_PCNWATCH',
-      basis: result.triggerDescription,
-      confidence: result.confidence,
-      warnings: result.warnings,
-    });
-  }
+  const printedDeadlines = projection.printed;
+  const calculatedDeadlines = projection.calculated;
+  const refusedDeadlines = projection.refused;
 
   /* -- Evidence, ordered by what the user has actually told us ------------- */
 
@@ -396,6 +333,7 @@ export function assessVerifiedNotice(
     calculatedDeadlines,
     refusedDeadlines,
     evidenceGuidance,
+    discountStatus: projection.discountStatus,
     amountSummary: {
       full: facts.fullAmountPence !== undefined ? formatPence(facts.fullAmountPence) : null,
       discounted:
@@ -406,18 +344,7 @@ export function assessVerifiedNotice(
   };
 }
 
-/** Lower-cases the first letter so a message reads on from its label. */
-function lowerFirst(sentence: string): string {
-  // Only when the second character is lower case, so "PCNWatch can…" survives.
-  if (sentence.length < 2 || sentence[1] !== sentence[1]!.toLowerCase()) return sentence;
-  return sentence.charAt(0).toLowerCase() + sentence.slice(1);
-}
 
-/** Fallback name for a deadline with no rule of its own. */
-function humaniseDeadlineType(deadlineType: string): string {
-  const words = deadlineType.replace(/_/g, ' ').toLowerCase();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
 
 /**
  * Masks a PCN number for display.
