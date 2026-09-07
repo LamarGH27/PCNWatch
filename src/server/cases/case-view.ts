@@ -1,5 +1,10 @@
-import { calculateAllDeadlines, type DeadlineInput } from '@/core/deadlines/calculate';
-import type { DeadlineResult } from '@/core/deadlines/types';
+import {
+  projectDeadlines,
+  type DeadlineProjection,
+  type RefusedDeadline,
+  type SafeDeadline,
+  type WindowStatus,
+} from '@/core/deadlines/projection';
 import { buildEvidenceChecklist } from '@/core/evidence/checklist';
 import type { EvidenceChecklist, EvidenceType } from '@/core/evidence/types';
 import { assessCase } from '@/core/assessment/engine';
@@ -31,6 +36,16 @@ export interface CaseRecord {
   readonly noticeToOwnerServedDate: string | null;
   readonly noticeOfRejectionServedDate: string | null;
   readonly locationText: string | null;
+  /**
+   * Deadlines printed on the notice and confirmed by the user.
+   *
+   * These were not on the record at all, which is part of why the saved-case
+   * page leaned on calculated dates: the only dates it had were ones it worked
+   * out. A printed date is the user's own reading of their own notice and is
+   * the one thing here that may always be shown.
+   */
+  readonly discountDeadlinePrinted: string | null;
+  readonly representationDeadlinePrinted: string | null;
   readonly parkingLocationSlug: string | null;
   readonly fullAmountPence: number | null;
   readonly discountedAmountPence: number | null;
@@ -53,7 +68,7 @@ export interface NextAction {
   readonly headline: string;
   readonly detail: string;
   readonly urgency: NextActionUrgency;
-  readonly deadline: DeadlineResult | null;
+  readonly deadline: SafeDeadline | null;
   readonly daysRemaining: number | null;
 }
 
@@ -68,7 +83,14 @@ export interface CaseView {
     readonly currentlyPayablePence: number | null;
     readonly note: string;
   };
-  readonly deadlines: readonly DeadlineResult[];
+  /**
+   * Every date this case may show. Printed first, then calculated — and only
+   * ever ones the boundary let through.
+   */
+  readonly deadlines: readonly SafeDeadline[];
+  /** Dates we will not give, each with the reason. Shown, not hidden. */
+  readonly refusedDeadlines: readonly RefusedDeadline[];
+  readonly discountStatus: WindowStatus;
   readonly nextAction: NextAction;
   readonly evidence: EvidenceChecklist;
   readonly assessment: Assessment;
@@ -79,7 +101,22 @@ export interface CaseView {
 export const URGENCY_THRESHOLDS = { urgent: 3, soon: 7 } as const;
 
 export function buildCaseView(record: CaseRecord, today: string): CaseView {
-  const deadlineInput: DeadlineInput = {
+  /*
+   * Through the shared boundary, like every other route.
+   *
+   * This used to call `calculateAllDeadlines` directly with
+   * `requireReviewedRules: true`, which reads like a safety flag and is not
+   * one: it lowers a confidence label from HIGH to MEDIUM and still returns the
+   * date. So a resumed case displayed two dates from rules marked
+   * PENDING_LEGAL_REVIEW, badged one of them "Passed", and told the user their
+   * discount period had expired — the exact outcome the gate on the fresh
+   * assessment was built to prevent, on a route that never went through it.
+   *
+   * The projection returns nothing that has not been signed off or read off the
+   * user's own notice, so everything below can use what it gets without
+   * checking again.
+   */
+  const projection = projectDeadlines({
     pcnServedDate: record.issueDate ?? undefined,
     noticeToOwnerServedDate: record.noticeToOwnerServedDate ?? undefined,
     noticeOfRejectionServedDate: record.noticeOfRejectionServedDate ?? undefined,
@@ -88,10 +125,13 @@ export function buildCaseView(record: CaseRecord, today: string): CaseView {
       noticeToOwnerServedDate: record.verifiedFields.noticeToOwnerServedDate === true,
       noticeOfRejectionServedDate: record.verifiedFields.noticeOfRejectionServedDate === true,
     },
-    requireReviewedRules: true,
-  };
-
-  const deadlines = calculateAllDeadlines(deadlineInput);
+    printedDeadlines: {
+      discountDeadline: record.discountDeadlinePrinted ?? undefined,
+      representationDeadline: record.representationDeadlinePrinted ?? undefined,
+    },
+    calculationApplies: record.noticeCategory === 'LOCAL_AUTHORITY_PCN',
+    today,
+  });
 
   const evidence = buildEvidenceChecklist({
     contraventionCode: record.contraventionCode,
@@ -136,9 +176,11 @@ export function buildCaseView(record: CaseRecord, today: string): CaseView {
     stageLabel: STAGE_LABELS[record.proceduralStage],
     stageExplanation: procedureRecord?.summary ?? null,
     isClosed: isTerminal(record.proceduralStage),
-    financialExposure: financialExposure(record, deadlines, today),
-    deadlines,
-    nextAction: nextAction(record, deadlines, evidence, today),
+    financialExposure: financialExposure(record, projection),
+    deadlines: [...projection.printed, ...projection.calculated],
+    refusedDeadlines: projection.refused,
+    discountStatus: projection.discountStatus,
+    nextAction: nextAction(record, projection, evidence, today),
     evidence,
     assessment,
     outOfScopeMessage: assessment.outOfScopeMessage,
@@ -170,16 +212,20 @@ function procedureFor(stage: ProceduralStage) {
  */
 function financialExposure(
   record: CaseRecord,
-  deadlines: readonly DeadlineResult[],
-  today: string,
+  projection: DeadlineProjection,
 ): CaseView['financialExposure'] {
-  const discountDeadline = deadlines.find(
-    (d) => d.deadlineType === 'DISCOUNT_EXPIRY' && 'calculated' in d && d.calculated,
-  );
+  /*
+   * Decided from the projection's own verdict, never from a date this function
+   * inspects itself.
+   *
+   * The previous version reached into the raw deadline results for
+   * DISCOUNT_EXPIRY and compared its date to today — which is how an unreviewed
+   * calculation came to remove the reduced figure from a page somebody was
+   * reading in order to decide whether to pay it. UNKNOWN is now a real answer
+   * and produces the honest note below.
+   */
   const discountStillOpen =
-    discountDeadline && 'calculatedDueDate' in discountDeadline
-      ? discountDeadline.calculatedDueDate >= today
-      : null;
+    projection.discountStatus === 'UNKNOWN' ? null : projection.discountStatus === 'OPEN';
 
   if (record.fullAmountPence === null && record.discountedAmountPence === null) {
     return {
@@ -219,10 +265,14 @@ function financialExposure(
  */
 function nextAction(
   record: CaseRecord,
-  deadlines: readonly DeadlineResult[],
+  projection: DeadlineProjection,
   evidence: EvidenceChecklist,
   today: string,
 ): NextAction {
+  // Only dates that crossed the boundary. A deadline we refused to give cannot
+  // become "Passed", cannot become urgent, and cannot narrow what we tell the
+  // user their options are.
+  const deadlines = [...projection.printed, ...projection.calculated];
   if (isTerminal(record.proceduralStage)) {
     return {
       headline: 'This case is closed.',
@@ -245,18 +295,17 @@ function nextAction(
   }
 
   // The soonest deadline that has not passed, or the most recently passed one.
-  const calculated = deadlines.filter(
-    (d): d is Extract<DeadlineResult, { calculated: true }> => 'calculated' in d && d.calculated,
-  );
-  const upcoming = calculated
-    .filter((d) => d.calculatedDueDate >= today)
-    .sort((a, b) => a.calculatedDueDate.localeCompare(b.calculatedDueDate))[0];
-  const overdue = calculated
-    .filter((d) => d.calculatedDueDate < today)
-    .sort((a, b) => b.calculatedDueDate.localeCompare(a.calculatedDueDate))[0];
+  // Every candidate is already safe: `deadlines` is what the projection let
+  // through, so there is no filtering for review status to forget here.
+  const upcoming = deadlines
+    .filter((d) => d.date >= today)
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  const overdue = deadlines
+    .filter((d) => d.date < today)
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
 
   if (upcoming) {
-    const days = daysBetweenIso(today, upcoming.calculatedDueDate);
+    const days = daysBetweenIso(today, upcoming.date);
     return {
       headline: `${upcoming.label}: ${days === 0 ? 'today' : `${days} day${days === 1 ? '' : 's'} left`}`,
       detail:
@@ -278,7 +327,7 @@ function nextAction(
         'Check the date printed on your notice — ours is calculated and may not match. If it has genuinely passed, your remaining options are narrower.',
       urgency: 'OVERDUE',
       deadline: overdue,
-      daysRemaining: -daysBetweenIso(overdue.calculatedDueDate, today),
+      daysRemaining: -daysBetweenIso(overdue.date, today),
     };
   }
 

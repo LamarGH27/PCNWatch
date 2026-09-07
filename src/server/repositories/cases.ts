@@ -39,6 +39,7 @@ export async function getCase(caseId: string): Promise<CaseResult> {
         `id, pcn_number, authority_name_raw, notice_category, contravention_code,
          contravention_suffix, incident_date, issue_date, location_text,
          full_amount_pence, discounted_amount_pence, procedural_stage,
+         discount_deadline_printed, representation_deadline_printed,
          narrative_provided, context_answers, confirmed_assertions, declared_evidence,
          resolved_facts, asserted_ground_keys, verified_fields, closed_at,
          authorities ( name, slug ),
@@ -155,6 +156,10 @@ function toCaseRecord(row: Row): CaseRecord {
     noticeToOwnerServedDate: stageDate('NOTICE_TO_OWNER'),
     noticeOfRejectionServedDate: stageDate('NOTICE_OF_REJECTION'),
     locationText: (row.location_text as string | null) ?? null,
+    // Read off the notice by the user. The only dates a saved case may show
+    // without a reviewed rule behind them.
+    discountDeadlinePrinted: isoDateOrNull(row.discount_deadline_printed),
+    representationDeadlinePrinted: isoDateOrNull(row.representation_deadline_printed),
     parkingLocationSlug: location?.slug ?? null,
     fullAmountPence: numberOrNull(row.full_amount_pence),
     discountedAmountPence: numberOrNull(row.discounted_amount_pence),
@@ -182,6 +187,12 @@ function firstOf(value: unknown): unknown {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+/** Postgres hands a date column back as a Date; the engines want the ISO day. */
+function isoDateOrNull(value: unknown): string | null {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return typeof value === 'string' && value !== '' ? value.slice(0, 10) : null;
 }
 
 function numberOrNull(value: unknown): number | null {

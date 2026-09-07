@@ -110,64 +110,75 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
       {/* Deadlines */}
       <section style={{ marginTop: 32 }}>
         <h2 style={{ fontSize: 19, fontWeight: 620, marginBottom: 12 }}>Deadlines</h2>
+        {/*
+          Everything here came through the shared projection, so the page never
+          decides what is safe to show. It used to render raw engine results and
+          colour them red once past — which is how a date from a rule marked
+          PENDING_LEGAL_REVIEW came to be displayed as expired.
+        */}
         <Card padded={false}>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {view.deadlines.length === 0 && view.refusedDeadlines.length === 0 && (
+              <li style={{ padding: '14px 18px', fontSize: 14, color: 'var(--text-muted)' }}>
+                No dates could be established from what you confirmed.
+              </li>
+            )}
+
             {view.deadlines.map((deadline, index) => (
               <li
-                key={deadline.deadlineType}
+                key={`${deadline.source}-${deadline.label}`}
                 style={{
                   padding: '14px 18px',
                   borderTop: index === 0 ? 'none' : '1px solid var(--border)',
                 }}
               >
-                {'calculated' in deadline && deadline.calculated ? (
-                  <>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: 14,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <strong style={{ fontSize: 15, fontWeight: 600 }}>{deadline.label}</strong>
-                      <span
-                        className="fr-numeric"
-                        style={{
-                          fontSize: 15,
-                          color:
-                            deadline.calculatedDueDate < today
-                              ? 'var(--color-urgent)'
-                              : 'var(--text)',
-                        }}
-                      >
-                        {formatDateTime(deadline.calculatedDueDate)}
-                      </span>
-                    </div>
-                    <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-faint)' }}>
-                      From {deadline.triggerDescription.toLowerCase()} (
-                      {formatDateTime(deadline.triggerDate)}) · confidence{' '}
-                      {deadline.confidence.toLowerCase()} · rule {deadline.calculationRule}
-                    </p>
-                    {deadline.warnings.map((warning) => (
-                      <p
-                        key={warning}
-                        style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--color-warn)' }}
-                      >
-                        {warning}
-                      </p>
-                    ))}
-                  </>
-                ) : (
-                  <>
-                    <strong style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-muted)' }}>
-                      {deadline.deadlineType.replace(/_/g, ' ').toLowerCase()}
-                    </strong>
-                    <p style={{ margin: '5px 0 0', fontSize: 13.5, color: 'var(--text-muted)' }}>
-                      {'message' in deadline ? deadline.message : 'Not calculated.'}
-                    </p>
-                  </>
-                )}
+                <div
+                  style={{ display: 'flex', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}
+                >
+                  <strong style={{ fontSize: 15, fontWeight: 600 }}>{deadline.label}</strong>
+                  <span
+                    className="fr-numeric"
+                    style={{
+                      fontSize: 15,
+                      color: deadline.date < today ? 'var(--color-urgent)' : 'var(--text)',
+                    }}
+                  >
+                    {formatDateTime(deadline.date)}
+                  </span>
+                </div>
+                <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-faint)' }}>
+                  {deadline.source === 'PRINTED_ON_NOTICE'
+                    ? 'Printed on your notice'
+                    : `${deadline.basis} · confidence ${deadline.confidence.toLowerCase()}`}
+                </p>
+                {deadline.warnings.map((warning: string) => (
+                  <p
+                    key={warning}
+                    style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--color-warn)' }}
+                  >
+                    {warning}
+                  </p>
+                ))}
+              </li>
+            ))}
+
+            {/* Dates we will not give, and why. Shown rather than omitted: a
+                missing row tells the user nothing, and a silently absent
+                deadline is indistinguishable from one that does not exist. */}
+            {view.refusedDeadlines.map((refused, index) => (
+              <li
+                key={`refused-${refused.label}`}
+                style={{
+                  padding: '14px 18px',
+                  borderTop: index === 0 && view.deadlines.length === 0 ? 'none' : '1px solid var(--border)',
+                }}
+              >
+                <strong style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-muted)' }}>
+                  {refused.label}
+                </strong>
+                <p style={{ margin: '5px 0 0', fontSize: 13.5, color: 'var(--text-muted)' }}>
+                  {refused.message}
+                </p>
               </li>
             ))}
           </ul>

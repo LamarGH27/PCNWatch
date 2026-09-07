@@ -169,6 +169,51 @@ describe('declared evidence is never counted as held evidence', () => {
  * like a working feature. The behaviour is covered by tests; this guards the
  * shape, at the two places the shape is decided.
  */
+/**
+ * The verification screen has to mean what it appears to mean.
+ *
+ * `collectVerifiedFacts` sends only ticked fields, and the submit button only
+ * ever demands ticks on the five fields in ALWAYS_VERIFY. Everything else — the
+ * issuing authority, the registration, the location, the printed deadlines —
+ * is displayed with a value read off the notice and no request to check it. If
+ * those start unticked they are silently discarded on submit, which is what
+ * sent a real Westminster case to the saved-case page reading "Authority not
+ * identified" after its owner had watched "Issuing authority: City of
+ * Westminster" on the previous screen.
+ *
+ * The behaviour is covered by tests that rebuild the confirmation map
+ * themselves; this pins the one line in the flow that builds it for real,
+ * because that line is where the bug was and a test that constructs its own
+ * input cannot notice it going away.
+ */
+describe('a field the user is not asked to check is accepted, not discarded', () => {
+  it('seeds the confirmation map from requiresVerification', () => {
+    const flow = readFileSync(resolve(ROOT, 'src/app/analyse/AnalyseFlow.tsx'), 'utf8');
+    const start = flow.indexOf("if (result.kind === 'EXTRACTED')");
+    expect(start, 'the extraction branch has moved').toBeGreaterThan(-1);
+    const branch = flow.slice(start, flow.indexOf('setStep({ kind: ', start));
+
+    expect(branch, 'the flow no longer seeds confirmations from the extraction').toMatch(
+      /setConfirmed\(\s*Object\.fromEntries\(/,
+    );
+    expect(branch).toMatch(/!f\.requiresVerification/);
+    // The empty seed is the bug: it throws away every field the screen did not
+    // demand a tick for.
+    expect(branch, 'confirmations are seeded empty again').not.toMatch(/setConfirmed\(\{\}\)/);
+  });
+
+  it('keeps the fields that must be checked out of the seed', () => {
+    // A seed that accepted everything would be worse than the bug: the user
+    // would never be asked to check the PCN number or the dates.
+    const extraction = readFileSync(resolve(ROOT, 'src/server/cases/extraction.ts'), 'utf8');
+    const start = extraction.indexOf('export const ALWAYS_VERIFY');
+    const list = extraction.slice(start, extraction.indexOf('];', start));
+    for (const field of ['pcnNumber', 'contraventionCode', 'incidentDate', 'issueDate', 'fullAmountPence']) {
+      expect(list, `${field} no longer always requires a tick`).toContain(field);
+    }
+  });
+});
+
 describe('a written account is not kept anywhere', () => {
   const CLIENT = resolve(ROOT, 'src/server/ai/client.ts');
 
