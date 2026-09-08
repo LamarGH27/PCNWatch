@@ -46,6 +46,9 @@ const WESTMINSTER: VerifiedFacts = {
   fullAmountPence: 13000,
   discountedAmountPence: 6500,
   discountDeadlinePrinted: '2026-08-28',
+  // Built by photographing the notice, as the real journey does. The round
+  // trip has to carry that through Postgres, not only through the mappers.
+  noticeSource: 'SCANNED',
 };
 
 const RINGGO: UserContext = {
@@ -104,7 +107,7 @@ const SELECT_COLUMNS = `
   issue_date, location_text, full_amount_pence, discounted_amount_pence,
   discount_deadline_printed, representation_deadline_printed,
   narrative_provided, context_answers, confirmed_assertions, declared_evidence,
-  resolved_facts, status, context_revision, updated_at
+  resolved_facts, status, context_revision, notice_source, updated_at
 `;
 
 /** Postgres returns dates as Date objects; the reader expects the ISO day. */

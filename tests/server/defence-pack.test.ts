@@ -53,6 +53,7 @@ function caseRecord(overrides: Partial<CaseRecord> = {}): CaseRecord {
       fullAmountPence: true,
     },
     evidenceItems: [],
+    noticeSource: 'SCANNED',
     vehicleRegistration: 'AB12 CDE',
     incidentTime: '14:30',
     closedAt: null,

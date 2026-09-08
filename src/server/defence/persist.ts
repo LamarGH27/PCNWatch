@@ -1,6 +1,6 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { logError } from '@/lib/errors';
-import type { DefencePack } from '@/core/defence/types';
+import { packStatusFor, type DefencePack, type PackStatus } from '@/core/defence/types';
 import type { DraftedChallenge } from './generate';
 import { checkStaleness, type Fingerprints, type Staleness } from './fingerprint';
 
@@ -15,6 +15,14 @@ import { checkStaleness, type Fingerprints, type Staleness } from './fingerprint
 
 export interface StoredPack {
   readonly id: string;
+  /**
+   * Whether this is a finished deliverable.
+   *
+   * Derived on read from what is actually stored rather than trusted from a
+   * column, so a row whose letter is empty cannot present itself as complete
+   * however it came to be written.
+   */
+  readonly status: PackStatus;
   readonly pack: DefencePack;
   readonly subject: string;
   /** What the model wrote. Never overwritten by an edit. */
@@ -192,8 +200,13 @@ function asRow(value: unknown): Record<string, unknown> {
 }
 
 function toStoredPack(row: Record<string, unknown>, current: Fingerprints): StoredPack {
+  const generatedBody = String(row.generated_body ?? '');
   return {
     id: String(row.id),
+    status: packStatusFor({
+      packBuilt: row.pack !== null && row.pack !== undefined,
+      letterDrafted: generatedBody.trim() !== '',
+    }),
     pack: row.pack as DefencePack,
     subject: '',
     generatedBody: String(row.generated_body ?? ''),

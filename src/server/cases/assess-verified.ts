@@ -59,6 +59,16 @@ export interface VerifiedFacts {
   /** Deadlines as printed on the notice, never computed. */
   readonly discountDeadlinePrinted?: string;
   readonly representationDeadlinePrinted?: string;
+  /**
+   * Whether these details were read off an uploaded notice or typed in.
+   *
+   * Not a fact about the contravention, which is why it sits at the end: it is
+   * a fact about how the case came to exist. The Defence Pack needs it because
+   * a case built from a photographed notice already has the notice, and telling
+   * that user to go and provide one is the product forgetting what it did
+   * ninety seconds earlier.
+   */
+  readonly noticeSource?: 'MANUAL' | 'SCANNED';
 }
 
 /*

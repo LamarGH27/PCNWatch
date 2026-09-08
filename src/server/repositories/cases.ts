@@ -38,6 +38,7 @@ export async function getCase(caseId: string): Promise<CaseResult> {
       .select(
         `id, pcn_number, authority_name_raw, notice_category, contravention_code,
          contravention_suffix, incident_date, incident_time, issue_date, location_text,
+         notice_source,
          vehicle_registration_text,
          full_amount_pence, discounted_amount_pence, procedural_stage,
          discount_deadline_printed, representation_deadline_printed,
@@ -162,6 +163,9 @@ function toCaseRecord(row: Row): CaseRecord {
     contraventionCode: (row.contravention_code as string | null) ?? null,
     contraventionSuffix: (row.contravention_suffix as string | null) ?? null,
     incidentDate: (row.incident_date as string | null) ?? null,
+    // Defaults to the weaker claim: an older row that predates the column is
+    // treated as typed in, never as a notice we hold.
+    noticeSource: row.notice_source === 'SCANNED' ? 'SCANNED' : 'MANUAL',
     // Both confirmed off the notice by the user. Held so evidence can be
     // compared against them rather than against a value nobody checked.
     vehicleRegistration: (row.vehicle_registration_text as string | null) ?? null,

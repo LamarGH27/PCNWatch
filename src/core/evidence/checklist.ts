@@ -37,6 +37,20 @@ export interface ChecklistInput {
    * number cannot accidentally credit uploads it has not verified.
    */
   readonly held?: Partial<Record<EvidenceType, number>>;
+  /**
+   * Whether the case was built from a notice PCNWatch read and the user confirmed.
+   *
+   * The notice is ESSENTIAL because every date and amount is checked against
+   * it — and on a scanned case that check has already happened, field by
+   * field. Leaving it listed as missing would mean a requirement the user can
+   * only satisfy by uploading the same document twice, and a gap they can
+   * never close.
+   *
+   * It satisfies the requirement and nothing more. The notice is the thing
+   * being challenged rather than evidence supporting a challenge, so it is
+   * deliberately absent from `provided` and cannot lift the evidence basis.
+   */
+  readonly sourceNoticeHeld?: boolean;
 }
 
 const BASELINE: readonly EvidenceRequirement[] = [
@@ -124,12 +138,13 @@ export function buildEvidenceChecklist(input: ChecklistInput): EvidenceChecklist
   const items: EvidenceChecklistItem[] = requirements
     .map((req) => {
       const itemCount = provided[req.type] ?? 0;
+      const satisfiedBySource = req.type === 'PCN_IMAGE' && input.sourceNoticeHeld === true;
       return {
         ...req,
         definition: EVIDENCE_DEFINITIONS[req.type],
-        provided: itemCount > 0,
+        provided: itemCount > 0 || satisfiedBySource,
         itemCount,
-        heldCount: held[req.type] ?? 0,
+        heldCount: (held[req.type] ?? 0) + (satisfiedBySource ? 1 : 0),
       };
     })
     .sort((a, b) => {

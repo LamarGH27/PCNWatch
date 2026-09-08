@@ -165,6 +165,49 @@ begin
 end;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- 6. Where the notice details came from
+-- ---------------------------------------------------------------------------
+--
+-- A scanned notice is a document PCNWatch read and the user confirmed field by
+-- field; an evidence upload is something they later attached as support. The
+-- Defence Pack needs the difference, and a case that says nothing must default
+-- to the weaker claim rather than to "we hold the notice".
+
+do $$
+declare
+  scanned uuid;
+  typed   uuid;
+  source  text;
+  failed  boolean := false;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', 'e0000000-0000-0000-0000-00000000000e', true);
+
+  -- Saying nothing means typed in.
+  insert into pcn_cases (pcn_number, notice_type, procedural_stage, status)
+  values ('WM90000002', 'PCN_POSTAL', 'NEW', 'VERIFIED')
+  returning id into typed;
+  select notice_source into source from pcn_cases where id = typed;
+  assert source = 'MANUAL', format('A case that said nothing defaulted to %s', source);
+
+  insert into pcn_cases (pcn_number, notice_type, procedural_stage, status, notice_source)
+  values ('WM90000003', 'PCN_POSTAL', 'NEW', 'VERIFIED', 'SCANNED')
+  returning id into scanned;
+  select notice_source into source from pcn_cases where id = scanned;
+  assert source = 'SCANNED', format('A scanned case recorded %s', source);
+
+  -- And the column is a closed pair, so a typo cannot invent a third meaning
+  -- that reads as neither.
+  begin
+    update pcn_cases set notice_source = 'UPLOADED' where id = typed;
+  exception when check_violation then
+    failed := true;
+  end;
+  assert failed, 'An unrecognised notice source was accepted.';
+end;
+$$;
+
 rollback;
 
 \echo '✓ 08_defence_pack'

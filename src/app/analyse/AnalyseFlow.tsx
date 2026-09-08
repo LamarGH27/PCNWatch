@@ -58,6 +58,15 @@ export function collectVerifiedFacts(
   values: Record<string, string>,
   confirmed: Record<string, boolean>,
   noticeType: VerifiedFacts['noticeType'],
+  /*
+   * Whether these values were read off an uploaded notice.
+   *
+   * Known here and nowhere else: by the time the case reaches the server the
+   * two paths look identical. Passed explicitly rather than inferred, because
+   * inferring it from "the fields are populated" would call a carefully typed
+   * case a scan.
+   */
+  noticeSource: VerifiedFacts['noticeSource'] = 'MANUAL',
 ): VerifiedFacts {
   const confirmedValue = (key: string): string | undefined => {
     if (!confirmed[key]) return undefined;
@@ -95,6 +104,7 @@ export function collectVerifiedFacts(
     discountedAmountPence: pence('discountedAmountPence'),
     discountDeadlinePrinted: date('discountDeadlinePrinted'),
     representationDeadlinePrinted: date('representationDeadlinePrinted'),
+    noticeSource,
   };
 }
 
@@ -728,7 +738,7 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
   if (step.kind === 'CONTEXT') {
     // The facts are recollected here rather than carried on the step, so the
     // questions always reflect the code the user last confirmed.
-    const facts = collectVerifiedFacts(values, confirmed, readNoticeType);
+    const facts = collectVerifiedFacts(values, confirmed, readNoticeType, verifySnapshot ? 'SCANNED' : 'MANUAL');
     return (
       <ContextStage
         contraventionCode={

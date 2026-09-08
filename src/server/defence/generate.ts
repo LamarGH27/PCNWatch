@@ -33,6 +33,8 @@ export type DraftOutcome =
       /** Said to the user. Never the model's own words — see reasonFor. */
       readonly what: string;
       readonly whatYouCanDo: string;
+      /** Constraints for a retry. Our categories, never the rejected text. */
+      readonly tighten: readonly string[];
     };
 
 export const DEFENCE_PACK_ENGINE_VERSION = `defence-1.0.0+${ASSESSMENT_ENGINE_VERSION}`;
@@ -51,6 +53,18 @@ export function establishedFacts(pack: DefencePack): GroundedStatement[] {
     if (text) facts.push({ text, source: 'VERIFIED_NOTICE_FACT', reference });
   };
   push(summary.pcnNumberMasked && `The notice number is on the letter head`, 'pcnNumber');
+  /*
+   * The registration, when the user confirmed it.
+   *
+   * It was absent, and on the case this feature exists for — "I paid by app
+   * but may have entered the wrong registration" — the registration is the
+   * entire point. A model asked to write that letter without it either omits
+   * the theory or reaches for a value it was not given.
+   */
+  push(
+    summary.vehicleRegistration && `The vehicle registration on the notice is ${summary.vehicleRegistration}`,
+    'vehicleRegistration',
+  );
   push(summary.contraventionCode && `Contravention code ${summary.contraventionCode}`, 'contraventionCode');
   push(summary.incidentDate && `The alleged contravention is dated ${summary.incidentDate}`, 'incidentDate');
   push(summary.location && `The location on the notice is ${summary.location}`, 'location');
@@ -77,9 +91,84 @@ export function establishedFacts(pack: DefencePack): GroundedStatement[] {
   });
 }
 
+/**
+ * What went wrong, in our words.
+ *
+ * A rejection can quote the response, including the fabricated sentence that
+ * caused it. Feeding that back to the model would invite it to reuse the
+ * phrasing, and it would put the fabrication one bug away from the user's
+ * screen. So the retry is told the category and nothing else.
+ */
+function tightenFrom(errors: readonly string[]): string[] {
+  const notes = new Set<string>();
+  for (const error of errors) {
+    if (/legally reviewed material|statute|regulation|ground|adjudicator|exemption|provision/i.test(error)) {
+      notes.add(
+        'Do not mention legislation, regulations, legal grounds, appeals in law, exemptions or what any tribunal has decided. Argue only the facts you were given.',
+      );
+    }
+    if (/Cited references/i.test(error)) {
+      notes.add('Return citedReferenceKeys as an empty list.');
+    }
+    if (/attributes|has not verified|not attached to this case/i.test(error)) {
+      notes.add(
+        'Every factualAssertion must use one of the exact reference identifiers in square brackets in the established facts. Do not invent one.',
+      );
+    }
+    if (/guarantee|probability|invalid/i.test(error)) {
+      notes.add(
+        'Do not say the notice is invalid, and do not predict the outcome. Ask for reconsideration.',
+      );
+    }
+  }
+  return [...notes];
+}
+
+/**
+ * One retry, and only one.
+ *
+ * The first draft is rejected by a guard often enough to matter — a model
+ * writing a careful letter reaches for a legal frame naturally — and losing
+ * the user's letter to one unlucky attempt is not acceptable in a paid
+ * product. A second attempt told what category it tripped is cheap and
+ * usually enough.
+ *
+ * Two is the limit. A third would be spending the user's money to arrive at
+ * the same answer, and a guard that fires twice is telling us something the
+ * prompt should fix rather than something to grind past.
+ */
+export const MAX_DRAFT_ATTEMPTS = 2;
+
 export async function draftChallenge(
   pack: DefencePack,
   caseId: string,
+): Promise<DraftOutcome> {
+  let tighten: readonly string[] = [];
+  let last: DraftOutcome | null = null;
+
+  for (let attempt = 1; attempt <= MAX_DRAFT_ATTEMPTS; attempt += 1) {
+    const outcome = await attemptDraft(pack, caseId, tighten);
+    if (outcome.kind === 'DRAFTED') return outcome;
+    last = outcome;
+    tighten = outcome.tighten;
+    // Nothing to tighten means the failure was not something a constraint
+    // would fix — an outage, a schema break — so a second identical attempt
+    // would only cost time.
+    if (tighten.length === 0) break;
+  }
+
+  return last ?? {
+    kind: 'NOT_DRAFTED',
+    what: 'We could not produce the draft letter.',
+    whatYouCanDo: 'The rest of your Defence Pack is complete. You can ask us to try the letter again.',
+    tighten: [],
+  };
+}
+
+async function attemptDraft(
+  pack: DefencePack,
+  caseId: string,
+  tighten: readonly string[],
 ): Promise<DraftOutcome> {
   const established = establishedFacts(pack);
 
@@ -104,7 +193,18 @@ export async function draftChallenge(
             reference: fact.reference,
           })),
           weaknesses: pack.weaknesses.map((w) => w.what),
-          legalPosition: pack.legalPosition.explanation,
+          /*
+           * A flag, not the paragraph.
+           *
+           * `legalPosition.explanation` contains "the statutory grounds of
+           * representation", which is the exact phrase the validator rejects
+           * when nothing is reviewed. Passing it handed the model forbidden
+           * wording in the middle of the case material and then threw away
+           * every draft that repeated it.
+           */
+          mayCiteLaw: pack.legalPosition.canStateGrounds,
+          citableReferenceKeys: pack.permittedReferences.referenceKeys,
+          tighten,
         }),
       },
     ],
@@ -125,6 +225,7 @@ export async function draftChallenge(
   });
 
   if (!result.ok || !result.data) {
+    const nextTighten = tightenFrom(result.errors);
     return {
       kind: 'NOT_DRAFTED',
       /*
@@ -139,6 +240,7 @@ export async function draftChallenge(
           : 'We could not produce the draft letter.',
       whatYouCanDo:
         'The rest of your Defence Pack is complete and unchanged, and any letter you already had is still here. You can ask us to try the letter again.',
+      tighten: nextTighten,
     };
   }
 

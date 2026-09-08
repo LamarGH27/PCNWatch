@@ -26,6 +26,10 @@ const WESTMINSTER: VerifiedFacts = {
   fullAmountPence: 13000,
   discountedAmountPence: 6500,
   discountDeadlinePrinted: '2026-08-28',
+  // This case was built by photographing the notice, which is what the whole
+  // journey does. The round trip has to carry that: a Defence Pack that loses
+  // it tells the user to go and provide the notice they started with.
+  noticeSource: 'SCANNED',
 };
 
 const RINGGO: UserContext = {
@@ -86,7 +90,9 @@ describe('a saved case rebuilds the same assessment', () => {
   it('survives a case with almost nothing confirmed', () => {
     const sparse: VerifiedFacts = { noticeType: 'UNKNOWN' };
     const stored = roundTrip(sparse, EMPTY_USER_CONTEXT);
-    expect(stored.facts).toEqual(sparse);
+    // Comes back with the source filled in as MANUAL, which is the safe
+    // reading of a case that never said: never "we hold the notice".
+    expect(stored.facts).toEqual({ ...sparse, noticeSource: 'MANUAL' });
     expect(stored.context).toEqual(EMPTY_USER_CONTEXT);
   });
 });

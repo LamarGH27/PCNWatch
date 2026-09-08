@@ -62,6 +62,15 @@ export interface CaseRecord {
   readonly verifiedFields: Readonly<Record<string, boolean>>;
   /** Every evidence row on the case, at whatever stage it has reached. */
   readonly evidenceItems: readonly EvidenceItem[];
+  /**
+   * Whether the case was built from an uploaded notice or typed in.
+   *
+   * A scanned notice is a document PCNWatch read and the user confirmed field
+   * by field. It is deliberately not an `pcn_evidence` row — that table holds
+   * what the user later attached as support — but it is still a notice we have
+   * seen, and the Defence Pack must not ask for it again.
+   */
+  readonly noticeSource: 'MANUAL' | 'SCANNED';
   /** Read off the notice and confirmed. Used to compare evidence against. */
   readonly vehicleRegistration: string | null;
   readonly incidentTime: string | null;
@@ -164,6 +173,7 @@ export function buildCaseView(record: CaseRecord, today: string): CaseView {
     assertedGroundKeys: record.assertedGroundKeys,
     provided: counts.supporting,
     held: counts.held,
+    sourceNoticeHeld: record.noticeSource === 'SCANNED',
   });
 
   const evidenceComparisons = compareEvidence(

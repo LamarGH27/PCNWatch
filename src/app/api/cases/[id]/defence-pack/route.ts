@@ -100,8 +100,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     );
   }
 
+  /*
+   * A Pack whose letter did not generate is not a finished product.
+   *
+   * `ok` used to be true whenever the sections saved, so the UI presented a
+   * £5.99 deliverable with its headline item missing and no indication that
+   * anything had gone wrong. The status now says which of the three things
+   * happened, and the client renders the difference.
+   */
   return NextResponse.json({
     ok: true as const,
+    status: saved.value.status,
     pack: saved.value,
     letter:
       drafted.kind === 'DRAFTED'

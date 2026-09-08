@@ -54,6 +54,7 @@ function caseRecord(overrides: Partial<CaseRecord> = {}): CaseRecord {
     },
     // Held, read and confirmed. Anything short of that supports nothing.
     evidenceItems: [evidenceItem('PCN_IMAGE', 'VERIFIED')],
+    noticeSource: 'MANUAL',
     vehicleRegistration: null,
     incidentTime: null,
     closedAt: null,

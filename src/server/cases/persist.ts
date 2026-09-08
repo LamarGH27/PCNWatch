@@ -191,6 +191,7 @@ export function toCaseRow(facts: VerifiedFacts, context: UserContext): Record<st
     vehicle_registration_text: facts.vehicleRegistration ?? null,
     authority_name_raw: facts.authorityName ?? null,
     notice_type: facts.noticeType,
+    notice_source: facts.noticeSource ?? 'MANUAL',
     // Derived rather than sent, so the stored classification and the one the
     // assessment uses come from the same function.
     notice_category:
@@ -248,6 +249,7 @@ export function fromCaseRow(row: Record<string, unknown>): StoredCase {
     updatedAt: String(row.updated_at ?? ''),
     facts: {
       noticeType: (row.notice_type as VerifiedFacts['noticeType']) ?? 'UNKNOWN',
+      noticeSource: (row.notice_source as VerifiedFacts['noticeSource']) ?? 'MANUAL',
       authorityName: text('authority_name_raw'),
       pcnNumber: text('pcn_number'),
       vehicleRegistration: text('vehicle_registration_text'),

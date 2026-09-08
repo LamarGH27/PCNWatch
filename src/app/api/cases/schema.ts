@@ -41,6 +41,12 @@ export const caseFieldsSchema = z.object({
   discountedAmountPence: z.number().int().min(0).max(1_000_000).optional(),
   discountDeadlinePrinted: optionalDate,
   representationDeadlinePrinted: optionalDate,
+  /*
+   * How the case was built. A closed pair, defaulting to the weaker claim:
+   * a request that says nothing is treated as typed in, so the only way to
+   * record that a notice was scanned is to say so.
+   */
+  noticeSource: z.enum(['MANUAL', 'SCANNED']).default('MANUAL'),
 
   /*
    * What the user has told us about what happened.

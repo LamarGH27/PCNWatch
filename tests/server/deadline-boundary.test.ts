@@ -61,6 +61,7 @@ function caseRecord(over: Partial<CaseRecord> = {}): CaseRecord {
     assertedGroundKeys: [],
     verifiedFields: { pcnNumber: true, contraventionCode: true, issueDate: true },
     evidenceItems: [],
+    noticeSource: 'MANUAL',
     vehicleRegistration: null,
     incidentTime: null,
     closedAt: null,

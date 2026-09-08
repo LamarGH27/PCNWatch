@@ -3,9 +3,9 @@ import { supportsAssessment, type EvidenceItem } from '@/core/evidence/lifecycle
 import { EVIDENCE_FIELD_LABELS } from '@/core/evidence/analysis';
 import type { EvidenceComparison } from '@/core/evidence/compare';
 import type { EvidenceType } from '@/core/evidence/types';
-import { reconcileContext } from '@/core/context/reconcile';
+import { evidenceRelevance, reconcileContext, type CanonicalFact } from '@/core/context/reconcile';
 import { ASSERTION_LABELS } from '@/core/context/types';
-import { isMitigationAssertion } from '@/core/context/questions';
+import { evidenceForAssertion, isMitigationAssertion } from '@/core/context/questions';
 import { getReference, referencesByCategory, toCitation } from '@/core/reference/store';
 import type { CaseRecord, CaseView } from '@/server/cases/case-view';
 import type {
@@ -13,6 +13,7 @@ import type {
   CaseSummarySection,
   ChecklistEntry,
   DefencePack,
+  EvidenceChecklistSections,
   EvidenceSection,
   EvidenceStanding,
   EvidenceSummaryItem,
@@ -22,6 +23,7 @@ import type {
   PermittedReferences,
   Weakness,
 } from '@/core/defence/types';
+import { MAX_MOST_USEFUL } from '@/core/defence/types';
 
 /**
  * The Defence Pack, built from the record and nothing else.
@@ -61,7 +63,8 @@ export function buildDefencePack(record: CaseRecord, view: CaseView): DefencePac
   const legalPosition = buildLegalPosition(record);
   const factualPoints = buildFactualPoints(reconciled, evidence, view.evidenceComparisons, record);
   const weaknesses = buildWeaknesses(record, view, evidence, reconciled);
-  const checklist = buildChecklist(view, record);
+  const checklist = buildChecklist(record, evidence, view, reconciled.facts);
+  const checklistSections = splitChecklist(checklist, reconciled.facts);
 
   return {
     caseSummary,
@@ -70,6 +73,7 @@ export function buildDefencePack(record: CaseRecord, view: CaseView): DefencePac
     factualPoints,
     weaknesses,
     checklist,
+    checklistSections,
     dates: { deadlines: view.deadlines, refused: view.refusedDeadlines },
     legalPosition,
     evidenceBasis: view.assessment.basis,
@@ -104,7 +108,16 @@ function buildCaseSummary(record: CaseRecord, view: CaseView): CaseSummarySectio
     authority: record.authorityName,
     authorityRecognised: record.authoritySlug !== null,
     pcnNumberMasked: maskPcnNumber(verified('pcnNumber', record.pcnNumber, 'The PCN number')),
-    vehicleRegistration: record.vehicleRegistration,
+    /*
+     * Gated like every other field.
+     *
+     * It was ungated, which was harmless while nothing cited it — and stopped
+     * being harmless the moment the drafting material started offering it as a
+     * fact the letter may assert. An unverified value there is a reference the
+     * validator will not accept, so the whole draft would be rejected for a
+     * fact the pack should never have offered.
+     */
+    vehicleRegistration: verified('vehicleRegistration', record.vehicleRegistration, 'The vehicle registration'),
     contraventionCode: verified('contraventionCode', record.contraventionCode, 'The contravention code'),
     contravention,
     location: verified('location', record.locationText, 'The location on the notice'),
@@ -203,7 +216,7 @@ function buildEvidence(
     .filter((d) => d.held === 'HAVE' && !heldTypes.has(d.type))
     .map((d) => EVIDENCE_DEFINITIONS[d.type]?.label ?? d.type);
 
-  return { items, declaredButNotHeld };
+  return { items, declaredButNotHeld, sourceNoticeHeld: record.noticeSource === 'SCANNED' };
 }
 
 function standingFor(
@@ -276,6 +289,7 @@ function buildFactualPoints(
       id: `point-evidence-differs-${item.evidenceId}`,
       headline: `${item.label}: something on this document does not match your notice`,
       detail: item.contradicts.join(' '),
+      basis: 'VERIFIED_EVIDENCE',
       grounds: item.verifiedFacts,
       citations,
     });
@@ -290,6 +304,7 @@ function buildFactualPoints(
       id: `point-evidence-agrees-${item.evidenceId}`,
       headline: `${item.label}: this document is about the vehicle and day on your notice`,
       detail: item.supports.join(' '),
+      basis: 'VERIFIED_EVIDENCE',
       grounds: item.verifiedFacts,
       citations,
     });
@@ -302,21 +317,37 @@ function buildFactualPoints(
    * with a document behind it is worth putting to an authority; the same
    * account with nothing behind it is in the weaknesses section instead.
    */
-  const corroboratedTopics = new Set(
+  /*
+   * The account, shown whether or not a document backs it.
+   *
+   * This used to be skipped entirely when no evidence had been uploaded, on the
+   * reasoning that an uncorroborated claim is not a "strongest point". The
+   * effect was that the Westminster case — where the user had confirmed they
+   * paid, paid by app, and may have entered the wrong registration — produced
+   * "there is nothing here the record supports yet". The product held the only
+   * material theory of the case and declined to mention it.
+   *
+   * Withholding it is not caution, it is unhelpfulness. Presenting it as
+   * established would be the real failure, and that is what the label prevents:
+   * every one of these carries USER_ACCOUNT and says so on the page and in the
+   * letter, and an evidence-backed point still outranks it in this list.
+   */
+  const corroborated = new Set(
     comparisons.filter((c) => c.outcome !== 'NOT_COMPARED').map((c) => c.evidenceType as string),
   );
   for (const fact of reconciled.facts) {
     if (fact.stance !== 'ASSERTED') continue;
     if (isMitigationAssertion(fact.topic)) continue;
     if (fact.topic === 'OTHER_REQUIRES_REVIEW') continue;
-    if (evidence.items.length === 0) continue;
 
     points.push({
       id: `point-account-${fact.topic}`,
       headline: ASSERTION_LABELS[fact.topic],
-      detail: corroboratedTopics.size > 0
-        ? 'This is your account. The documents you have provided are listed above so an authority can weigh it against them.'
-        : 'This is your account, and it is not yet corroborated by anything we hold.',
+      detail:
+        corroborated.size > 0
+          ? 'This is your account. The documents you have provided are listed above so an authority can weigh it against them.'
+          : 'This is your account. Nothing we hold corroborates it yet, and an authority will read it as your recollection rather than as established fact.',
+      basis: 'USER_ACCOUNT',
       grounds: [
         {
           text: ASSERTION_LABELS[fact.topic],
@@ -370,6 +401,13 @@ function buildWeaknesses(
   }
 
   for (const missing of view.evidence.missingEssential) {
+    /*
+     * The notice itself no longer appears here on a scanned case: the
+     * checklist is told the source notice is held, so it never reaches
+     * `missingEssential`. A pack telling somebody "the penalty charge notice
+     * has not been provided" ninety seconds after they photographed it was the
+     * product forgetting what it had just done.
+     */
     weaknesses.push({
       id: `weak-missing-${missing}`,
       what: `${EVIDENCE_DEFINITIONS[missing]?.label ?? missing} has not been provided.`,
@@ -405,18 +443,33 @@ function buildWeaknesses(
 
 /* ---- F. Checklist -------------------------------------------------------- */
 
-function buildChecklist(view: CaseView, record: CaseRecord): ChecklistEntry[] {
+function buildChecklist(
+  record: CaseRecord,
+  evidence: EvidenceSection,
+  view: CaseView,
+  facts: readonly CanonicalFact[],
+): ChecklistEntry[] {
+  const sourceNoticeHeld = evidence.sourceNoticeHeld;
+  void facts;
   const heldTypes = new Set(record.evidenceItems.filter(supportsAssessment).map((i) => i.type));
   const relevant = new Set(view.evidence.items.map((i) => i.type));
 
-  const entries: ChecklistEntry[] = view.evidence.items.map((item) => ({
-    type: item.type,
-    label: item.definition.label,
-    standing: heldTypes.has(item.type) ? 'ALREADY_HAVE' : 'RECOMMENDED',
-    note: heldTypes.has(item.type)
-      ? 'Provided and checked by you.'
-      : item.reason,
-  }));
+  const entries: ChecklistEntry[] = view.evidence.items.map((item) => {
+    // The notice the case was built from is already in hand, whatever the
+    // evidence table says.
+    const have = heldTypes.has(item.type) || (item.type === 'PCN_IMAGE' && sourceNoticeHeld);
+    return {
+      type: item.type,
+      label: item.definition.label,
+      standing: have ? 'ALREADY_HAVE' : 'RECOMMENDED',
+      note: have
+        ? item.type === 'PCN_IMAGE' && !heldTypes.has(item.type)
+          ? 'You photographed this when you started, and we read it with you.'
+          : 'Provided and checked by you.'
+        : item.reason,
+      importance: item.importance,
+    } satisfies ChecklistEntry;
+  });
 
   /*
    * What this case does not need.
@@ -432,10 +485,64 @@ function buildChecklist(view: CaseView, record: CaseRecord): ChecklistEntry[] {
       label: EVIDENCE_DEFINITIONS[type].label,
       standing: 'NOT_RELEVANT',
       note: 'Not something this contravention normally turns on.',
+      importance: 'SUPPORTING',
     });
   }
 
   return entries;
+}
+
+/**
+ * The three things worth gathering, and everything else.
+ *
+ * A flat list of six items reads as a tribunal bundle, and to somebody deciding
+ * whether to challenge at all it makes the job look bigger than it is. So the
+ * same entries are split: the three the existing ranking engine puts highest,
+ * and the rest kept behind a disclosure rather than dropped.
+ *
+ * The ranking is `evidenceRelevance`, not a new one — the same function that
+ * orders the evidence guidance on the free assessment, and the same function
+ * that refuses to rank the authority's own material down because the user
+ * disputes the allegation.
+ */
+function splitChecklist(
+  checklist: readonly ChecklistEntry[],
+  facts: readonly CanonicalFact[],
+): EvidenceChecklistSections {
+  const priorityOrder = { PRIORITY: 0, STANDARD: 1, LESS_LIKELY: 2 } as const;
+  const importanceOrder = { ESSENTIAL: 0, STRONG: 1, SUPPORTING: 2 } as const;
+
+  const recommended = checklist
+    .filter((entry) => entry.standing === 'RECOMMENDED')
+    .map((entry, index) => {
+      const supports = facts
+        .map((fact) => fact.topic)
+        .filter((topic) => evidenceForAssertion(topic).includes(entry.type));
+      const { priority } = evidenceRelevance(entry.type, supports, facts);
+      return { entry, priority, index };
+    })
+    /*
+     * Essential first, then what the account makes most relevant.
+     *
+     * Two rankings, and importance leads because they answer different
+     * questions. `evidenceRelevance` says what this user's story turns on;
+     * importance says what any case of this kind needs. A missing essential
+     * item outranks a merely relevant one — a manually entered case with no
+     * notice attached should be asked for the notice before anything else.
+     */
+    .sort(
+      (a, b) =>
+        importanceOrder[a.entry.importance] - importanceOrder[b.entry.importance] ||
+        priorityOrder[a.priority] - priorityOrder[b.priority] ||
+        a.index - b.index,
+    );
+
+  return {
+    alreadyHave: checklist.filter((e) => e.standing === 'ALREADY_HAVE'),
+    mostUseful: recommended.slice(0, MAX_MOST_USEFUL).map((r) => r.entry),
+    other: recommended.slice(MAX_MOST_USEFUL).map((r) => r.entry),
+    notRelevant: checklist.filter((e) => e.standing === 'NOT_RELEVANT'),
+  };
 }
 
 /* ---- Legal position ------------------------------------------------------ */

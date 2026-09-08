@@ -359,38 +359,106 @@ ${JSON_ONLY}
 /**
  * The established facts, rendered for the model.
  *
- * Built from the Defence Pack, which was built from the record. The model never
- * sees the case — it sees this, and this contains only what survived
- * verification.
+ * Structured lines only, and deliberately no prose taken from the pack.
+ *
+ * The first version passed `pack.legalPosition.explanation` through as a
+ * "LEGAL POSITION" paragraph. That paragraph contains the words "the statutory
+ * grounds of representation" — and the validator rejects any letter containing
+ * that phrase when no reviewed legal material exists, which is every case
+ * today. So the input told the model, in forbidden words, that it must not use
+ * forbidden words; a model that explained the position in the letter produced a
+ * draft that was thrown away, and the user got "we produced a draft letter and
+ * would not accept it".
+ *
+ * Nothing here now carries phrasing the letter is not allowed to echo. What the
+ * model may and may not say lives in the system prompt, where it is an
+ * instruction rather than a sentence sitting in the middle of the case
+ * material waiting to be quoted.
  */
-export function challengeDraftInstruction(pack: {
+export function challengeDraftInstruction(input: {
   caseSummary: Record<string, unknown>;
   established: readonly { text: string; supportedBy: string; reference: string }[];
   weaknesses: readonly string[];
-  legalPosition: string;
+  /** Whether any reviewed legal material was supplied. Currently never. */
+  mayCiteLaw: boolean;
+  /** Reference keys the letter may cite. Empty means cite nothing. */
+  citableReferenceKeys: readonly string[];
+  /** Added on a retry, in our words. Never the model's own rejected text. */
+  tighten?: readonly string[];
 }): string {
   const lines: string[] = [];
 
   lines.push('THE NOTICE');
-  for (const [key, value] of Object.entries(pack.caseSummary)) {
+  for (const [key, value] of Object.entries(input.caseSummary)) {
     if (value === null || value === undefined || value === '') continue;
     lines.push(`- ${key}: ${String(value)}`);
   }
 
   lines.push('', 'ESTABLISHED FACTS — the only things the letter may assert');
-  for (const fact of pack.established) {
+  for (const fact of input.established) {
     lines.push(`- [${fact.supportedBy}] [${fact.reference}] ${fact.text}`);
   }
 
-  if (pack.weaknesses.length > 0) {
-    lines.push(
-      '',
-      'KNOWN AGAINST THE WRITER — do not conceal these, and do not argue them away',
-    );
-    for (const weakness of pack.weaknesses) lines.push(`- ${weakness}`);
+  /*
+   * Said explicitly rather than left to be inferred.
+   *
+   * The schema requires `citedReferenceKeys`, the system prompt says to cite
+   * "from the list you were given", and no list was ever given — so a model
+   * inclined to be helpful invented a key, and the citation check rejected the
+   * whole draft. An empty list is a fine answer; not knowing that it is the
+   * expected answer is not.
+   */
+  lines.push('', 'REFERENCES YOU MAY CITE');
+  lines.push(
+    input.citableReferenceKeys.length === 0
+      ? '- NONE. Return citedReferenceKeys as an empty list.'
+      : input.citableReferenceKeys.map((key) => `- ${key}`).join('\n'),
+  );
+
+  if (input.weaknesses.length > 0) {
+    lines.push('', 'KNOWN AGAINST THE WRITER — do not conceal these, and do not argue them away');
+    for (const weakness of input.weaknesses) lines.push(`- ${weakness}`);
   }
 
-  lines.push('', 'LEGAL POSITION', pack.legalPosition);
+  /*
+   * How to write the letter, given what is and is not available.
+   *
+   * Positive instructions rather than a restatement of the prohibition. A
+   * letter that argues facts and asks for reconsideration is a real, useful
+   * letter; the failure mode this replaces was a model that knew it could not
+   * cite law and wrote a paragraph explaining that instead of writing the
+   * letter.
+   */
+  lines.push('', 'HOW TO WRITE THIS LETTER');
+  if (!input.mayCiteLaw) {
+    lines.push(
+      '- Argue the facts above and nothing else. Set out what the notice says, what the',
+      '  writer says happened, and ask the authority to reconsider and cancel the notice.',
+      '- Do not explain what you are not relying on, and do not describe the basis of the',
+      '  letter in legal terms. Write the letter; do not write about the letter.',
+      '- Asking an authority to reconsider, to exercise its discretion, and to cancel the',
+      '  notice is exactly right and needs no legal basis stated.',
+    );
+  } else {
+    lines.push('- You may rely on the reviewed references listed above, and on nothing else.');
+  }
+  lines.push(
+    '- Offer to provide anything further that would help.',
+    '- Attribute every claim the writer makes about what happened: "my recollection is",',
+    '  "I believe", "I understand". Never state one as established fact.',
+  );
+
+  if (input.tighten && input.tighten.length > 0) {
+    /*
+     * A second attempt, constrained by what went wrong.
+     *
+     * Our own categories, never the rejected text: quoting a fabricated
+     * sentence back at the model is an invitation to reuse it, and it would
+     * put the fabrication one bug away from the user's screen.
+     */
+    lines.push('', 'YOUR PREVIOUS ATTEMPT WAS REJECTED. AVOID THIS:');
+    for (const note of input.tighten) lines.push(`- ${note}`);
+  }
 
   return lines.join('\n');
 }

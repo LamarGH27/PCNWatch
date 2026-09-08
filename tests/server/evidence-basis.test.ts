@@ -16,6 +16,14 @@ import { evidenceItem } from '../fixtures/evidence';
 
 const TODAY = '2026-02-10';
 
+/** How many items of one type actually support the case. */
+function providedCount(
+  view: ReturnType<typeof buildCaseView>,
+  type: string,
+): number {
+  return view.evidence.items.find((item) => item.type === type)?.itemCount ?? 0;
+}
+
 function caseRecord(overrides: Partial<CaseRecord> = {}): CaseRecord {
   return {
     id: '11111111-1111-4111-8111-111111111111',
@@ -50,6 +58,7 @@ function caseRecord(overrides: Partial<CaseRecord> = {}): CaseRecord {
       fullAmountPence: true,
     },
     evidenceItems: [],
+    noticeSource: 'SCANNED',
     vehicleRegistration: 'AB12 CDE',
     incidentTime: '14:30',
     closedAt: null,
@@ -62,7 +71,10 @@ describe('what an upload is worth to the assessment', () => {
     // The user has said they hold the receipt. Nobody has seen it.
     const view = buildCaseView(caseRecord(), TODAY);
     expect(view.assessment.basis).toBe('WEAK_EVIDENCE_BASIS');
-    expect(view.evidence.providedCount).toBe(0);
+    // Specific to the receipt rather than a total: the case was built from a
+    // scanned notice, which legitimately counts as held, and a bare count
+    // would now be measuring that instead of the declaration.
+    expect(providedCount(view, 'PARKING_APP_RECEIPT')).toBe(0);
     expect(view.assessment.missingInformation.join(' ')).toContain('We have not seen it');
   });
 
@@ -79,7 +91,6 @@ describe('what an upload is worth to the assessment', () => {
     const receipt = view.evidence.items.find((i) => i.type === 'PARKING_APP_RECEIPT');
     expect(receipt?.heldCount).toBe(1);
     expect(receipt?.provided).toBe(false);
-    expect(view.evidence.providedCount).toBe(0);
     expect(view.evidence.awaitingCheckCount).toBeGreaterThan(0);
     expect(view.assessment.basis).toBe('WEAK_EVIDENCE_BASIS');
   });
@@ -101,7 +112,7 @@ describe('what an upload is worth to the assessment', () => {
       }),
       TODAY,
     );
-    expect(view.evidence.providedCount).toBe(0);
+    expect(providedCount(view, 'PARKING_APP_RECEIPT')).toBe(0);
     expect(view.assessment.basis).toBe('WEAK_EVIDENCE_BASIS');
   });
 
@@ -129,7 +140,7 @@ describe('what an upload is worth to the assessment', () => {
       }),
       TODAY,
     );
-    expect(view.evidence.providedCount).toBe(0);
+    expect(providedCount(view, 'PARKING_APP_RECEIPT')).toBe(0);
     expect(view.assessment.basis).toBe('WEAK_EVIDENCE_BASIS');
   });
 
@@ -140,7 +151,7 @@ describe('what an upload is worth to the assessment', () => {
     });
     const view = buildCaseView(caseRecord({ evidenceItems: [failed] }), TODAY);
     expect(view.evidenceItems[0]?.status).toBe('UPLOADED');
-    expect(view.evidence.providedCount).toBe(0);
+    expect(providedCount(view, 'PARKING_APP_RECEIPT')).toBe(0);
     expect(view.assessment.basis).toBe('WEAK_EVIDENCE_BASIS');
   });
 });

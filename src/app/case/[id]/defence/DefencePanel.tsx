@@ -3,7 +3,12 @@
 import { useState } from 'react';
 import { Card } from '@/components/primitives';
 import { EVIDENCE_BASIS_LABELS } from '@/core/assessment/types';
-import { PROVENANCE_LABELS, type DefencePack } from '@/core/defence/types';
+import {
+  POINT_BASIS_LABELS,
+  PROVENANCE_LABELS,
+  type DefencePack,
+  type PackStatus,
+} from '@/core/defence/types';
 
 /**
  * The Defence Pack, on screen.
@@ -17,6 +22,7 @@ import { PROVENANCE_LABELS, type DefencePack } from '@/core/defence/types';
 
 export interface StoredPackView {
   readonly id: string;
+  readonly status: PackStatus;
   readonly pack: DefencePack;
   readonly generatedBody: string;
   readonly editedBody: string | null;
@@ -52,6 +58,7 @@ export function DefencePanel({
       const response = await fetch(`/api/cases/${caseId}/defence-pack`, { method: 'POST' });
       const result = (await response.json()) as {
         ok?: boolean;
+        status?: PackStatus;
         pack?: StoredPackView;
         message?: string;
         letter?: { drafted: boolean; what?: string; whatYouCanDo?: string };
@@ -140,6 +147,23 @@ export function DefencePanel({
   return (
     <>
       {problem && <Problem>{problem}</Problem>}
+
+      {stored.status === 'PACK_PARTIAL' && (
+        <p
+          role="status"
+          style={{
+            marginTop: 16,
+            padding: '12px 14px',
+            borderRadius: 8,
+            border: '1px solid var(--color-urgent)',
+            fontSize: 14,
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>This pack is not finished.</strong> Everything below is yours and is correct, but
+          we could not produce the challenge letter. Rebuilding usually works.
+        </p>
+      )}
 
       {stored.staleness.stale && (
         <p
@@ -267,6 +291,26 @@ export function DefencePanel({
             {pack.factualPoints.map((point) => (
               <li key={point.id}>
                 <strong style={{ fontWeight: 600 }}>{point.headline}</strong>
+                {/*
+                  What the point rests on, on the point itself.
+
+                  A reader skimming a list headed "strongest factual points"
+                  will take every line as established unless each one says
+                  otherwise. Evidence-backed points come first; this is what
+                  stops the rest reading as though they were.
+                */}
+                <div
+                  className="fr-eyebrow"
+                  style={{
+                    marginTop: 2,
+                    color:
+                      point.basis === 'VERIFIED_EVIDENCE'
+                        ? 'var(--color-ok)'
+                        : 'var(--text-faint)',
+                  }}
+                >
+                  {POINT_BASIS_LABELS[point.basis]}
+                </div>
                 <div style={{ marginTop: 3 }}>{point.detail}</div>
               </li>
             ))}
@@ -294,27 +338,40 @@ export function DefencePanel({
       </Section>
 
       <Section title="Before you submit">
-        {(['ALREADY_HAVE', 'RECOMMENDED', 'NOT_RELEVANT'] as const).map((standing) => {
-          const entries = pack.checklist.filter((e) => e.standing === standing);
-          if (entries.length === 0) return null;
-          return (
-            <div key={standing} style={{ marginBottom: 12 }}>
-              <div className="fr-eyebrow" style={{ marginBottom: 4 }}>
-                {CHECKLIST_HEADINGS[standing]}
-              </div>
-              <ul style={listStyle}>
-                {entries.map((entry) => (
-                  <li key={entry.type}>
-                    {entry.label}
-                    {standing !== 'NOT_RELEVANT' && (
-                      <span style={{ color: 'var(--text-muted)' }}> — {entry.note}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+        {/*
+          Three things, not six.
+
+          A flat list of everything the reference store can justify asking for
+          reads as a tribunal bundle, and to somebody deciding whether to
+          challenge at all it makes the job look bigger than it is. The rest is
+          a disclosure away rather than gone.
+        */}
+        {pack.checklistSections.alreadyHave.length > 0 && (
+          <ChecklistGroup heading="Already have" entries={pack.checklistSections.alreadyHave} />
+        )}
+        {pack.checklistSections.mostUseful.length > 0 && (
+          <ChecklistGroup heading="Most useful" entries={pack.checklistSections.mostUseful} />
+        )}
+        {(pack.checklistSections.other.length > 0 ||
+          pack.checklistSections.notRelevant.length > 0) && (
+          <details style={{ marginTop: 6 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 14, fontWeight: 550 }}>
+              Other evidence that may help
+            </summary>
+            <div style={{ marginTop: 8 }}>
+              {pack.checklistSections.other.length > 0 && (
+                <ChecklistGroup heading="Also worth having" entries={pack.checklistSections.other} />
+              )}
+              {pack.checklistSections.notRelevant.length > 0 && (
+                <ChecklistGroup
+                  heading="Not relevant to this case"
+                  entries={pack.checklistSections.notRelevant}
+                  showNotes={false}
+                />
+              )}
             </div>
-          );
-        })}
+          </details>
+        )}
       </Section>
 
       <Section title="Important dates">
@@ -425,11 +482,31 @@ export function DefencePanel({
   );
 }
 
-const CHECKLIST_HEADINGS: Record<string, string> = {
-  ALREADY_HAVE: 'Already have',
-  RECOMMENDED: 'Recommended before submitting',
-  NOT_RELEVANT: 'Not relevant to this case',
-};
+function ChecklistGroup({
+  heading,
+  entries,
+  showNotes = true,
+}: {
+  heading: string;
+  entries: readonly { type: string; label: string; note: string }[];
+  showNotes?: boolean;
+}) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className="fr-eyebrow" style={{ marginBottom: 4 }}>
+        {heading}
+      </div>
+      <ul style={listStyle}>
+        {entries.map((entry) => (
+          <li key={entry.type}>
+            {entry.label}
+            {showNotes && <span style={{ color: 'var(--text-muted)' }}> — {entry.note}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 const listStyle = { margin: 0, paddingLeft: 18, display: 'grid', gap: 5, fontSize: 14.5 } as const;
 
