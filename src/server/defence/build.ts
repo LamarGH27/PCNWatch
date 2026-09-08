@@ -7,6 +7,7 @@ import { evidenceRelevance, reconcileContext, type CanonicalFact } from '@/core/
 import { ASSERTION_LABELS } from '@/core/context/types';
 import { evidenceForAssertion, isMitigationAssertion } from '@/core/context/questions';
 import { getReference, referencesByCategory, toCitation } from '@/core/reference/store';
+import { applicableApproved } from '@/core/reference/candidates/store';
 import type { CaseRecord, CaseView } from '@/server/cases/case-view';
 import type {
   AccountSection,
@@ -559,9 +560,29 @@ function splitChecklist(
  * Pack starts being able to cite it without anybody remembering to change this.
  */
 function buildLegalPosition(record: CaseRecord): LegalPositionSection {
-  const reviewedGrounds = referencesByCategory('STATUTORY_GROUND').filter(
-    (r) => r.reviewStatus === 'REVIEWED',
-  );
+  /*
+   * Per case, not per product.
+   *
+   * This asked whether *any* statutory ground anywhere had been reviewed, which
+   * would have turned legal drafting on for every case in PCNWatch the moment
+   * the first proposition was signed off — including contraventions and
+   * authorities nobody had looked at. Approval is granular because the review
+   * is: a ground confirmed against Schedule 1 for representations against a
+   * Notice to Owner says nothing about an informal challenge to a code 23.
+   */
+  const scenario = {
+    contraventionCode: record.contraventionCode,
+    authoritySlug: record.authoritySlug,
+    noticeType: null,
+    proceduralStage: record.proceduralStage,
+  };
+
+  const reviewedGrounds = [
+    // The legacy store, which has never had a reviewed ground in it.
+    ...referencesByCategory('STATUTORY_GROUND').filter((r) => r.reviewStatus === 'REVIEWED'),
+    // The candidate bundle, which gates far more tightly — see `isApproved`.
+    ...applicableApproved(scenario, 'STATUTORY_GROUND'),
+  ];
 
   const unreviewedGrounds = record.assertedGroundKeys.filter(
     (key) => getReference(key)?.reviewStatus !== 'REVIEWED',

@@ -337,3 +337,28 @@ describe('a pack is only finished when its letter is', () => {
     );
   });
 });
+
+describe('the Defence Pack while the reference bundle is unreviewed', () => {
+  it('states no legal ground for the Westminster code 12 case', () => {
+    /*
+     * Fail closed, per case. The candidate bundle names the grounds this
+     * scenario would engage and none of them is approved, so the pack argues
+     * facts exactly as it did before the bundle existed.
+     */
+    const built = pack();
+    expect(built.legalPosition.canStateGrounds).toBe(false);
+    expect(built.legalPosition.explanation).toMatch(/facts, not legal grounds/i);
+    expect(built.permittedReferences.referenceKeys).toEqual([]);
+  });
+
+  it('is not switched on globally by a single approval elsewhere', () => {
+    /*
+     * `canStateGrounds` used to ask whether any ground anywhere had been
+     * reviewed, which would have turned legal drafting on for every case in
+     * the product the moment the first proposition was signed off. It is now
+     * asked per case, of propositions scoped to that case.
+     */
+    const other = pack({ contraventionCode: '23', authoritySlug: 'camden', authorityName: 'Camden' });
+    expect(other.legalPosition.canStateGrounds).toBe(false);
+  });
+});

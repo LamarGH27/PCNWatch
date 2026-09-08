@@ -756,6 +756,66 @@ describe('the fast journey does not skip what it must not skip', () => {
   }
 });
 
+/**
+ * Nothing approves its own legal proposition.
+ *
+ * The behaviour is covered by tests that call `isApproved` directly. These pin
+ * the shape at the two places where a shortcut would be invisible: a candidate
+ * file that quietly ships an approval, and a gate that stops asking for one.
+ */
+describe('legal propositions are approved by people', () => {
+  const BUNDLE = resolve(ROOT, 'src/core/reference/candidates/code-12-westminster.ts');
+
+  it('ships no approval in the prepared bundle', () => {
+    /*
+     * A model prepared these candidates. If one of them carried REVIEWED, a
+     * model would have approved a legal proposition — which is the single
+     * thing this whole layer exists to prevent, and it would look like a
+     * working feature.
+     */
+    const source = withoutComments(readFileSync(BUNDLE, 'utf8'));
+    expect(source).not.toMatch(/decision:\s*'REVIEWED'/);
+    expect(source).not.toMatch(/reviewer:\s*'(?!\s*$)/);
+    expect(source).toMatch(/review: UNREVIEWED/);
+  });
+
+  it('carries no source text nobody read', () => {
+    // Every excerpt is null because no source was opened. An excerpt written
+    // from recollection would look exactly like evidence of a check.
+    const source = withoutComments(readFileSync(BUNDLE, 'utf8'));
+    expect(source).not.toMatch(/excerpt:\s*'/);
+    expect(source).toMatch(/excerpt: null/);
+  });
+
+  it('requires a person and an opened source before anything is usable', () => {
+    const source = withoutComments(
+      readFileSync(resolve(ROOT, 'src/core/reference/candidates/store.ts'), 'utf8'),
+    );
+    const start = source.indexOf('export function isApproved');
+    expect(start, 'the approval gate is gone').toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf('\n}', start));
+
+    for (const condition of [
+      /decision !== 'REVIEWED'/,
+      /reviewer === null/,
+      /retrieval !== 'RETRIEVED'/,
+      /excerpt === null/,
+      /supersededBy !== null/,
+      /TIER_MAY_ESTABLISH/,
+    ]) {
+      expect(body, `the approval gate no longer checks ${condition}`).toMatch(condition);
+    }
+  });
+
+  it('asks whether this case has a ground, not whether the product does', () => {
+    const source = withoutComments(readFileSync(resolve(ROOT, 'src/server/defence/build.ts'), 'utf8'));
+    const start = source.indexOf('function buildLegalPosition');
+    const body = source.slice(start, source.indexOf('\n}', start));
+    // Scoped to the case, so one approval cannot switch drafting on everywhere.
+    expect(body).toMatch(/applicableApproved\(scenario, 'STATUTORY_GROUND'\)/);
+  });
+});
+
 describe('routes that read live data are not prerendered', () => {
   const APP = resolve(ROOT, 'src/app');
   const REPOSITORIES = resolve(ROOT, 'src/server/repositories');
