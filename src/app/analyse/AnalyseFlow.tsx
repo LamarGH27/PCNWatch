@@ -3,6 +3,12 @@
 import { useCallback, useId, useRef, useState } from 'react';
 import { EVIDENCE_DEFINITIONS } from '@/core/evidence/definitions';
 import type { VerifiedAssessment, VerifiedFacts } from '@/server/cases/assess-verified';
+import {
+  SUMMARY_HEADLINE_FIELDS,
+  confirmableFromSummary,
+  summariseExtraction,
+  type ExtractionSummary,
+} from '@/core/notices/extraction-summary';
 import type { UserContext } from '@/core/context/types';
 import { normaliseContraventionCode } from '@/core/reference/store';
 import { stageForNoticeType } from '@/core/case/stage-from-notice';
@@ -95,6 +101,21 @@ export function collectVerifiedFacts(
 type Step =
   | { kind: 'UPLOAD' }
   | { kind: 'READING' }
+  /*
+   * The compact "we read your PCN" card.
+   *
+   * The default landing place after a successful read. VERIFY still exists and
+   * is one tap away — nothing was removed — but it is no longer what a person
+   * meets first, because fourteen checkboxes is not what checking a parking
+   * ticket should feel like.
+   */
+  | {
+      kind: 'SUMMARY';
+      fields: FieldView[];
+      legibility: string;
+      unreadable: string[];
+      summary: ExtractionSummary;
+    }
   | { kind: 'VERIFY'; fields: FieldView[]; legibility: string; unreadable: string[] }
   | { kind: 'OUT_OF_SCOPE'; message: string; explanation: string }
   | { kind: 'MANUAL' }
@@ -327,7 +348,19 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
             unreadable: result.unreadableRegions ?? [],
           };
           setVerifySnapshot(snapshot);
-          setStep({ kind: 'VERIFY', ...snapshot });
+
+          /*
+           * Straight to the summary when everything was read clearly, and to
+           * the full field list when it was not. The decision is made from the
+           * same per-field data the old screen used, so a notice that genuinely
+           * needs checking still gets checked.
+           */
+          const summary = summariseExtraction(fields);
+          setStep(
+            summary.fastPathAvailable
+              ? { kind: 'SUMMARY', ...snapshot, summary }
+              : { kind: 'VERIFY', ...snapshot },
+          );
         } else if (result.kind === 'OUT_OF_SCOPE') {
           setStep({
             kind: 'OUT_OF_SCOPE',
@@ -521,6 +554,94 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
             Enter details by hand
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (step.kind === 'SUMMARY') {
+    const { summary } = step;
+    const headline = summary.shown.filter((f) => SUMMARY_HEADLINE_FIELDS.includes(f.key));
+    const rest = summary.shown.filter((f) => !SUMMARY_HEADLINE_FIELDS.includes(f.key));
+
+    return (
+      <div style={{ marginTop: 28 }}>
+        <div className="fr-panel" style={{ padding: 20 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 630, margin: 0 }}>We read your PCN</h2>
+
+          <dl style={{ margin: '16px 0 0', display: 'grid', gap: 10 }}>
+            {headline.map((field) => (
+              <div key={field.key} style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <dt style={{ minWidth: 130, fontSize: 14, color: 'var(--text-muted)' }}>
+                  {field.label}
+                </dt>
+                <dd style={{ margin: 0, fontSize: 15.5, fontWeight: 560 }}>
+                  {displayValue(field, values)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+
+          {/*
+            Everything the button will confirm is on screen. The headline rows
+            are what somebody recognises their ticket by; this line carries the
+            rest, smaller — but present, because confirming a value nobody was
+            shown is not confirmation whatever the button says.
+          */}
+          {rest.length > 0 && (
+            <p style={{ margin: '14px 0 0', fontSize: 13, color: 'var(--text-faint)' }}>
+              Also read:{' '}
+              {rest
+                .map((field) => `${field.label.toLowerCase()} ${displayValue(field, values)}`)
+                .join(' · ')}
+            </p>
+          )}
+        </div>
+
+        <div style={{ marginTop: 18, display: 'grid', gap: 10 }}>
+          <button
+            type="button"
+            className="fr-touch"
+            style={primaryButton(true, true)}
+            onClick={() => {
+              /*
+               * One deliberate act, confirming exactly what was displayed.
+               *
+               * `confirmableFromSummary` reads the same array the card
+               * rendered, so the set confirmed and the set shown cannot drift
+               * apart. Fields that were unreadable or doubtful are not in it
+               * and never reached this screen — those went to VERIFY instead.
+               */
+              setConfirmed((prev) => ({
+                ...prev,
+                ...Object.fromEntries(confirmableFromSummary(summary).map((key) => [key, true])),
+              }));
+              setStep({ kind: 'CONTEXT' });
+            }}
+          >
+            Looks right — continue
+          </button>
+
+          <button
+            type="button"
+            className="fr-touch"
+            style={{ ...secondaryButton(true), width: '100%' }}
+            onClick={() =>
+              setStep({
+                kind: 'VERIFY',
+                fields: step.fields,
+                legibility: step.legibility,
+                unreadable: step.unreadable,
+              })
+            }
+          >
+            Something is wrong — check details
+          </button>
+        </div>
+
+        <p style={{ margin: '12px 0 0', fontSize: 12.5, color: 'var(--text-faint)' }}>
+          Nothing is treated as correct until you say so. Checking the details lets you change any
+          field one by one.
+        </p>
       </div>
     );
   }
@@ -854,6 +975,18 @@ function secondaryButton(enabled: boolean): React.CSSProperties {
     fontWeight: 550,
     cursor: enabled ? 'pointer' : 'not-allowed',
   };
+}
+
+/** What the card shows for a field, preferring anything the user has edited. */
+function displayValue(field: FieldView, values: Record<string, string>): string {
+  const edited = values[field.key];
+  if (edited !== undefined && edited !== '') return edited;
+  if (field.value === null) return 'not read';
+  if (field.key === 'fullAmountPence' || field.key === 'discountedAmountPence') {
+    const pence = Number(field.value);
+    return Number.isFinite(pence) ? `£${(pence / 100).toFixed(2)}` : String(field.value);
+  }
+  return String(field.value);
 }
 
 const linkButton: React.CSSProperties = {

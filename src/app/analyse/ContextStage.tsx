@@ -12,6 +12,11 @@ import {
   type UserContext,
 } from '@/core/context/types';
 import { reconcileContext, type FactConflict } from '@/core/context/reconcile';
+import {
+  CONFIRM_REASON_LABELS,
+  selectFollowUps,
+  triageNarrative,
+} from '@/core/context/triage';
 import type { EvidenceType } from '@/core/evidence/types';
 import type { NoticeType, ProceduralStage } from '@/core/reference/types';
 
@@ -153,8 +158,18 @@ export function ContextStage({
 }) {
   // Two panels rather than one long form: the open question first, then the
   // specifics. On a phone the whole of step one fits above the fold.
-  const [panel, setPanel] = useState<'ACCOUNT' | 'UNDERSTOOD' | 'DETAIL' | 'RESOLVE'>('ACCOUNT');
+  const [panel, setPanel] = useState<
+    'ACCOUNT' | 'UNDERSTOOD' | 'FOLLOW_UPS' | 'DETAIL' | 'RESOLVE'
+  >('ACCOUNT');
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  /*
+   * Progressive disclosure, not removal.
+   *
+   * The accepted readings are one link away from the full yes / no / not-what-
+   * I-meant controls they always had. Nothing about the confirmation screen was
+   * taken out; it stopped being the first thing everybody meets.
+   */
+  const [showAllReadings, setShowAllReadings] = useState(false);
   const [reading, setReading] = useState(false);
   const [readingProblem, setReadingProblem] = useState<string | null>(null);
 
@@ -170,7 +185,9 @@ export function ContextStage({
   const readAccount = useCallback(async () => {
     const narrative = draft.narrative.trim();
     if (narrative === '') {
-      setPanel('DETAIL');
+      // Nothing written, so nothing to read and nothing to check. The follow-up
+      // step has nothing to ask either, and says so rather than pretending.
+      setPanel('FOLLOW_UPS');
       return;
     }
 
@@ -199,7 +216,34 @@ export function ContextStage({
         return;
       }
 
-      onChange({ ...draft, extracted: body.assertions, decisions: {} });
+      /*
+       * Accept what does not need a person, and ask about what does.
+       *
+       * Every reading used to be put to the user one at a time, which meant
+       * somebody who had just written three sentences was asked six questions
+       * about the three sentences they had written. `triageNarrative` decides
+       * which readings genuinely need a look — a claim about a permit, a
+       * doubtful read, an open stance, a contradiction — and the rest are
+       * accepted and shown back compactly, with an edit route.
+       *
+       * The accepted ones are written into `decisions` in exactly the shape a
+       * hand-confirmed answer takes, so nothing downstream knows or could act
+       * on how a fact came to be confirmed.
+       */
+      const triage = triageNarrative(
+        body.assertions,
+        Object.entries(draft.answers).map(([questionId, answer]) => ({ questionId, answer })),
+      );
+      onChange({
+        ...draft,
+        extracted: body.assertions,
+        decisions: Object.fromEntries(
+          triage.accepted.map(({ assertion }) => [
+            assertion.kind,
+            { confirmed: true, stance: assertion.stance } as AssertionDecision,
+          ]),
+        ),
+      });
       setPanel('UNDERSTOOD');
     } catch {
       setReadingProblem(
@@ -290,22 +334,79 @@ export function ContextStage({
   if (panel === 'UNDERSTOOD') {
     const confirmedCount = confirmedAssertionsOf(draft).length;
 
+    /*
+     * Which readings still need a person.
+     *
+     * Recomputed here rather than carried from `readAccount`, so that editing
+     * an answer on a later screen and coming back re-runs the contradiction
+     * check against what the user has since said.
+     */
+    const triage = triageNarrative(
+      draft.extracted,
+      Object.entries(draft.answers).map(([questionId, answer]) => ({ questionId, answer })),
+    );
+    const askAbout = showAllReadings ? draft.extracted : triage.mustConfirm.map((t) => t.assertion);
+    const acceptedQuietly = showAllReadings ? [] : triage.accepted;
+
     return (
       <div style={{ marginTop: 28 }}>
         <div className="fr-eyebrow" style={{ marginBottom: 6 }}>
-          Step 3 of 4 — checking we understood
+          What we understood
         </div>
         <h2 style={{ fontSize: 20, fontWeight: 640, margin: '0 0 8px' }}>
-          We understood your account as follows
+          {askAbout.length > 0 ? 'One or two things to check' : 'We understood this as…'}
         </h2>
-        <p style={{ margin: '0 0 4px', fontSize: 14.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          This is our reading of what you wrote, not a decision about your case. Confirm anything
-          we got right and correct anything we did not.
+        <p style={{ margin: '0 0 6px', fontSize: 14.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          This is our reading of what you wrote, not a decision about your case.
         </p>
+        {/*
+          What is actually happening, said plainly.
+
+          The old screen promised "nothing here counts until you confirm it",
+          which was true when every reading was put to the user one at a time
+          and is not true now. Leaving that sentence up would have been the
+          worst of both: a faster journey that still claimed the slower one's
+          guarantee.
+        */}
         <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-faint)', lineHeight: 1.5 }}>
-          Nothing here counts until you confirm it. Anything you leave alone is ignored
-          completely.
+          {acceptedQuietly.length > 0
+            ? 'We have taken the points below from your account. Change anything we read wrongly — and anything you leave unanswered above is left out of your assessment.'
+            : 'Anything you leave unanswered here is left out of your assessment.'}
         </p>
+
+        {/*
+          Accepted, and shown back rather than asked about.
+
+          A confident reading of an ordinary claim does not need a decision from
+          somebody who has just written the sentence it came from. What it does
+          need is to be visible and changeable, which is what this is: the list
+          of what we took from the account, with one link to open all of it up.
+        */}
+        {acceptedQuietly.length > 0 && (
+          <div style={{ ...noteBox, marginBottom: 16 }}>
+            <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4, fontSize: 14 }}>
+              {acceptedQuietly.map(({ assertion, label }) => (
+                <li key={assertion.kind}>{label}</li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => setShowAllReadings(true)}
+              style={{
+                marginTop: 10,
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                fontSize: 13.5,
+                textDecoration: 'underline',
+                cursor: 'pointer',
+                color: 'var(--color-signal-600)',
+              }}
+            >
+              Edit what we understood
+            </button>
+          </div>
+        )}
 
         {readingProblem && <div style={noteBox}>{readingProblem}</div>}
 
@@ -318,7 +419,7 @@ export function ContextStage({
         )}
 
         <div style={{ display: 'grid', gap: 12 }}>
-          {draft.extracted.map((assertion) => {
+          {askAbout.map((assertion) => {
             const decision = draft.decisions[assertion.kind];
             const setDecision = (next: AssertionDecision) =>
               onChange({ ...draft, decisions: { ...draft.decisions, [assertion.kind]: next } });
@@ -335,6 +436,21 @@ export function ContextStage({
                 <p style={{ margin: '4px 0 0', fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                   From what you wrote: {assertion.summary}
                 </p>
+                {/*
+                  Why this one is being asked about at all, when others were
+                  not. Somebody shown two questions out of six is owed the
+                  reason those two were picked.
+                */}
+                {(() => {
+                  const reason = triage.mustConfirm.find(
+                    (t) => t.assertion.kind === assertion.kind,
+                  )?.reason;
+                  return reason ? (
+                    <p style={{ margin: '4px 0 0', fontSize: 12.5, color: 'var(--text-faint)' }}>
+                      {CONFIRM_REASON_LABELS[reason]}
+                    </p>
+                  ) : null;
+                })()}
                 {assertion.kind === 'OTHER_REQUIRES_REVIEW' && (
                   <p style={{ margin: '6px 0 0', fontSize: 12.5, color: 'var(--text-faint)' }}>
                     This did not fit any of the checks we run automatically. We would rather tell
@@ -382,7 +498,7 @@ export function ContextStage({
           <button
             type="button"
             className="fr-touch"
-            onClick={() => setPanel('DETAIL')}
+            onClick={() => setPanel('FOLLOW_UPS')}
             style={primary(true)}
           >
             Continue
@@ -407,8 +523,129 @@ export function ContextStage({
     );
   }
 
+  if (panel === 'FOLLOW_UPS') {
+    /*
+     * At most three questions, and only about what the account actually said.
+     *
+     * The full question set is still here and one link away. What changed is
+     * that it stopped being compulsory: a person who has told us they paid by
+     * app and picked the wrong registration is asked whether they still have
+     * the session, and then given their assessment.
+     */
+    const facts = reconcileContext(
+      Object.entries(draft.answers).map(([questionId, answer]) => ({ questionId, answer })),
+      confirmedAssertionsOf(draft),
+      Object.entries(draft.resolutions).map(([topic, stance]) => ({
+        topic: topic as ConfirmedAssertion['kind'],
+        stance,
+      })),
+    ).facts;
+
+    const followUps = selectFollowUps({
+      facts,
+      declared: Object.keys(draft.evidence) as EvidenceType[],
+    });
+
+    const conflicted = reconcileContext(
+      Object.entries(draft.answers).map(([questionId, answer]) => ({ questionId, answer })),
+      confirmedAssertionsOf(draft),
+      Object.entries(draft.resolutions).map(([topic, stance]) => ({
+        topic: topic as ConfirmedAssertion['kind'],
+        stance,
+      })),
+    ).conflicts;
+
+    return (
+      <div style={{ marginTop: 28 }}>
+        <div className="fr-eyebrow" style={{ marginBottom: 6 }}>
+          Nearly there
+        </div>
+        <h2 style={{ fontSize: 20, fontWeight: 640, margin: '0 0 8px' }}>
+          {followUps.length === 0 ? 'That is everything we need' : 'One or two quick questions'}
+        </h2>
+        <p style={{ margin: '0 0 16px', fontSize: 14.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          {followUps.length === 0
+            ? 'You can add evidence later — it is not needed for your assessment.'
+            : 'Answering these helps us tell you how well evidenced your case is. You can skip them.'}
+        </p>
+
+        <div style={{ display: 'grid', gap: 12 }}>
+          {followUps.map((followUp) => (
+            <fieldset key={followUp.type} style={card}>
+              <legend style={{ fontSize: 14.5, fontWeight: 550, padding: 0, lineHeight: 1.45 }}>
+                {followUp.prompt}
+              </legend>
+              {followUp.reason && (
+                <p style={{ margin: '4px 0 0', fontSize: 12.5, color: 'var(--text-faint)' }}>
+                  {followUp.reason}
+                </p>
+              )}
+              <div style={choiceRow}>
+                {(
+                  [
+                    ['HAVE', 'Yes'],
+                    ['DO_NOT_HAVE', 'No'],
+                    ['NOT_SURE', 'Not sure'],
+                  ] as const
+                ).map(([value, label]) => (
+                  <Choice
+                    key={value}
+                    name={`follow-up-${followUp.type}`}
+                    label={label}
+                    selected={draft.evidence[followUp.type] === value}
+                    onSelect={() =>
+                      onChange({
+                        ...draft,
+                        evidence: { ...draft.evidence, [followUp.type]: value },
+                      })
+                    }
+                  />
+                ))}
+              </div>
+            </fieldset>
+          ))}
+        </div>
+
+        <div
+          style={{
+            position: 'sticky',
+            bottom: 0,
+            background: 'var(--surface)',
+            borderTop: '1px solid var(--border)',
+            paddingTop: 14,
+            paddingBottom: 14,
+            marginTop: 18,
+            display: 'grid',
+            gap: 10,
+          }}
+        >
+          <button
+            type="button"
+            className="fr-touch"
+            onClick={() => (conflicted.length > 0 ? setPanel('RESOLVE') : onSubmit())}
+            style={primary(true)}
+          >
+            {conflicted.length > 0 ? 'Check two answers first' : 'See my assessment'}
+          </button>
+          {/*
+            The full question set, kept and moved rather than removed. Somebody
+            who wants to answer everything still can; nobody has to.
+          */}
+          <button
+            type="button"
+            className="fr-touch"
+            onClick={() => setPanel('DETAIL')}
+            style={secondary}
+          >
+            Answer more questions
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (panel === 'RESOLVE') {
-    return <ResolvePanel draft={draft} onChange={onChange} onDone={() => setPanel('DETAIL')} />;
+    return <ResolvePanel draft={draft} onChange={onChange} onDone={() => setPanel('FOLLOW_UPS')} />;
   }
 
   const answeredCount = Object.keys(draft.answers).length;

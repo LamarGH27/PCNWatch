@@ -217,8 +217,18 @@ describe('a field the user is not asked to check is accepted, not discarded', ()
   it('keeps the fields that must be checked out of the seed', () => {
     // A seed that accepted everything would be worse than the bug: the user
     // would never be asked to check the PCN number or the dates.
-    const extraction = readFileSync(resolve(ROOT, 'src/server/cases/extraction.ts'), 'utf8');
+    /*
+     * The list moved to core so the browser could read the policy without
+     * pulling the extraction pipeline into a client bundle. The guard follows
+     * it: what matters is that the five fields still always require a tick,
+     * not which file the array happens to sit in.
+     */
+    const extraction = readFileSync(
+      resolve(ROOT, 'src/core/notices/verification-policy.ts'),
+      'utf8',
+    );
     const start = extraction.indexOf('export const ALWAYS_VERIFY');
+    expect(start, 'the always-verify list is gone').toBeGreaterThan(-1);
     const list = extraction.slice(start, extraction.indexOf('];', start));
     for (const field of ['pcnNumber', 'contraventionCode', 'incidentDate', 'issueDate', 'fullAmountPence']) {
       expect(list, `${field} no longer always requires a tick`).toContain(field);
@@ -665,6 +675,85 @@ describe('the Defence Pack is built before it is written', () => {
     // The off-Vercel fallback is unchanged.
     expect(body).toMatch(/NODE_ENV !== 'production'/);
   });
+});
+
+/**
+ * Making the journey quicker must not make it looser.
+ *
+ * Every one of these is a shortcut that would be invisible in use and would
+ * look exactly like a faster product. The behaviour is covered by tests; these
+ * pin the shape at the places where the fast path meets a trust boundary.
+ */
+describe('the fast journey does not skip what it must not skip', () => {
+  it('confirms only what the summary displayed', () => {
+    /*
+     * The invariant the whole simplification rests on. "Looks right" is a real
+     * confirmation because the user saw the values. A second list of keys
+     * would be a place for the shown set and the confirmed set to disagree,
+     * and the way they would disagree is by confirming something nobody saw.
+     */
+    const source = withoutComments(
+      readFileSync(resolve(ROOT, 'src/core/notices/extraction-summary.ts'), 'utf8'),
+    );
+    const start = source.indexOf('export function confirmableFromSummary');
+    expect(start, 'confirmableFromSummary is gone').toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf('\n}', start));
+
+    expect(body).toMatch(/summary\.shown\.map/);
+    // Never from the full field list, and never from mustCheck.
+    expect(body).not.toMatch(/mustCheck/);
+  });
+
+  it('keeps an unreadable or doubtful field out of the one-tap path', () => {
+    const source = withoutComments(
+      readFileSync(resolve(ROOT, 'src/core/notices/extraction-summary.ts'), 'utf8'),
+    );
+    const start = source.indexOf('export function summariseExtraction');
+    const body = source.slice(start, source.indexOf('\n}\n', start));
+
+    expect(body).toMatch(/field\.value === null/);
+    expect(body).toMatch(/field\.confidence < FIELD_VERIFICATION_THRESHOLD/);
+    // One tap is offered only when nothing is left that needs a person.
+    expect(body).toMatch(/mustCheck\.length === 0/);
+  });
+
+  it('never auto-accepts a claim that a document or entitlement existed', () => {
+    /*
+     * These become "I held a valid resident permit" in a letter to a council.
+     * A confident reading is not enough, because it is the one mistake an
+     * authority can disprove outright.
+     */
+    const source = withoutComments(resolveTriage());
+    const start = source.indexOf('ALWAYS_CONFIRM_ASSERTIONS');
+    expect(start, 'the always-confirm list is gone').toBeGreaterThan(-1);
+    const list = source.slice(start, source.indexOf('];', start));
+
+    for (const kind of ['HELD_PERMIT', 'PERMIT_VALID', 'BLUE_BADGE_PRESENT', 'OTHER_REQUIRES_REVIEW']) {
+      expect(list, `${kind} would now be accepted without a person looking`).toContain(kind);
+    }
+  });
+
+  it('escalates a reading that contradicts an answer, rather than accepting one side', () => {
+    const source = withoutComments(resolveTriage());
+    const start = source.indexOf('function confirmReasonFor');
+    const body = source.slice(start, source.indexOf('\n}', start));
+
+    // The conflict check comes first, so nothing else can accept past it.
+    expect(body.indexOf('CONFLICTS_WITH_ANSWER')).toBeGreaterThan(-1);
+    expect(body.indexOf('CONFLICTS_WITH_ANSWER')).toBeLessThan(body.indexOf('return null'));
+  });
+
+  it('never lets the account rule out the authority’s own material', () => {
+    // The invariant from the evidence ranking work, restated for follow-ups.
+    const source = withoutComments(resolveTriage());
+    const start = source.indexOf('function notApplicable');
+    const body = source.slice(start, source.indexOf('\n}', start));
+    expect(body).toMatch(/isIndependentEvidence\(type\)/);
+  });
+
+  function resolveTriage(): string {
+    return readFileSync(resolve(ROOT, 'src/core/context/triage.ts'), 'utf8');
+  }
 });
 
 describe('routes that read live data are not prerendered', () => {

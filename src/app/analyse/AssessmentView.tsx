@@ -40,6 +40,32 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/**
+ * What to do next, from the basis the engine produced.
+ *
+ * Deliberately about evidence rather than outcome. "Weak" means thinly
+ * evidenced and the advice says so; it never becomes "you are unlikely to win",
+ * which is a different claim this product does not make.
+ */
+function nextStepFor(basis: string, hasGap: boolean): string {
+  if (basis === 'INSUFFICIENT_INFORMATION') {
+    return 'Tell us a little more about what happened, and we can say more.';
+  }
+  if (hasGap) {
+    return 'Build your challenge now, or add the missing evidence first to make it stronger.';
+  }
+  return 'Build your challenge when you are ready.';
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      <dt style={{ minWidth: 110, fontSize: 13.5, color: 'var(--text-muted)' }}>{label}</dt>
+      <dd style={{ margin: 0, fontSize: 14.5, flex: '1 1 220px' }}>{value}</dd>
+    </div>
+  );
+}
+
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div
@@ -109,11 +135,27 @@ export function AssessmentView({
     );
   }
 
+  /*
+   * The five things somebody wants first.
+   *
+   * The full assessment is unchanged and one link away; what changed is that it
+   * is no longer the first thing on the screen. A person who has spent ninety
+   * seconds on this wants to know what we make of it, what is missing, and what
+   * to do — not to read every finding before they can tell.
+   *
+   * Every value here comes off the same deterministic assessment as before.
+   * Nothing is recomputed, softened or rounded for the summary.
+   */
+  const biggestGap = result.evidenceGuidance[0] ?? null;
+  const headlineFinding =
+    assessment.findings.find((f) => f.category === 'FACTUAL_DISPUTE') ?? assessment.findings[0];
+  const nextStep = nextStepFor(assessment.basis, biggestGap !== null);
+
   return (
     <div style={{ marginTop: 24 }}>
-      <div className="fr-panel" style={{ padding: '16px 18px' }}>
+      <div className="fr-panel" style={{ padding: '18px 20px' }}>
         <div className="fr-eyebrow" style={{ marginBottom: 4 }}>
-          Free assessment
+          Your assessment
         </div>
         <h2 style={{ fontSize: 19, fontWeight: 640 }}>
           {EVIDENCE_BASIS_LABELS[assessment.basis]}
@@ -124,7 +166,99 @@ export function AssessmentView({
         <p style={{ margin: '10px 0 0', fontSize: 13, color: 'var(--text-faint)' }}>
           This describes the evidence you currently have, not your chance of winning an appeal.
         </p>
+
+        <dl style={{ margin: '16px 0 0', display: 'grid', gap: 12 }}>
+          {headlineFinding && (
+            <SummaryRow label="What matters" value={headlineFinding.issue} />
+          )}
+          <SummaryRow
+            label="Biggest gap"
+            value={
+              biggestGap
+                ? `${EVIDENCE_DEFINITIONS[biggestGap.type]?.label ?? biggestGap.type}${
+                    biggestGap.reason ? ` — ${biggestGap.reason}` : ''
+                  }`
+                : 'Nothing obvious is missing.'
+            }
+          />
+          <SummaryRow label="Next step" value={nextStep} />
+        </dl>
       </div>
+
+      {/*
+        The commercial step, straight after the assessment.
+
+        Not behind a case-management page: somebody who has just been told their
+        case is weakly evidenced should be able to see what the paid thing is
+        and what it contains without navigating anywhere.
+      */}
+      {caseId && (
+        <div
+          className="fr-panel"
+          style={{ padding: '18px 20px', marginTop: 14, borderColor: 'var(--border-strong)' }}
+        >
+          <h2 style={{ fontSize: 17.5, fontWeight: 630, margin: 0 }}>
+            Build my challenge — £5.99
+          </h2>
+          <ul
+            style={{
+              margin: '10px 0 14px',
+              paddingLeft: 18,
+              display: 'grid',
+              gap: 4,
+              fontSize: 14,
+              color: 'var(--text-muted)',
+            }}
+          >
+            <li>A challenge letter written from your case</li>
+            <li>Your strongest factual points</li>
+            <li>What could weaken it, said plainly</li>
+            <li>An evidence checklist before you send</li>
+            <li>Copy or print it yourself</li>
+          </ul>
+          <a
+            href={`/case/${caseId}/defence`}
+            className="fr-touch"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0 22px',
+              background: 'var(--color-ink-900)',
+              color: 'var(--color-ink-50)',
+              borderRadius: 'var(--radius-md)',
+              fontSize: 15,
+              fontWeight: 550,
+              textDecoration: 'none',
+            }}
+          >
+            Build my challenge
+          </a>
+        </div>
+      )}
+
+      {/* Optional, and said as an offer rather than a requirement. */}
+      {caseId && (
+        <div className="fr-panel" style={{ padding: '16px 18px', marginTop: 12 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 620, margin: 0 }}>Strengthen your case</h2>
+          <p style={{ margin: '6px 0 10px', fontSize: 14, color: 'var(--text-muted)' }}>
+            Upload supporting evidence and PCNWatch will check what it actually shows. This is
+            optional — your assessment and your challenge work without it.
+          </p>
+          <a href={`/case/${caseId}/evidence`} style={{ fontSize: 14.5 }}>
+            Add evidence →
+          </a>
+        </div>
+      )}
+
+      <details style={{ marginTop: 14 }}>
+        <summary
+          className="fr-touch"
+          style={{ cursor: 'pointer', fontSize: 15, fontWeight: 550, listStyle: 'revert' }}
+        >
+          See full analysis
+        </summary>
+        <div style={{ marginTop: 8 }}>
 
       {result.authority.coverageNote && (
         <div
@@ -460,7 +594,9 @@ export function AssessmentView({
             Check this location on the map
           </Link>
         )}
-      </div>
+        </div>
+        </div>
+      </details>
     </div>
   );
 }

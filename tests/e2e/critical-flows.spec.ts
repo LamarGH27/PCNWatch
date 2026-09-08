@@ -23,6 +23,56 @@ import { expect, test } from '@playwright/test';
  * The limiter stays live, at its real setting, and a genuine regression in it
  * would still be caught.
  */
+
+/**
+ * The panel shown once the account has been read.
+ *
+ * Its heading depends on whether anything needs checking: "One or two things to
+ * check" when a reading was doubtful, contradicted or a claim about a document,
+ * and "We understood this as…" when everything was accepted. Both are the same
+ * screen, so tests wait for either rather than encoding which case their
+ * fixture happens to produce.
+ */
+async function reachUnderstood(page: import('@playwright/test').Page) {
+  await expect(
+    page.getByRole('heading', { name: /we understood this as|one or two things to check/i }),
+  ).toBeVisible({ timeout: 20_000 });
+}
+
+/**
+ * Opens every reading for individual confirmation.
+ *
+ * The confirmation controls still exist for every assertion; they are behind
+ * one link for the ones that were accepted. A test that needs to disagree with
+ * a reading comes through here.
+ */
+async function openAllReadings(page: import('@playwright/test').Page) {
+  const edit = page.getByRole('button', { name: /edit what we understood/i });
+  if ((await edit.count()) > 0) await edit.click();
+}
+
+/**
+ * Opens the full analysis.
+ *
+ * The assessment now leads with five lines — basis, what matters, the biggest
+ * gap, the next step, and what the paid pack contains — and everything else is
+ * behind "See full analysis". Tests about the detail open it; tests about the
+ * summary do not, which is the distinction the disclosure exists to make.
+ */
+async function openFullAnalysis(page: import('@playwright/test').Page) {
+  const summary = page.locator('summary', { hasText: /see full analysis/i }).first();
+  await summary.waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {});
+  if ((await summary.count()) > 0) await summary.click();
+}
+
+/** Past the follow-ups and into the full question set. */
+async function reachFullQuestions(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: /^continue$/i }).click();
+  const more = page.getByRole('button', { name: /answer more questions/i });
+  await expect(more).toBeVisible({ timeout: 20_000 });
+  await more.click();
+}
+
 let visitor = 0;
 test.beforeEach(async ({ page }) => {
   visitor += 1;
@@ -270,6 +320,39 @@ test.describe('privacy', () => {
   }) => {
     await page.goto('/case/00000000-0000-0000-0000-000000000001/draft');
     await expect(page).toHaveURL(/\/defence$/);
+  });
+});
+
+test.describe('the fast journey', () => {
+  test('leads with one field and the shortest possible path', async ({ page }) => {
+    /*
+     * This deployment has no reader configured, so the journey lands on the
+     * manual path — which is exactly the case worth proving does not regress:
+     * even with nothing to read, the route to an assessment is one screen of
+     * details and then what happened, not a questionnaire.
+     */
+    await page.goto('/analyse');
+    await expect(page.getByRole('button', { name: /Enter the details by hand/ })).toBeVisible();
+    await page.getByRole('button', { name: /Enter the details by hand/ }).click();
+
+    // The details screen still exists and still asks for what it must.
+    await expect(page.getByRole('button', { name: /Confirm/ })).toBeVisible();
+  });
+
+  test('does not put the full questionnaire in front of anybody', async ({ page }) => {
+    await page.goto('/analyse');
+    // Nothing about evidence gathering is on the first screen. It is an
+    // optional strengthening step now, not a prerequisite.
+    await expect(page.getByText(/Upload supporting evidence/i)).toHaveCount(0);
+    await expect(page.getByText(/essential item/i)).toHaveCount(0);
+  });
+
+  test('the analyse page stays on one screen at phone width', async ({ page }) => {
+    await page.goto('/analyse');
+    const scrollsSideways = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+    );
+    expect(scrollsSideways, 'the analyse page scrolls sideways').toBe(false);
   });
 });
 
@@ -548,6 +631,7 @@ test.describe('editing after an assessment keeps the notice recognised', () => {
     await page.getByRole('button', { name: /enter the details/i }).click();
     await fillAndConfirm(page);
     await skipContext(page);
+    await openFullAnalysis(page);
 
     // Positive proof the assessment rendered, not merely that an error is
     // absent: absence would also be satisfied by a page that went nowhere.
@@ -560,6 +644,7 @@ test.describe('editing after an assessment keeps the notice recognised', () => {
     await expect(page.getByRole('button', { name: /confirm and continue/i })).toBeEnabled();
     await page.getByRole('button', { name: /confirm and continue/i }).click();
     await skipContext(page);
+    await openFullAnalysis(page);
 
     // The bug: this second pass said "we could not tell what kind of notice
     // this is" and offered nothing else.
@@ -572,6 +657,7 @@ test.describe('editing after an assessment keeps the notice recognised', () => {
     await page.getByRole('button', { name: /enter the details/i }).click();
     await fillAndConfirm(page);
     await skipContext(page);
+    await openFullAnalysis(page);
 
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
     // A date and "awaiting review by a qualified person" must never share the
@@ -626,7 +712,7 @@ test.describe('tell us what happened', () => {
 
   test('asks the code 12 questions and does not call them defences', async ({ page }) => {
     await reachContextStage(page);
-    await page.getByRole('button', { name: /^continue$/i }).click();
+    await reachFullQuestions(page);
 
     // Straight from the approved reference record for code 12.
     await expect(page.getByText(/did you hold a valid permit for that bay/i)).toBeVisible();
@@ -638,7 +724,7 @@ test.describe('tell us what happened', () => {
 
   test('marks mitigation as discretion rather than a legal ground', async ({ page }) => {
     await reachContextStage(page);
-    await page.getByRole('button', { name: /^continue$/i }).click();
+    await reachFullQuestions(page);
     await expect(page.getByText(/it is not a legal ground/i)).toBeVisible();
   });
 
@@ -652,10 +738,9 @@ test.describe('tell us what happened', () => {
     // An account now goes through the confirmation screen on its way to the
     // questions. This build has no reader configured, so there is nothing to
     // confirm — which is itself the path most deployments without a key take.
-    await expect(
-      page.getByRole('heading', { name: /we understood your account as follows/i }),
-    ).toBeVisible({ timeout: 20_000 });
-    await page.getByRole('button', { name: /^continue$/i }).click();
+    await reachUnderstood(page);
+    // The full question set is one link past the follow-ups now.
+    await reachFullQuestions(page);
 
     // Answer the permit question yes.
     const permit = page.getByRole('group').filter({ hasText: /did you hold a valid permit/i });
@@ -667,6 +752,7 @@ test.describe('tell us what happened', () => {
     await permitEvidence.getByRole('radio', { name: /i have this/i }).check();
 
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     // The answers are on the page, labelled as the user's own account.
@@ -690,6 +776,7 @@ test.describe('tell us what happened', () => {
   test('skipping still gives an assessment, and says what it is missing', async ({ page }) => {
     await reachContextStage(page);
     await page.getByRole('button', { name: /^skip for now$/i }).click();
+    await openFullAnalysis(page);
 
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('heading', { name: /insufficient information/i })).toBeVisible();
@@ -715,7 +802,7 @@ test.describe('tell us what happened', () => {
   test('works at mobile width', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 720 });
     await reachContextStage(page);
-    await page.getByRole('button', { name: /^continue$/i }).click();
+    await reachFullQuestions(page);
 
     // Nothing may push the page sideways on a phone.
     const overflow = await page.evaluate(
@@ -734,7 +821,7 @@ test.describe('tell us what happened', () => {
   });
 });
 
-test.describe('we understood your account as follows', () => {
+test.describe('what we understood from the account', () => {
   const VALUES = [
     'Westminster City Council',
     'WM12345678',
@@ -798,12 +885,18 @@ test.describe('we understood your account as follows', () => {
     await page.getByRole('textbox', { name: /what happened/i }).fill('I had a resident permit.');
     await page.getByRole('button', { name: /^continue$/i }).click();
 
-    await expect(
-      page.getByRole('heading', { name: /we understood your account as follows/i }),
-    ).toBeVisible({ timeout: 20_000 });
+    await reachUnderstood(page);
     await expect(page.getByText(/says a resident permit was held/i)).toBeVisible();
-    // Stated plainly, because it is the whole point of the screen.
-    await expect(page.getByText(/nothing here counts until you confirm it/i)).toBeVisible();
+    /*
+     * The screen says what is actually happening.
+     *
+     * It used to promise "nothing here counts until you confirm it", which was
+     * true when every reading was put to the user one at a time. Confident
+     * readings are now accepted and shown back, so the screen says that
+     * instead — a faster journey must not keep the slower one's promise.
+     */
+    await expect(page.getByText(/left out of your assessment/i).first()).toBeVisible();
+    await expect(page.getByText(/nothing here counts until you confirm it/i)).toHaveCount(0);
     // And it is a reading, not a decision.
     await expect(page.getByText(/not a decision about your case/i)).toBeVisible();
   });
@@ -813,9 +906,7 @@ test.describe('we understood your account as follows', () => {
     await reachAccountPanel(page);
     await page.getByRole('textbox', { name: /what happened/i }).fill('I had a resident permit.');
     await page.getByRole('button', { name: /^continue$/i }).click();
-    await expect(
-      page.getByRole('heading', { name: /we understood your account as follows/i }),
-    ).toBeVisible({ timeout: 20_000 });
+    await reachUnderstood(page);
 
     // Disagreeing is a real option on the screen, not something buried.
     await expect(page.getByRole('radio', { name: /not what i meant/i })).toBeVisible();
@@ -845,9 +936,7 @@ test.describe('we understood your account as follows', () => {
       .getByRole('textbox', { name: /what happened/i })
       .fill('I had a resident permit and I paid by app.');
     await page.getByRole('button', { name: /^continue$/i }).click();
-    await expect(
-      page.getByRole('heading', { name: /we understood your account as follows/i }),
-    ).toBeVisible({ timeout: 20_000 });
+    await reachUnderstood(page);
 
     /*
      * Confirm one and leave the other alone — which is what people actually do.
@@ -860,6 +949,7 @@ test.describe('we understood your account as follows', () => {
 
     await page.getByRole('button', { name: /^continue$/i }).click();
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     const body = sent.join(' ');
@@ -884,11 +974,10 @@ test.describe('we understood your account as follows', () => {
       .getByRole('textbox', { name: /what happened/i })
       .fill('My name is Jane Smith of 12 Acacia Avenue and I was at St Thomas Hospital.');
     await page.getByRole('button', { name: /^continue$/i }).click();
-    await expect(
-      page.getByRole('heading', { name: /we understood your account as follows/i }),
-    ).toBeVisible({ timeout: 20_000 });
+    await reachUnderstood(page);
     await page.getByRole('button', { name: /^continue$/i }).click();
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     const body = sent.join(' ');
@@ -905,13 +994,12 @@ test.describe('we understood your account as follows', () => {
     await page.getByRole('textbox', { name: /what happened/i }).fill('I had a resident permit.');
     await page.getByRole('button', { name: /^continue$/i }).click();
 
-    await expect(
-      page.getByRole('heading', { name: /we understood your account as follows/i }),
-    ).toBeVisible({ timeout: 20_000 });
+    await reachUnderstood(page);
     await expect(page.getByText(/cannot read written accounts|could not read your account/i)).toBeVisible();
 
     await page.getByRole('button', { name: /^continue$/i }).click();
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
   });
 
@@ -921,9 +1009,7 @@ test.describe('we understood your account as follows', () => {
     await reachAccountPanel(page);
     await page.getByRole('textbox', { name: /what happened/i }).fill('I had a resident permit.');
     await page.getByRole('button', { name: /^continue$/i }).click();
-    await expect(
-      page.getByRole('heading', { name: /we understood your account as follows/i }),
-    ).toBeVisible({ timeout: 20_000 });
+    await reachUnderstood(page);
 
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -975,9 +1061,8 @@ test.describe('two answers about the same thing', () => {
       .fill('I paid using RingGo but may have selected the wrong registration.');
     await page.getByRole('button', { name: /^continue$/i }).click();
 
-    await expect(
-      page.getByRole('heading', { name: /we understood your account as follows/i }),
-    ).toBeVisible({ timeout: 20_000 });
+    await reachUnderstood(page);
+    await openAllReadings(page);
     for (const label of [/you paid to park/i, /you paid using an app/i, /wrong registration/i]) {
       await page
         .getByRole('group')
@@ -985,7 +1070,7 @@ test.describe('two answers about the same thing', () => {
         .getByRole('radio', { name: /yes, that is right/i })
         .check();
     }
-    await page.getByRole('button', { name: /^continue$/i }).click();
+    await reachFullQuestions(page);
     await expect(page.getByText(/did you hold a valid permit/i)).toBeVisible({ timeout: 20_000 });
   }
 
@@ -999,6 +1084,7 @@ test.describe('two answers about the same thing', () => {
     await reachQuestions(page);
     // Answer nothing at all.
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     const body = sent.join(' ');
@@ -1051,6 +1137,7 @@ test.describe('two answers about the same thing', () => {
       .check();
     await page.getByRole('button', { name: /back to your answers/i }).click();
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     const text = await page.locator('body').innerText();
@@ -1063,6 +1150,7 @@ test.describe('two answers about the same thing', () => {
   test('evidence follows what the user said', async ({ page }) => {
     await reachQuestions(page);
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     await expect(page.getByText(/start with these/i)).toBeVisible();
@@ -1081,6 +1169,7 @@ test.describe('two answers about the same thing', () => {
     // an entitlement the user never claimed.
     await reachQuestions(page);
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     const text = await page.locator('body').innerText().then((t) => t.toLowerCase());
@@ -1098,6 +1187,7 @@ test.describe('two answers about the same thing', () => {
      */
     await reachQuestions(page);
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     // innerText applies the band heading's text-transform, so search in lower case.
@@ -1113,6 +1203,7 @@ test.describe('two answers about the same thing', () => {
   test('a finding label and its heading are separate, not run together', async ({ page }) => {
     await reachQuestions(page);
     await page.getByRole('button', { name: /see my assessment/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
 
     /*
@@ -1195,6 +1286,7 @@ test.describe('saving and coming back', () => {
     }
     await page.getByRole('button', { name: /confirm and continue/i }).click();
     await page.getByRole('button', { name: /^skip for now$/i }).click();
+    await openFullAnalysis(page);
     await expect(page.getByRole('heading', { name: 'Your PCN' })).toBeVisible({ timeout: 20_000 });
   }
 

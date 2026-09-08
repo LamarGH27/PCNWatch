@@ -5,6 +5,25 @@ import { EXTRACTION_SYSTEM } from '@/server/ai/prompts';
 import type { PcnExtraction } from '@/server/ai/schemas';
 import type { NoticeType } from '@/core/reference/types';
 
+/*
+ * The verification policy and the compact summary live in core, because the
+ * browser renders the summary and importing this module client-side dragged
+ * `next/headers` into the bundle. Re-exported here so every existing caller of
+ * the extraction module is unchanged.
+ */
+import { ALWAYS_VERIFY, FIELD_VERIFICATION_THRESHOLD } from '@/core/notices/verification-policy';
+import type { ExtractedFieldView } from '@/core/notices/extraction-summary';
+
+export { ALWAYS_VERIFY, FIELD_VERIFICATION_THRESHOLD };
+export {
+  SUMMARY_HEADLINE_FIELDS,
+  confirmableFromSummary,
+  summariseExtraction,
+  type ExtractedFieldView,
+  type ExtractionSummary,
+} from '@/core/notices/extraction-summary';
+
+
 /**
  * Turns an uploaded notice into structured, verifiable fields.
  *
@@ -17,26 +36,7 @@ import type { NoticeType } from '@/core/reference/types';
  * we say so and stop, rather than pushing it through local-authority rules.
  */
 
-/** Below this a field must be confirmed by the user before it is used. */
-export const FIELD_VERIFICATION_THRESHOLD = 0.85;
 
-/** Fields that always require confirmation, however confident the model is. */
-export const ALWAYS_VERIFY: readonly string[] = [
-  'pcnNumber',
-  'contraventionCode',
-  'incidentDate',
-  'issueDate',
-  'fullAmountPence',
-];
-
-export interface ExtractedFieldView {
-  readonly key: string;
-  readonly label: string;
-  readonly value: string | number | null;
-  readonly confidence: number;
-  readonly requiresVerification: boolean;
-  readonly hint: string | null;
-}
 
 export type ExtractionOutcome =
   | {
@@ -206,3 +206,5 @@ export function parseAmountToPence(raw: string): number | null {
   if (!Number.isFinite(pounds) || pounds < 0 || pounds > 10_000) return null;
   return Math.round(pounds * 100);
 }
+
+
