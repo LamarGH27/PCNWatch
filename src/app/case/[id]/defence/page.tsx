@@ -6,12 +6,32 @@ import { defencePackAccess } from '@/server/defence/access';
 import { fingerprintCase } from '@/server/defence/fingerprint';
 import { loadPack } from '@/server/defence/persist';
 import { getProduct } from '@/server/payments/catalogue';
+import { featureFlags } from '@/lib/env';
 import { Card, Disclaimer, formatPence } from '@/components/primitives';
 import { CaseUnavailable } from '../CaseUnavailable';
 import { DefencePanel, type StoredPackView } from './DefencePanel';
+import { PurchaseCta } from './PurchaseCta';
 
-export default async function DefencePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function DefencePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
+  const query = await searchParams;
+
+  /*
+   * Where the user came from, and nothing more.
+   *
+   * `?checkout=returned` says a browser was redirected here. It is not proof of
+   * payment — anyone can type it — so it only ever decides which sentence to
+   * show while the server is asked what the user actually holds.
+   */
+  const rawReturn = Array.isArray(query.checkout) ? query.checkout[0] : query.checkout;
+  const returnState =
+    rawReturn === 'returned' ? 'returned' : rawReturn === 'cancelled' ? 'cancelled' : null;
   const result = await getCase(id);
   if (result.kind !== 'FOUND') {
     return (
@@ -71,6 +91,12 @@ export default async function DefencePage({ params }: { params: Promise<{ id: st
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14.5, color: 'var(--text-muted)' }}>
             {product?.includes.map((line) => <li key={line}>{line}</li>)}
           </ul>
+          <PurchaseCta
+            caseId={id}
+            priceLabel={product ? formatPence(product.pricePence) : ''}
+            paymentsEnabled={featureFlags.payments}
+            returnState={returnState}
+          />
           <p style={{ margin: '16px 0 0', fontSize: 13.5, color: 'var(--text-faint)' }}>
             Your deadlines, the evidence checklist and the evidence basis stay free.
           </p>

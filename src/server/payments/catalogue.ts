@@ -50,7 +50,7 @@ export const PRODUCTS: readonly Product[] = [
       'Editable challenge draft',
       'PDF export of your defence material',
     ],
-    stripePriceEnvKey: 'STRIPE_PRICE_DEFENCE',
+    stripePriceEnvKey: 'STRIPE_DEFENCE_PACK_PRICE_ID',
   },
   {
     sku: 'PCNWATCH_REJECTION_REVIEW',

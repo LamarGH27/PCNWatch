@@ -32,11 +32,36 @@ export interface CheckoutSessionRequest {
   readonly customerEmail?: string;
   readonly successUrl: string;
   readonly cancelUrl: string;
+  /**
+   * Distinguishes one attempt from the next.
+   *
+   * The idempotency key used to be `checkout:user:case:sku`, which is stable
+   * for the life of the case — so a user who reached Stripe, cancelled, and
+   * came back got Stripe's cached response for the dead session rather than a
+   * new one. Stripe caches an idempotent response for 24 hours, so the retry
+   * failed silently for a day.
+   *
+   * The pending payment row's id is created once per attempt, which is exactly
+   * the granularity wanted: a double-tap reuses one attempt and cannot produce
+   * two sessions, and a genuine retry after a cancellation is a new attempt and
+   * gets a new session.
+   */
+  readonly attemptId: string;
 }
 
 export interface CheckoutSession {
   readonly id: string;
   readonly url: string;
+  /** Unix seconds. Stripe expires a Checkout Session after 24 hours. */
+  readonly expiresAt: number | null;
+  /**
+   * The Price actually sent, returned rather than re-read by the caller.
+   *
+   * Two independent reads of the same variable is one more than is needed, and
+   * the recorded value would silently disagree with the charged one if they
+   * ever diverged.
+   */
+  readonly priceId: string;
 }
 
 export async function createCheckoutSession(
@@ -46,6 +71,23 @@ export async function createCheckoutSession(
   const env = serverEnv();
 
   const priceId = process.env[request.product.stripePriceEnvKey];
+  if (!priceId) {
+    /*
+     * Refuses rather than falling back to an inline price.
+     *
+     * An inline price would charge the right amount — it comes from the server
+     * catalogue either way — and it would mean a misconfigured deployment
+     * taking real money against a Price that does not exist in the dashboard.
+     * That reconciles to nothing, and nobody notices until somebody asks where
+     * a payment came from.
+     */
+    throw new AppError(
+      'STRIPE_PRICE_NOT_CONFIGURED',
+      'Payments are not fully configured on this deployment.',
+      'Nothing has been charged. Everything free continues to work.',
+      { dataSaved: false, severity: 'RECOVERABLE' },
+    );
+  }
 
   const body = new URLSearchParams({
     mode: 'payment',
@@ -53,6 +95,15 @@ export async function createCheckoutSession(
     cancel_url: request.cancelUrl,
     // Metadata is how the webhook knows what was bought and for whom. It is
     // authoritative because Stripe echoes back exactly what we set here.
+    /*
+     * Three opaque identifiers and nothing else.
+     *
+     * Stripe needs to be able to tell us what was bought and for whom. It does
+     * not need — and must never receive — the PCN number, the registration,
+     * the location, the user's account of what happened, or anything read off
+     * their evidence. Two uuids and a product key say everything required and
+     * disclose nothing about the case.
+     */
     'metadata[user_id]': request.userId,
     'metadata[case_id]': request.caseId,
     'metadata[product_sku]': request.product.sku,
@@ -63,25 +114,16 @@ export async function createCheckoutSession(
 
   if (request.customerEmail) body.set('customer_email', request.customerEmail);
 
-  if (priceId) {
-    body.set('line_items[0][price]', priceId);
-    body.set('line_items[0][quantity]', '1');
-  } else {
-    // Falls back to an inline price built from the catalogue, so a missing Stripe
-    // Price id cannot cause the wrong amount to be charged.
-    body.set('line_items[0][price_data][currency]', request.product.currency.toLowerCase());
-    body.set('line_items[0][price_data][unit_amount]', String(request.product.pricePence));
-    body.set('line_items[0][price_data][product_data][name]', request.product.name);
-    body.set('line_items[0][quantity]', '1');
-  }
+  body.set('line_items[0][price]', priceId);
+  body.set('line_items[0][quantity]', '1');
 
   const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
     method: 'POST',
     headers: {
       authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
       'content-type': 'application/x-www-form-urlencoded',
-      // Prevents a duplicate session if the user double-taps the button.
-      'idempotency-key': `checkout:${request.userId}:${request.caseId}:${request.product.sku}`,
+      // One attempt, one session. See `attemptId`.
+      'idempotency-key': `checkout:${request.attemptId}`,
     },
     body,
   });
@@ -95,7 +137,11 @@ export async function createCheckoutSession(
     );
   }
 
-  const session = (await response.json()) as { id?: string; url?: string };
+  const session = (await response.json()) as {
+    id?: string;
+    url?: string;
+    expires_at?: number;
+  };
   if (!session.id || !session.url) {
     throw new AppError(
       'STRIPE_CHECKOUT_INCOMPLETE',
@@ -105,7 +151,12 @@ export async function createCheckoutSession(
     );
   }
 
-  return { id: session.id, url: session.url };
+  return {
+    id: session.id,
+    url: session.url,
+    expiresAt: typeof session.expires_at === 'number' ? session.expires_at : null,
+    priceId,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -187,10 +238,14 @@ export interface CompletedCheckout {
   readonly productSku: string;
   readonly amountPence: number;
   readonly currency: string;
+  /** From the event. Whether real money moved, rather than what was configured. */
+  readonly livemode: boolean;
 }
 
 export type CheckoutInterpretation =
   | { readonly kind: 'COMPLETED'; readonly checkout: CompletedCheckout }
+  /** A session that will never be paid. Closes the attempt; grants nothing. */
+  | { readonly kind: 'EXPIRED'; readonly sessionId: string }
   | { readonly kind: 'IGNORED'; readonly reason: string }
   | { readonly kind: 'INVALID'; readonly reason: string };
 
@@ -208,12 +263,32 @@ export function interpretCheckoutEvent(event: unknown): CheckoutInterpretation {
 
   const { type, data } = event as { type?: string; data?: { object?: Record<string, unknown> } };
 
-  if (type !== 'checkout.session.completed') {
+  /*
+   * Two event types complete a Checkout Session, and a card payment is the
+   * first. The second arrives when a delayed method settles later; handling it
+   * costs one line and means a payment method we might enable in the dashboard
+   * does not silently fail to grant.
+   */
+  const GRANTING_TYPES = ['checkout.session.completed', 'checkout.session.async_payment_succeeded'];
+  if (type !== 'checkout.session.expired' && !GRANTING_TYPES.includes(type ?? '')) {
     return { kind: 'IGNORED', reason: `Event type "${type}" does not grant entitlements.` };
   }
 
   const session = data?.object;
   if (!session) return { kind: 'INVALID', reason: 'The event carried no session object.' };
+
+  /*
+   * An expired session is the end of an attempt, not a payment.
+   *
+   * Handled here rather than ignored so the pending row stops looking like an
+   * attempt still in flight — otherwise a user who abandons checkout has a row
+   * that reads PENDING forever, and the next attempt reuses a dead session.
+   */
+  if (type === 'checkout.session.expired') {
+    const sessionId = String(session.id ?? '');
+    if (!sessionId) return { kind: 'INVALID', reason: 'The expired event carried no session id.' };
+    return { kind: 'EXPIRED', sessionId };
+  }
 
   if (session.payment_status !== 'paid') {
     return {
@@ -253,6 +328,35 @@ export function interpretCheckoutEvent(event: unknown): CheckoutInterpretation {
       productSku,
       amountPence,
       currency: String(session.currency ?? 'gbp').toUpperCase(),
+      livemode: (event as { livemode?: boolean }).livemode === true,
     },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Charge lookup                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The charge a refund would be issued against.
+ *
+ * A Checkout Session carries a PaymentIntent, not a charge, so this is one
+ * extra call. It is best effort by design: the charge id is for a human in the
+ * Stripe dashboard six months from now, and failing to read it must never stop
+ * a paid customer being granted what they paid for. Returns null on anything.
+ */
+export async function fetchLatestCharge(paymentIntentId: string): Promise<string | null> {
+  try {
+    if (!isConfigured('stripe')) return null;
+    const env = serverEnv();
+    const response = await fetch(
+      `https://api.stripe.com/v1/payment_intents/${encodeURIComponent(paymentIntentId)}`,
+      { headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } },
+    );
+    if (!response.ok) return null;
+    const intent = (await response.json()) as { latest_charge?: unknown };
+    return typeof intent.latest_charge === 'string' ? intent.latest_charge : null;
+  } catch {
+    return null;
+  }
 }

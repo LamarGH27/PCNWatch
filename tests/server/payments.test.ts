@@ -119,8 +119,25 @@ describe('event interpretation', () => {
   });
 
   it('ignores an event type that does not represent a completed payment', () => {
-    const result = interpretCheckoutEvent({ type: 'checkout.session.expired', data: { object: {} } });
+    const result = interpretCheckoutEvent({ type: 'invoice.paid', data: { object: {} } });
     expect(result.kind).toBe('IGNORED');
+  });
+
+  it('reads an expired session as the end of an attempt rather than a payment', () => {
+    // This used to be an example of an ignored type. It is now handled, so the
+    // pending row is closed instead of being left in flight forever — but it
+    // still grants nothing, which is the part that matters.
+    const result = interpretCheckoutEvent({
+      type: 'checkout.session.expired',
+      data: { object: { id: 'cs_test_gone' } },
+    });
+    expect(result.kind).toBe('EXPIRED');
+    expect(result).not.toHaveProperty('checkout');
+  });
+
+  it('rejects an expired event that names no session', () => {
+    const result = interpretCheckoutEvent({ type: 'checkout.session.expired', data: { object: {} } });
+    expect(result.kind).toBe('INVALID');
   });
 
   it('ignores a session that has not actually been paid', () => {

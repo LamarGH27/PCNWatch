@@ -124,6 +124,16 @@ const serverSchema = z.object({
 
   STRIPE_SECRET_KEY: nonEmpty,
   STRIPE_WEBHOOK_SECRET: nonEmpty,
+  /**
+   * The Stripe Price for the Defence Pack.
+   *
+   * Optional, and the checkout refuses without it rather than falling back to
+   * an inline price. An inline price would work — the amount comes from the
+   * server catalogue either way — but it would mean a misconfigured deployment
+   * charging real money against a Price that does not exist in the dashboard,
+   * which is exactly the kind of thing nobody notices until reconciliation.
+   */
+  STRIPE_DEFENCE_PACK_PRICE_ID: nonEmpty,
 
   DTRO_CLIENT_ID: nonEmpty,
   DTRO_CLIENT_SECRET: nonEmpty,
@@ -230,7 +240,7 @@ export function integrationStatuses(): IntegrationStatus[] {
     // starts, and then reports "data temporarily unavailable" on every page.
     statusFor('database', ['DATABASE_URL']),
     statusFor('anthropic', ['ANTHROPIC_API_KEY']),
-    statusFor('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET']),
+    statusFor('stripe', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_DEFENCE_PACK_PRICE_ID']),
     statusFor('dtro', ['DTRO_CLIENT_ID', 'DTRO_CLIENT_SECRET', 'DTRO_BASE_URL']),
     statusFor('camden', ['CAMDEN_PCN_DATASET_URL']),
     statusFor('posthog', ['NEXT_PUBLIC_POSTHOG_KEY']),
