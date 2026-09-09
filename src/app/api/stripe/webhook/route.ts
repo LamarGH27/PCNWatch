@@ -9,6 +9,7 @@ import {
 } from '@/server/payments/stripe';
 import { grantEntitlementsForPayment } from '@/server/payments/entitlements';
 import { getProduct } from '@/server/payments/catalogue';
+import { webhookModeAllowed } from '@/server/payments/mode';
 import {
   claimEvent,
   closeAttemptBySession,
@@ -105,6 +106,22 @@ export async function POST(request: Request) {
     // granting twice; refusing it costs a retry.
     logError('stripe.webhook.claim', new Error('The event could not be claimed.'), { eventType });
     return NextResponse.json({ received: false }, { status: 500 });
+  }
+
+  /*
+   * The event's mode must match the keys this deployment holds.
+   *
+   * Rejected rather than retried: a Test event will never become a Live one, so
+   * a 500 would have Stripe redeliver it for days. Recorded as REJECTED so the
+   * mismatch is visible in `stripe_events` rather than only in a log line.
+   */
+  if (!webhookModeAllowed(eventLivemode)) {
+    logError('stripe.webhook.livemode', new Error('Event livemode does not match the configured Stripe keys.'), {
+      eventType,
+      eventLivemode,
+    });
+    await completeEvent(eventId, 'REJECTED');
+    return NextResponse.json({ received: true, acted: false });
   }
 
   const interpretation = interpretCheckoutEvent(event);

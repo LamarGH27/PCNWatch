@@ -554,6 +554,8 @@ describe('webhook: entitlement comes from here and nowhere else', () => {
   });
 
   it('records livemode from the event rather than from configuration', async () => {
+    // Live keys, live event: the pair that is allowed to grant real money.
+    state.env.STRIPE_SECRET_KEY = 'sk_live_abc';
     await webhook(signedWebhook(completedEvent({ id: 'evt_live', livemode: true })));
     expect(first(paymentsFor()).livemode).toBe(true);
   });
@@ -584,6 +586,80 @@ describe('webhook: entitlement comes from here and nowhere else', () => {
     );
     expect(entitlementsFor()).toHaveLength(0);
     expect(first(table('stripe_events')).outcome).toBe('IGNORED');
+  });
+});
+
+describe('webhook: the event mode must match the keys', () => {
+  /*
+   * The signature is the primary defence and proves only that the sender holds
+   * the secret. The way a Test event reaches a Live deployment is not an
+   * attack: it is STRIPE_WEBHOOK_SECRET set to the Test endpoint's secret
+   * during the switch to Live. One `whsec_` looks like another, nothing gives
+   * feedback when the wrong one is pasted, and the result would be Production
+   * granting Defence Packs from Test payments with no money arriving.
+   */
+  it('refuses a Test-mode event on a deployment holding Live keys', async () => {
+    state.env.STRIPE_SECRET_KEY = 'sk_live_abc';
+    const response = await webhook(signedWebhook(completedEvent({ livemode: false })));
+
+    expect(response.status).toBe(200); // never retried: it can never become valid
+    expect((await response.json()).acted).toBe(false);
+    expect(entitlementsFor(), 'a Test event granted a Live entitlement').toHaveLength(0);
+    expect(paymentsFor()).toHaveLength(0);
+    expect(first(table('stripe_events')).outcome).toBe('REJECTED');
+  });
+
+  it('refuses a Live-mode event on a deployment holding Test keys', async () => {
+    state.env.STRIPE_SECRET_KEY = 'sk_test_abc';
+    await webhook(signedWebhook(completedEvent({ livemode: true })));
+    expect(entitlementsFor()).toHaveLength(0);
+    expect(first(table('stripe_events')).outcome).toBe('REJECTED');
+  });
+
+  it('refuses either mode when the key cannot be recognised', async () => {
+    for (const [key, livemode] of [['', true], ['', false], ['pk_live_x', true]] as const) {
+      state.db.stripe_events = [];
+      state.db.entitlements = [];
+      state.env.STRIPE_SECRET_KEY = key;
+      await webhook(signedWebhook(completedEvent({ livemode })));
+      expect(entitlementsFor(), `key "${key}" livemode ${livemode}`).toHaveLength(0);
+    }
+  });
+
+  it('allows the two pairs that match', async () => {
+    state.env.STRIPE_SECRET_KEY = 'sk_test_abc';
+    await webhook(signedWebhook(completedEvent({ livemode: false })));
+    expect(entitlementsFor().map((r) => r.entitlement)).toContain('CHALLENGE_DRAFT');
+
+    state.db.entitlements = [];
+    state.db.payments = [];
+    state.db.stripe_events = [];
+    state.env.STRIPE_SECRET_KEY = 'sk_live_abc';
+    await webhook(signedWebhook(completedEvent({ id: 'evt_live_ok', livemode: true })));
+    expect(entitlementsFor().map((r) => r.entitlement)).toContain('CHALLENGE_DRAFT');
+  });
+});
+
+describe('webhook: the currency must be the one the product is priced in', () => {
+  it('refuses a session denominated in another currency at the same integer amount', async () => {
+    /*
+     * 599 USD cents satisfies "at least 599" while being worth less than £5.99.
+     * Nothing in the request picks the currency — the Price fixes it — so the
+     * way this goes wrong is a Live Price recreated with the currency picker
+     * left on its default.
+     */
+    const response = await webhook(
+      signedWebhook(completedEvent({ id: 'evt_usd' }, { currency: 'usd', amount_total: 599 })),
+    );
+    expect(response.status).toBe(200);
+    expect(entitlementsFor()).toHaveLength(0);
+    expect(first(table('stripe_events')).outcome).toBe('REJECTED');
+  });
+
+  it('still accepts the currency the product is priced in', async () => {
+    await webhook(signedWebhook(completedEvent({}, { currency: 'gbp' })));
+    expect(entitlementsFor().map((r) => r.entitlement)).toContain('CHALLENGE_DRAFT');
+    expect(first(paymentsFor()).currency).toBe('GBP');
   });
 });
 

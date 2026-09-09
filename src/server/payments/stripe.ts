@@ -334,6 +334,24 @@ export function interpretCheckoutEvent(event: unknown): CheckoutInterpretation {
     };
   }
 
+  /*
+   * The amount check is meaningless without this one.
+   *
+   * `amount_total` is an integer in the session's own currency, so 599 USD
+   * cents satisfies "at least 599" while being worth appreciably less than
+   * £5.99. Nothing in the request chooses the currency — the Price fixes it in
+   * the dashboard — which is exactly why this is worth checking: the way it
+   * goes wrong is a Price recreated in Live mode with the currency picker left
+   * on its default, and the failure is silent in the direction of granting.
+   */
+  const currency = String(session.currency ?? '').toUpperCase();
+  if (currency !== product.currency) {
+    return {
+      kind: 'INVALID',
+      reason: `Session currency is ${currency || '(none)'}, but ${product.sku} is priced in ${product.currency}.`,
+    };
+  }
+
   return {
     kind: 'COMPLETED',
     checkout: {
@@ -343,7 +361,7 @@ export function interpretCheckoutEvent(event: unknown): CheckoutInterpretation {
       caseId: metadata.case_id ?? null,
       productSku,
       amountPence,
-      currency: String(session.currency ?? 'gbp').toUpperCase(),
+      currency,
       livemode: (event as { livemode?: boolean }).livemode === true,
     },
   };

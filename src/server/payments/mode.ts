@@ -84,3 +84,38 @@ export function stripeReady(): ModeVerdict {
   const env = serverEnv();
   return checkStripeMode(env.STRIPE_SECRET_KEY);
 }
+
+/**
+ * Whether an event's `livemode` matches the mode this deployment is keyed for.
+ *
+ * The signature is the primary defence and this is the second one, because the
+ * signature only proves the event came from whoever holds the secret — and the
+ * way a Test event reaches a Live deployment is not an attack, it is
+ * `STRIPE_WEBHOOK_SECRET` set to the Test endpoint's secret during the switch to
+ * Live. One `whsec_` looks much like another, there is no feedback when the
+ * wrong one is pasted, and the result is Production granting Defence Packs from
+ * Test-mode payments with no money arriving and nothing complaining.
+ *
+ * Checkout already refuses a key/environment mismatch through `checkStripeMode`.
+ * The webhook is the half that actually grants, and it had no equivalent.
+ *
+ * An UNKNOWN key mode refuses both, which is the correct answer for a
+ * deployment whose configuration cannot be read.
+ */
+export function livemodeMatchesKey(eventLivemode: boolean, secretKey: string | undefined): boolean {
+  const mode = stripeModeFromKey(secretKey);
+  if (mode === 'LIVE') return eventLivemode === true;
+  if (mode === 'TEST') return eventLivemode === false;
+  return false;
+}
+
+/**
+ * The same check against this deployment's configured key.
+ *
+ * Reads through `serverEnv()` rather than `process.env` for the same reason
+ * `stripeReady()` does: that is the one validated view of the environment, and
+ * a second way of reading the key is a second thing to keep in step.
+ */
+export function webhookModeAllowed(eventLivemode: boolean): boolean {
+  return livemodeMatchesKey(eventLivemode, serverEnv().STRIPE_SECRET_KEY);
+}
