@@ -24,8 +24,29 @@ import type { Jurisdiction, NoticeType, ProceduralStage } from '../types';
 export const PROPOSITION_KINDS = [
   /** What a contravention code alleges. Not a defence, and not a rule of law. */
   'CONTRAVENTION_DEFINITION',
+  /**
+   * What a suffix letter denotes within a code.
+   *
+   * Separated from the definition because approving them together would be one
+   * decision covering two documents' worth of detail. "Code 12 alleges parking
+   * without a valid permit" and "suffix x denotes an incorrect registration"
+   * are checked against different tables and are wrong in different ways.
+   */
+  'CONTRAVENTION_METADATA',
   /** A ground of representation created by statute. */
   'STATUTORY_GROUND',
+  /**
+   * What a statutory ground does and does not cover.
+   *
+   * Deliberately NOT `STATUTORY_GROUND`, and the distinction is a safety
+   * boundary rather than a taxonomy preference. `hasApprovedStatutoryGround`
+   * keys on that kind, so classifying an interpretation as a ground would mean
+   * approving "the already-paid ground means the penalty, not the parking
+   * charge" — a proposition whose entire purpose is to NARROW what PCNWatch may
+   * say — switching statutory drafting ON. A guard that unlocks the thing it
+   * guards is worse than no guard.
+   */
+  'STATUTORY_GROUND_INTERPRETATION',
   /** What an authority says it will consider. Discretion, never entitlement. */
   'AUTHORITY_POLICY',
   /** How the process runs, and what a notice must contain. */
@@ -38,7 +59,9 @@ export type PropositionKind = (typeof PROPOSITION_KINDS)[number];
 
 export const PROPOSITION_KIND_LABELS: Record<PropositionKind, string> = {
   CONTRAVENTION_DEFINITION: 'What the code alleges',
+  CONTRAVENTION_METADATA: 'What a suffix denotes',
   STATUTORY_GROUND: 'Statutory ground',
+  STATUTORY_GROUND_INTERPRETATION: 'Scope of a statutory ground (never itself a ground)',
   AUTHORITY_POLICY: 'Authority policy (discretionary)',
   PROCEDURE: 'Procedure',
   DEADLINE_RULE: 'Deadline rule',
@@ -69,11 +92,22 @@ export type SourceTier = (typeof SOURCE_TIERS)[number];
 
 /** Which kinds of proposition each tier is competent to establish. */
 export const TIER_MAY_ESTABLISH: Record<SourceTier, readonly PropositionKind[]> = {
-  PRIMARY_LEGISLATION: ['STATUTORY_GROUND', 'PROCEDURE', 'DEADLINE_RULE'],
-  STATUTORY_INSTRUMENT: ['STATUTORY_GROUND', 'PROCEDURE', 'DEADLINE_RULE'],
-  LONDON_COUNCILS_FRAMEWORK: ['CONTRAVENTION_DEFINITION'],
+  PRIMARY_LEGISLATION: [
+    'STATUTORY_GROUND',
+    'STATUTORY_GROUND_INTERPRETATION',
+    'PROCEDURE',
+    'DEADLINE_RULE',
+  ],
+  STATUTORY_INSTRUMENT: [
+    'STATUTORY_GROUND',
+    'STATUTORY_GROUND_INTERPRETATION',
+    'PROCEDURE',
+    'DEADLINE_RULE',
+  ],
+  LONDON_COUNCILS_FRAMEWORK: ['CONTRAVENTION_DEFINITION', 'CONTRAVENTION_METADATA'],
   ISSUING_AUTHORITY_POLICY: ['AUTHORITY_POLICY', 'PROCEDURE'],
-  TRIBUNAL: ['PROCEDURE'],
+  // Competent about how the tribunal runs. Never about what the law is.
+  TRIBUNAL: ['PROCEDURE', 'DEADLINE_RULE'],
 };
 
 /**

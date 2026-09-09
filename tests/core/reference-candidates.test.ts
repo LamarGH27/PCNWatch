@@ -179,14 +179,29 @@ describe('approval is granular', () => {
     expect(at({ ...WESTMINSTER_CODE_12, proceduralStage: 'INFORMAL_CHALLENGE' })).toHaveLength(0);
   });
 
-  it('does not let one approved ground enable an unrelated one', () => {
-    // Approving the "contravention did not occur" ground says nothing about
-    // the payment ground, which is a different provision with different words.
-    const others = allCandidates().filter(
-      (c) => c.kind === 'STATUTORY_GROUND' && c.id !== ground.id,
-    );
-    expect(others.length).toBeGreaterThan(0);
-    for (const other of others) expect(isApproved(other)).toBe(false);
+  it('does not let one approved ground enable anything else', () => {
+    /*
+     * Approving "the contravention did not occur" says nothing about the
+     * payment ground, which is a different provision with different words.
+     *
+     * This used to look only at other STATUTORY_GROUND candidates. Since the
+     * already-paid distinction and the ground list were reclassified as
+     * STATUTORY_GROUND_INTERPRETATION — so that approving either cannot switch
+     * statutory drafting on — that filter matched nothing and the test passed
+     * vacuously. It now asserts the stronger and still-true property: one
+     * approval approves one candidate, whatever kind the others are.
+     */
+    const others = allCandidates().filter((c) => c.id !== ground.id);
+    expect(others.length).toBe(13);
+    for (const other of others) expect(isApproved(other), other.id).toBe(false);
+
+    // And specifically the two that used to share this kind.
+    for (const id of ['CAND-TMA-GROUND-LIST', 'CAND-TMA-GROUND-PAID-DISTINCTION']) {
+      const candidate = allCandidates().find((c) => c.id === id)!;
+      expect(candidate.kind, `${id} must not be able to unlock statutory drafting`).toBe(
+        'STATUTORY_GROUND_INTERPRETATION',
+      );
+    }
   });
 
   it('does not let a Westminster policy carry to another authority', () => {
@@ -215,8 +230,11 @@ describe('the incorrect-registration scenario', () => {
       for (const forbidden of [/must cancel/i, /will be cancelled/i, /entitled to cancellation/i]) {
         expect(prose, `${id} implies mandatory cancellation`).not.toMatch(forbidden);
       }
-      expect(candidate.doesNotEstablish.join(' ')).toMatch(
-        /oblige|mandator|did not occur|entitlement|adjudicator/i,
+      // Each must disclaim compulsion in its own words. "must be cancelled"
+      // is the phrasing the suffix candidates use, and is exactly as explicit
+      // a denial as "mandatory" would be.
+      expect(candidate.doesNotEstablish.join(' '), `${id} disclaims no compulsion`).toMatch(
+        /oblige|mandator|must be cancelled|did not occur|entitlement|adjudicator/i,
       );
     }
   });
