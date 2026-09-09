@@ -42,8 +42,8 @@ describe('the committed pack matches the candidates', () => {
 describe('the Initial Launch Review section', () => {
   const pack = readFileSync(PACK_PATH, 'utf8');
 
-  it('carries exactly the nine propositions the launch scenario needs', () => {
-    expect(INITIAL_LAUNCH_REVIEW).toHaveLength(9);
+  it('carries exactly the ten propositions the launch scenario needs', () => {
+    expect(INITIAL_LAUNCH_REVIEW).toHaveLength(10);
     for (const id of INITIAL_LAUNCH_REVIEW) {
       expect(getCandidate(id), `${id} is named for review but is not in the bundle`).toBeDefined();
     }
@@ -51,7 +51,34 @@ describe('the Initial Launch Review section', () => {
 
   it('puts them first, in the order they were set', () => {
     const ordered = forReview().map((c) => c.id);
-    expect(ordered.slice(0, 9)).toEqual([...INITIAL_LAUNCH_REVIEW]);
+    expect(ordered.slice(0, INITIAL_LAUNCH_REVIEW.length)).toEqual([...INITIAL_LAUNCH_REVIEW]);
+  });
+
+  it('reviews what code 12 alleges before what a suffix on it means', () => {
+    // A suffix modifies a contravention. Reviewing "x" before confirming what
+    // code 12 alleges is reviewing an adjective without the noun.
+    const order = [...INITIAL_LAUNCH_REVIEW];
+    expect(order.indexOf('CAND-CODE12-DEFINITION')).toBe(0);
+    expect(order.indexOf('CAND-CODE12-DEFINITION')).toBeLessThan(
+      order.indexOf('CAND-CODE12-SUFFIXES'),
+    );
+    expect(order.indexOf('CAND-CODE12-DEFINITION')).toBeLessThan(
+      order.indexOf('CAND-CODE12-ELECTRONIC-PAYMENT'),
+    );
+  });
+
+  it('keeps the code 12 definition exactly as it was, only moved', () => {
+    const candidate = getCandidate('CAND-CODE12-DEFINITION')!;
+    expect(candidate.kind).toBe('CONTRAVENTION_DEFINITION');
+    expect(candidate.applicability.contraventionCodes).toEqual(['12']);
+    for (const required of [
+      /contravention occurred/i,
+      /ground of representation/i,
+      /suffix/i,
+      /traffic order/i,
+    ]) {
+      expect(candidate.doesNotEstablish.join(' '), `${required} was dropped`).toMatch(required);
+    }
   });
 
   it('renders them under the Initial Launch Review heading, ahead of the rest', () => {
@@ -117,25 +144,38 @@ describe('the provenance added for the launch review', () => {
     expect(getCandidate('CAND-DEADLINE-APPEAL-28D')!.source.provision).toBe('Regulation 7(2)');
   });
 
-  it('sources mitigation from London Tribunals, at the tribunal tier', () => {
+  it('sources mitigation from the Regulations, with the tribunal as a cross-check only', () => {
     const candidate = getCandidate('CAND-MITIGATION-SEPARATE')!;
-    expect(candidate.source.organisation).toBe('London Tribunals');
-    expect(candidate.source.tier).toBe('TRIBUNAL');
-    // Competent about process, and about nothing else.
-    expect(TIER_MAY_ESTABLISH.TRIBUNAL).toContain('PROCEDURE');
-    expect(TIER_MAY_ESTABLISH.TRIBUNAL).not.toContain('STATUTORY_GROUND');
+    expect(candidate.source.tier).toBe('STATUTORY_INSTRUMENT');
+    expect(candidate.source.canonicalUrl).toBe('https://www.legislation.gov.uk/uksi/2022/576');
+    expect(candidate.source.provision).toBe('Regulation 5(2)(b)(i) and (ii)');
+    // Still procedure, so approving it can never make a ground available.
     expect(candidate.kind).toBe('PROCEDURE');
+    expect(TIER_MAY_ESTABLISH.STATUTORY_INSTRUMENT).toContain('PROCEDURE');
+    // London Tribunals appears in the question as a cross-check, not as the source.
+    expect(candidate.reviewQuestion).toMatch(/londontribunals\.gov\.uk/);
+    expect(candidate.reviewQuestion).toMatch(/not the source|cross-check/i);
   });
 
-  it('names the Westminster document the policies actually come from', () => {
-    for (const id of [
-      'CAND-WCC-INDIVIDUAL-MERITS',
-      'CAND-WCC-GENUINE-MISTAKE',
-      'CAND-WCC-EVIDENCE-CONSIDERED',
-    ]) {
+  it('names the exact Westminster page and the heading each policy sits under', () => {
+    // The parking hub is a navigation page: two reviewers opening it could
+    // have found two different policies. Each candidate now names its heading,
+    // so the question is "does the page say this, under this heading".
+    const headings: Record<string, string> = {
+      'CAND-WCC-INDIVIDUAL-MERITS': 'Merits of the case',
+      'CAND-WCC-GENUINE-MISTAKE': 'Genuine mistakes, mitigation and discretion',
+      'CAND-WCC-EVIDENCE-CONSIDERED':
+        "Full consideration of evidence and the 'balance of probabilities'",
+    };
+    for (const [id, heading] of Object.entries(headings)) {
       const candidate = getCandidate(id)!;
       expect(candidate.source.organisation, id).toBe('Westminster City Council');
       expect(candidate.source.documentTitle, id).toBe('Consideration of parking ticket challenges');
+      expect(candidate.source.canonicalUrl, id).toBe(
+        'https://www.westminster.gov.uk/parking/challenge-your-parking-ticket/consideration-parking-ticket-challenges',
+      );
+      expect(candidate.source.provision, id).toBe(heading);
+      expect(candidate.kind, id).toBe('AUTHORITY_POLICY');
       expect(candidate.applicability.authoritySlug, id).toBe('westminster');
     }
   });

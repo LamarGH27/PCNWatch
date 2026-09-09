@@ -357,3 +357,83 @@ describe('a source may not establish what it is not competent to establish', () 
     expect(store.isApproved(dressed)).toBe(false);
   });
 });
+
+describe('Regulation 5 scope: which notice the grounds attach to', () => {
+  /*
+   * S.I. 2022/576 attaches representations to an *enforcement notice*, which is
+   * a Notice to Owner OR a regulation 10 penalty charge notice. These were
+   * scoped to NOTICE_TO_OWNER alone, which excluded every postal PCN — the
+   * camera and CCTV route, and a large share of real notices.
+   *
+   * The application already models the regulation 10 notice as PCN_POSTAL, so
+   * no new enum member was needed. PCN_ON_STREET is the regulation 9 windscreen
+   * PCN and stays out: a challenge at that point is informal.
+   */
+  const GROUNDS = ['CAND-TMA-GROUND-NO-CONTRAVENTION', 'CAND-TMA-GROUND-PAID-DISTINCTION'];
+
+  const noticeToOwner = {
+    contraventionCode: '12',
+    authoritySlug: 'westminster',
+    noticeType: 'NOTICE_TO_OWNER',
+    proceduralStage: 'FORMAL_REPRESENTATION',
+  };
+  const postalPcn = {
+    contraventionCode: '12',
+    authoritySlug: 'westminster',
+    // The regulation 10 notice, under the name this codebase already uses.
+    noticeType: 'PCN_POSTAL',
+    proceduralStage: 'NEW',
+  };
+  const windscreenPcn = {
+    contraventionCode: '12',
+    authoritySlug: 'westminster',
+    noticeType: 'PCN_ON_STREET',
+    proceduralStage: 'INFORMAL_CHALLENGE',
+  };
+
+  it('applies to a Notice to Owner', async () => {
+    for (const id of GROUNDS) {
+      const { store } = await withApproved(id);
+      const kind = store.getCandidate(id)!.kind;
+      expect(store.applicableApproved(noticeToOwner, kind).map((c) => c.id), id).toEqual([id]);
+    }
+  });
+
+  it('applies to the regulation 10 postal PCN', async () => {
+    for (const id of GROUNDS) {
+      const { store } = await withApproved(id);
+      const kind = store.getCandidate(id)!.kind;
+      expect(
+        store.applicableApproved(postalPcn, kind).map((c) => c.id),
+        `${id} does not reach a postal PCN — every camera notice would be out of scope`,
+      ).toEqual([id]);
+    }
+  });
+
+  it('does not apply to a regulation 9 windscreen PCN at the informal stage', async () => {
+    for (const id of GROUNDS) {
+      const { store } = await withApproved(id);
+      const kind = store.getCandidate(id)!.kind;
+      expect(store.applicableApproved(windscreenPcn, kind), id).toHaveLength(0);
+    }
+  });
+
+  it('uses the enum member the application already has, rather than a new one', async () => {
+    const { store } = await withApproved();
+    for (const id of GROUNDS) {
+      const notices = store.getCandidate(id)!.applicability.noticeTypes;
+      expect(notices, id).toEqual(['NOTICE_TO_OWNER', 'PCN_POSTAL']);
+      expect(notices, `${id} invented a notice type`).not.toContain('PCN_REGULATION_10');
+    }
+  });
+
+  it('scopes the two re-sourced Schedule 1 candidates the same way', async () => {
+    const { store } = await withApproved();
+    for (const id of ['CAND-TMA-REPS-STAGE', 'CAND-TMA-GROUND-LIST']) {
+      const candidate = store.getCandidate(id)!;
+      expect(candidate.applicability.noticeTypes, id).toEqual(['NOTICE_TO_OWNER', 'PCN_POSTAL']);
+      expect(candidate.source.canonicalUrl, id).toBe('https://www.legislation.gov.uk/uksi/2022/576');
+      expect(candidate.source.provision, id).toMatch(/Regulation 5/);
+    }
+  });
+});

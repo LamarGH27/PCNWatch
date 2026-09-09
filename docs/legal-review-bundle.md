@@ -47,11 +47,77 @@ Conditions 3 and 4 exist because condition 1 is a field a script could set.
 
 ## Initial Launch Review
 
-The 9 propositions on the critical path to a Defence Pack for the launch
+The 10 propositions on the critical path to a Defence Pack for the launch
 scenario: a London local-authority parking PCN, contravention code 12, paid through a
 parking app, registration possibly entered incorrectly, issued by Westminster.
 
-### 1. `CAND-CODE12-SUFFIXES`
+### 1. `CAND-CODE12-DEFINITION`
+
+**Classification** `CONTRAVENTION_DEFINITION` — What the code alleges
+
+| | |
+| --- | --- |
+| Organisation | London Councils |
+| Document | Parking contravention codes used by London enforcement authorities |
+| Canonical URL | <https://www.londoncouncils.gov.uk/services/parking-services/parking-and-traffic/contravention-codes> |
+| Provision | Code 12 |
+| Jurisdiction | ENGLAND_LONDON |
+| Source tier | `LONDON_COUNCILS_FRAMEWORK` — may establish: CONTRAVENTION_DEFINITION, CONTRAVENTION_METADATA |
+| Retrieval | `NOT_RETRIEVED` — **nobody has opened this document** |
+
+**Candidate proposition**
+
+> Code 12 describes parking in a residents’ or shared-use parking place or zone without the required valid virtual or physical permit, voucher, pay-and-display ticket, or payment of the parking charge.
+
+**Applicability**
+
+- Contravention codes: 12
+- Authority: Any
+- Notice types: Any
+- Procedural stages: Any
+- London local-authority parking PCNs only.
+- Do not infer from the code alone that the allegation is proven.
+
+**Must not be read as establishing**
+
+- That the contravention occurred. The code records what the authority alleges, and nothing more.
+- That the vehicle was in fact parked without a valid permit or payment.
+- Any ground of representation, and any entitlement to cancellation.
+- What any suffix letter denotes. Each suffix is a separate candidate against a separate table.
+- That the underlying traffic order was valid, or that the bay was correctly signed.
+
+**Question for the reviewer**
+
+> Open the London Councils contravention code list and confirm the current wording of code 12 against this statement. Record the exact wording. Reject if the code has been reworded, split, or withdrawn.
+
+**Bounded excerpt from the source** _(paste the wording you actually read)_
+
+```
+
+```
+
+**Reviewer comments**
+
+```
+
+```
+
+**Decision** — delete as appropriate
+
+`PENDING_LEGAL_REVIEW` / `REVIEWED` / `NEEDS_CHANGE` / `REJECTED`
+
+Currently recorded: `PENDING_LEGAL_REVIEW`
+
+| | |
+| --- | --- |
+| Reviewer name | |
+| Qualification | |
+| Date reviewed | |
+| Date source retrieved | |
+
+---
+
+### 2. `CAND-CODE12-SUFFIXES`
 
 **Classification** `CONTRAVENTION_METADATA` — What a suffix denotes
 
@@ -118,7 +184,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ---
 
-### 2. `CAND-CODE12-ELECTRONIC-PAYMENT`
+### 3. `CAND-CODE12-ELECTRONIC-PAYMENT`
 
 **Classification** `CONTRAVENTION_METADATA` — What a suffix denotes
 
@@ -185,7 +251,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ---
 
-### 3. `CAND-WCC-INDIVIDUAL-MERITS`
+### 4. `CAND-WCC-INDIVIDUAL-MERITS`
 
 **Classification** `AUTHORITY_POLICY` — Authority policy (discretionary)
 
@@ -193,8 +259,8 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 | --- | --- |
 | Organisation | Westminster City Council |
 | Document | Consideration of parking ticket challenges |
-| Canonical URL | <https://www.westminster.gov.uk/parking/parking-tickets-and-fines> |
-| Provision | _whole document_ |
+| Canonical URL | <https://www.westminster.gov.uk/parking/challenge-your-parking-ticket/consideration-parking-ticket-challenges> |
+| Provision | Merits of the case |
 | Jurisdiction | ENGLAND_LONDON |
 | Source tier | `ISSUING_AUTHORITY_POLICY` — may establish: AUTHORITY_POLICY, PROCEDURE |
 | Retrieval | `NOT_RETRIEVED` — **nobody has opened this document** |
@@ -250,7 +316,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ---
 
-### 4. `CAND-WCC-GENUINE-MISTAKE`
+### 5. `CAND-WCC-GENUINE-MISTAKE`
 
 **Classification** `AUTHORITY_POLICY` — Authority policy (discretionary)
 
@@ -258,8 +324,8 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 | --- | --- |
 | Organisation | Westminster City Council |
 | Document | Consideration of parking ticket challenges |
-| Canonical URL | <https://www.westminster.gov.uk/parking/parking-tickets-and-fines> |
-| Provision | _whole document_ |
+| Canonical URL | <https://www.westminster.gov.uk/parking/challenge-your-parking-ticket/consideration-parking-ticket-challenges> |
+| Provision | Genuine mistakes, mitigation and discretion |
 | Jurisdiction | ENGLAND_LONDON |
 | Source tier | `ISSUING_AUTHORITY_POLICY` — may establish: AUTHORITY_POLICY, PROCEDURE |
 | Retrieval | `NOT_RETRIEVED` — **nobody has opened this document** |
@@ -315,7 +381,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ---
 
-### 5. `CAND-WCC-EVIDENCE-CONSIDERED`
+### 6. `CAND-WCC-EVIDENCE-CONSIDERED`
 
 **Classification** `AUTHORITY_POLICY` — Authority policy (discretionary)
 
@@ -323,8 +389,8 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 | --- | --- |
 | Organisation | Westminster City Council |
 | Document | Consideration of parking ticket challenges |
-| Canonical URL | <https://www.westminster.gov.uk/parking/parking-tickets-and-fines> |
-| Provision | _whole document_ |
+| Canonical URL | <https://www.westminster.gov.uk/parking/challenge-your-parking-ticket/consideration-parking-ticket-challenges> |
+| Provision | Full consideration of evidence and the 'balance of probabilities' |
 | Jurisdiction | ENGLAND_LONDON |
 | Source tier | `ISSUING_AUTHORITY_POLICY` — may establish: AUTHORITY_POLICY, PROCEDURE |
 | Retrieval | `NOT_RETRIEVED` — **nobody has opened this document** |
@@ -377,7 +443,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ---
 
-### 6. `CAND-TMA-GROUND-NO-CONTRAVENTION`
+### 7. `CAND-TMA-GROUND-NO-CONTRAVENTION`
 
 **Classification** `STATUTORY_GROUND` — Statutory ground
 
@@ -399,8 +465,10 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 - Contravention codes: Any
 - Authority: Any
-- Notice types: NOTICE_TO_OWNER
-- Procedural stages: FORMAL_REPRESENTATION
+- Notice types: NOTICE_TO_OWNER, PCN_POSTAL
+- Procedural stages: NEW, NOTICE_TO_OWNER, FORMAL_REPRESENTATION
+- Applies to an enforcement notice: a Notice to Owner, or a regulation 10 (postal) penalty charge notice.
+- Not the regulation 9 windscreen PCN at the informal challenge stage.
 
 **Must not be read as establishing**
 
@@ -440,7 +508,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ---
 
-### 7. `CAND-TMA-GROUND-PAID-DISTINCTION`
+### 8. `CAND-TMA-GROUND-PAID-DISTINCTION`
 
 **Classification** `STATUTORY_GROUND_INTERPRETATION` — Scope of a statutory ground (never itself a ground)
 
@@ -462,8 +530,10 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 - Contravention codes: Any
 - Authority: Any
-- Notice types: NOTICE_TO_OWNER
-- Procedural stages: FORMAL_REPRESENTATION
+- Notice types: NOTICE_TO_OWNER, PCN_POSTAL
+- Procedural stages: NEW, NOTICE_TO_OWNER, FORMAL_REPRESENTATION
+- Applies to an enforcement notice: a Notice to Owner, or a regulation 10 (postal) penalty charge notice.
+- Not the regulation 9 windscreen PCN at the informal challenge stage.
 
 **Must not be read as establishing**
 
@@ -502,18 +572,18 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ---
 
-### 8. `CAND-MITIGATION-SEPARATE`
+### 9. `CAND-MITIGATION-SEPARATE`
 
 **Classification** `PROCEDURE` — Procedure
 
 | | |
 | --- | --- |
-| Organisation | London Tribunals |
-| Document | Parking enforcement — how the process works |
-| Canonical URL | <https://www.londontribunals.gov.uk/> |
-| Provision | To be identified by the reviewer: where the process description covers mitigation |
+| Organisation | UK Parliament (legislation.gov.uk) |
+| Document | The Civil Enforcement of Road Traffic Contraventions (Representations and Appeals) (England) Regulations 2022 (S.I. 2022/576) |
+| Canonical URL | <https://www.legislation.gov.uk/uksi/2022/576> |
+| Provision | Regulation 5(2)(b)(i) and (ii) |
 | Jurisdiction | ENGLAND_LONDON |
-| Source tier | `TRIBUNAL` — may establish: PROCEDURE, DEADLINE_RULE |
+| Source tier | `STATUTORY_INSTRUMENT` — may establish: STATUTORY_GROUND, STATUTORY_GROUND_INTERPRETATION, PROCEDURE, DEADLINE_RULE |
 | Retrieval | `NOT_RETRIEVED` — **nobody has opened this document** |
 
 **Candidate proposition**
@@ -537,7 +607,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 **Question for the reviewer**
 
-> Confirm from London Tribunals' published description of the parking enforcement process that a motorist may put mitigation to the authority independently of the statutory grounds, and record where it says so. If the tribunal material does not state it, look for it in S.I. 2022/576 or the statutory guidance and re-source this candidate accordingly. Reject if mitigation turns out to be available only as an adjunct to a statutory ground.
+> Open S.I. 2022/576 regulation 5(2)(b)(i) and (ii) and confirm that a person may put circumstances to the authority alongside, or independently of, the grounds — and record the wording verbatim. London Tribunals (https://www.londontribunals.gov.uk/) describes the same thing in practice and is a useful cross-check, but it is not the source: a tribunal page is competent about how the tribunal runs, not about what the instrument says. Reject if mitigation turns out to be available only as an adjunct to an established ground.
 
 **Bounded excerpt from the source** _(paste the wording you actually read)_
 
@@ -566,7 +636,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ---
 
-### 9. `CAND-DEADLINE-APPEAL-28D`
+### 10. `CAND-DEADLINE-APPEAL-28D`
 
 **Classification** `DEADLINE_RULE` — Deadline rule
 
@@ -634,74 +704,8 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 ## Also awaiting review
 
-5 further candidates. Real, and still undecided, but not on the critical path
+4 further candidates. Real, and still undecided, but not on the critical path
 for the launch scenario — they can be taken in a later sitting.
-
-### 10. `CAND-CODE12-DEFINITION`
-
-**Classification** `CONTRAVENTION_DEFINITION` — What the code alleges
-
-| | |
-| --- | --- |
-| Organisation | London Councils |
-| Document | Parking contravention codes used by London enforcement authorities |
-| Canonical URL | <https://www.londoncouncils.gov.uk/services/parking-services/parking-and-traffic/contravention-codes> |
-| Provision | Code 12 |
-| Jurisdiction | ENGLAND_LONDON |
-| Source tier | `LONDON_COUNCILS_FRAMEWORK` — may establish: CONTRAVENTION_DEFINITION, CONTRAVENTION_METADATA |
-| Retrieval | `NOT_RETRIEVED` — **nobody has opened this document** |
-
-**Candidate proposition**
-
-> Code 12 describes parking in a residents’ or shared-use parking place or zone without the required valid virtual or physical permit, voucher, pay-and-display ticket, or payment of the parking charge.
-
-**Applicability**
-
-- Contravention codes: 12
-- Authority: Any
-- Notice types: Any
-- Procedural stages: Any
-- London local-authority parking PCNs only.
-- Do not infer from the code alone that the allegation is proven.
-
-**Must not be read as establishing**
-
-- That the contravention occurred. The code records what the authority alleges, and nothing more.
-- That the vehicle was in fact parked without a valid permit or payment.
-- Any ground of representation, and any entitlement to cancellation.
-- What any suffix letter denotes. Each suffix is a separate candidate against a separate table.
-- That the underlying traffic order was valid, or that the bay was correctly signed.
-
-**Question for the reviewer**
-
-> Open the London Councils contravention code list and confirm the current wording of code 12 against this statement. Record the exact wording. Reject if the code has been reworded, split, or withdrawn.
-
-**Bounded excerpt from the source** _(paste the wording you actually read)_
-
-```
-
-```
-
-**Reviewer comments**
-
-```
-
-```
-
-**Decision** — delete as appropriate
-
-`PENDING_LEGAL_REVIEW` / `REVIEWED` / `NEEDS_CHANGE` / `REJECTED`
-
-Currently recorded: `PENDING_LEGAL_REVIEW`
-
-| | |
-| --- | --- |
-| Reviewer name | |
-| Qualification | |
-| Date reviewed | |
-| Date source retrieved | |
-
----
 
 ### 11. `CAND-TMA-REPS-STAGE`
 
@@ -710,32 +714,35 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 | | |
 | --- | --- |
 | Organisation | UK Parliament (legislation.gov.uk) |
-| Document | Traffic Management Act 2004, Schedule 1 |
-| Canonical URL | <https://www.legislation.gov.uk/ukpga/2004/18/schedule/1> |
-| Provision | Schedule 1 — representations against a notice to owner |
+| Document | The Civil Enforcement of Road Traffic Contraventions (Representations and Appeals) (England) Regulations 2022 (S.I. 2022/576) |
+| Canonical URL | <https://www.legislation.gov.uk/uksi/2022/576> |
+| Provision | Regulation 5 — representations against an enforcement notice |
 | Jurisdiction | ENGLAND_LONDON |
-| Source tier | `PRIMARY_LEGISLATION` — may establish: STATUTORY_GROUND, STATUTORY_GROUND_INTERPRETATION, PROCEDURE, DEADLINE_RULE |
+| Source tier | `STATUTORY_INSTRUMENT` — may establish: STATUTORY_GROUND, STATUTORY_GROUND_INTERPRETATION, PROCEDURE, DEADLINE_RULE |
 | Retrieval | `NOT_RETRIEVED` — **nobody has opened this document** |
 
 **Candidate proposition**
 
-> The statutory grounds of representation apply to representations made against a Notice to Owner, and not to an informal challenge made before one has been served.
+> The statutory grounds of representation apply to representations made against an enforcement notice — a Notice to Owner or a regulation 10 penalty charge notice — and not to an informal challenge made before one has been served.
 
 **Applicability**
 
 - Contravention codes: Any
 - Authority: Any
-- Notice types: NOTICE_TO_OWNER
-- Procedural stages: FORMAL_REPRESENTATION
+- Notice types: NOTICE_TO_OWNER, PCN_POSTAL
+- Procedural stages: NEW, NOTICE_TO_OWNER, FORMAL_REPRESENTATION
+- Applies to an enforcement notice: a Notice to Owner, or a regulation 10 (postal) penalty charge notice.
+- Not the regulation 9 windscreen PCN at the informal challenge stage.
 
 **Must not be read as establishing**
 
 - That an informal challenge is pointless or that an authority will not consider one.
 - The content of any individual ground.
+- That the grounds attach to a regulation 9 windscreen PCN. They do not; that stage is the informal challenge.
 
 **Question for the reviewer**
 
-> Confirm from Schedule 1 which document representations are made against, and at which point the statutory grounds become available. This governs every other statutory candidate in this bundle: if the stage is wrong, they are all scoped wrongly.
+> Re-sourced from the Act to the instrument, and reworded. It previously said the grounds attach to a Notice to Owner, sourced to Traffic Management Act 2004 Schedule 1. Under S.I. 2022/576 representations are made against an *enforcement notice*, which is a Notice to Owner OR a regulation 10 penalty charge notice — so the old wording excluded every postal PCN. Confirm from regulation 5 which document representations attach to and how "enforcement notice" is defined, and record both verbatim. Also confirm the relationship between Schedule 1 and these Regulations — whether Schedule 1 remains the enabling provision, has been amended, or is simply the wrong place to look for this. This governs every other statutory candidate in the bundle: if the scope is wrong, they are all scoped wrongly.
 
 **Bounded excerpt from the source** _(paste the wording you actually read)_
 
@@ -771,23 +778,25 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 | | |
 | --- | --- |
 | Organisation | UK Parliament (legislation.gov.uk) |
-| Document | Traffic Management Act 2004, Schedule 1 |
-| Canonical URL | <https://www.legislation.gov.uk/ukpga/2004/18/schedule/1> |
-| Provision | Schedule 1 — grounds for representations |
+| Document | The Civil Enforcement of Road Traffic Contraventions (Representations and Appeals) (England) Regulations 2022 (S.I. 2022/576) |
+| Canonical URL | <https://www.legislation.gov.uk/uksi/2022/576> |
+| Provision | Regulation 5 — grounds for representations |
 | Jurisdiction | ENGLAND_LONDON |
-| Source tier | `PRIMARY_LEGISLATION` — may establish: STATUTORY_GROUND, STATUTORY_GROUND_INTERPRETATION, PROCEDURE, DEADLINE_RULE |
+| Source tier | `STATUTORY_INSTRUMENT` — may establish: STATUTORY_GROUND, STATUTORY_GROUND_INTERPRETATION, PROCEDURE, DEADLINE_RULE |
 | Retrieval | `NOT_RETRIEVED` — **nobody has opened this document** |
 
 **Candidate proposition**
 
-> Schedule 1 sets out an exhaustive list of grounds on which representations against a Notice to Owner may be made.
+> Regulation 5 sets out an exhaustive list of grounds on which representations against an enforcement notice may be made.
 
 **Applicability**
 
 - Contravention codes: Any
 - Authority: Any
-- Notice types: NOTICE_TO_OWNER
-- Procedural stages: FORMAL_REPRESENTATION
+- Notice types: NOTICE_TO_OWNER, PCN_POSTAL
+- Procedural stages: NEW, NOTICE_TO_OWNER, FORMAL_REPRESENTATION
+- Applies to an enforcement notice: a Notice to Owner, or a regulation 10 (postal) penalty charge notice.
+- Not the regulation 9 windscreen PCN at the informal challenge stage.
 
 **Must not be read as establishing**
 
@@ -797,7 +806,7 @@ Currently recorded: `PENDING_LEGAL_REVIEW`
 
 **Question for the reviewer**
 
-> Enumerate the grounds as currently in force and confirm the list is exhaustive. PCNWatch holds eight ground records written before any review; check each against the provision and record which are correctly stated, which need rewording, and which do not exist.
+> Re-sourced from Traffic Management Act 2004 Schedule 1 to S.I. 2022/576 regulation 5, because that is where the grounds for representations now sit and pointing a reviewer at the Act would have them reading the enabling provision rather than the list. Enumerate the grounds as currently in force and confirm the list is exhaustive. PCNWatch holds eight ground records written before any review; check each against regulation 5 and record which are correctly stated, which need rewording, and which do not exist. Confirm at the same time whether Schedule 1 is superseded, amended, or still the parent provision for these Regulations — I could not open either document and the relationship between them is assumed, not checked.
 
 **Bounded excerpt from the source** _(paste the wording you actually read)_
 

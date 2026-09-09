@@ -33,8 +33,17 @@ const TMA_2004_SCHEDULE_1 =
   'https://www.legislation.gov.uk/ukpga/2004/18/schedule/1';
 const LONDON_COUNCILS_CODES =
   'https://www.londoncouncils.gov.uk/services/parking-services/parking-and-traffic/contravention-codes';
+/**
+ * The exact page the three policy propositions come from.
+ *
+ * Previously the parking hub, which is a navigation page: a reviewer opening it
+ * would have had to find the policy themselves, and two of them might have
+ * found different pages. Each candidate now names the heading its proposition
+ * sits under, so the review is "does the page say this, under this heading"
+ * rather than "is this the sort of thing Westminster says".
+ */
 const WESTMINSTER_CHALLENGE =
-  'https://www.westminster.gov.uk/parking/parking-tickets-and-fines';
+  'https://www.westminster.gov.uk/parking/challenge-your-parking-ticket/consideration-parking-ticket-challenges';
 
 /*
  * The 2022 Regulations, now with their SI number.
@@ -203,27 +212,31 @@ const STATUTORY: readonly CandidateProposition[] = [
     id: 'CAND-TMA-REPS-STAGE',
     kind: 'PROCEDURE',
     proposition:
-      'The statutory grounds of representation apply to representations made against a Notice to Owner, and not to an informal challenge made before one has been served.',
+      'The statutory grounds of representation apply to representations made against an enforcement notice — a Notice to Owner or a regulation 10 penalty charge notice — and not to an informal challenge made before one has been served.',
     reviewQuestion:
-      'Confirm from Schedule 1 which document representations are made against, and at which point the statutory grounds become available. This governs every other statutory candidate in this bundle: if the stage is wrong, they are all scoped wrongly.',
+      `Re-sourced from the Act to the instrument, and reworded. It previously said the grounds attach to a Notice to Owner, sourced to Traffic Management Act 2004 Schedule 1. Under ${REGS_2022_SI} representations are made against an *enforcement notice*, which is a Notice to Owner OR a regulation 10 penalty charge notice — so the old wording excluded every postal PCN. Confirm from regulation 5 which document representations attach to and how "enforcement notice" is defined, and record both verbatim. Also confirm the relationship between Schedule 1 and these Regulations — whether Schedule 1 remains the enabling provision, has been amended, or is simply the wrong place to look for this. This governs every other statutory candidate in the bundle: if the scope is wrong, they are all scoped wrongly.`,
     doesNotEstablish: [
       'That an informal challenge is pointless or that an authority will not consider one.',
       'The content of any individual ground.',
+      'That the grounds attach to a regulation 9 windscreen PCN. They do not; that stage is the informal challenge.',
     ],
     applicability: {
       contraventionCodes: null,
       authoritySlug: null,
-      noticeTypes: ['NOTICE_TO_OWNER'],
-      proceduralStages: ['FORMAL_REPRESENTATION'],
-      conditions: [],
+      noticeTypes: ['NOTICE_TO_OWNER', 'PCN_POSTAL'],
+      proceduralStages: ['NEW', 'NOTICE_TO_OWNER', 'FORMAL_REPRESENTATION'],
+      conditions: [
+        'Applies to an enforcement notice: a Notice to Owner, or a regulation 10 (postal) penalty charge notice.',
+        'Not the regulation 9 windscreen PCN at the informal challenge stage.',
+      ],
     },
     source: {
       organisation: 'UK Parliament (legislation.gov.uk)',
-      documentTitle: 'Traffic Management Act 2004, Schedule 1',
-      canonicalUrl: TMA_2004_SCHEDULE_1,
+      documentTitle: `${REGS_2022_TITLE} (${REGS_2022_SI})`,
+      canonicalUrl: REGS_2022_URL,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: 'Schedule 1 — representations against a notice to owner',
-      tier: 'PRIMARY_LEGISLATION',
+      provision: 'Regulation 5 — representations against an enforcement notice',
+      tier: 'STATUTORY_INSTRUMENT',
       documentDate: null,
       retrievedAt: null,
       retrieval: 'NOT_RETRIEVED',
@@ -243,9 +256,9 @@ const STATUTORY: readonly CandidateProposition[] = [
      */
     kind: 'STATUTORY_GROUND_INTERPRETATION',
     proposition:
-      'Schedule 1 sets out an exhaustive list of grounds on which representations against a Notice to Owner may be made.',
+      'Regulation 5 sets out an exhaustive list of grounds on which representations against an enforcement notice may be made.',
     reviewQuestion:
-      'Enumerate the grounds as currently in force and confirm the list is exhaustive. PCNWatch holds eight ground records written before any review; check each against the provision and record which are correctly stated, which need rewording, and which do not exist.',
+      `Re-sourced from Traffic Management Act 2004 Schedule 1 to ${REGS_2022_SI} regulation 5, because that is where the grounds for representations now sit and pointing a reviewer at the Act would have them reading the enabling provision rather than the list. Enumerate the grounds as currently in force and confirm the list is exhaustive. PCNWatch holds eight ground records written before any review; check each against regulation 5 and record which are correctly stated, which need rewording, and which do not exist. Confirm at the same time whether Schedule 1 is superseded, amended, or still the parent provision for these Regulations — I could not open either document and the relationship between them is assumed, not checked.`,
     doesNotEstablish: [
       'The wording of any individual ground.',
       'That any ground is available on the facts of any case.',
@@ -254,17 +267,20 @@ const STATUTORY: readonly CandidateProposition[] = [
     applicability: {
       contraventionCodes: null,
       authoritySlug: null,
-      noticeTypes: ['NOTICE_TO_OWNER'],
-      proceduralStages: ['FORMAL_REPRESENTATION'],
-      conditions: [],
+      noticeTypes: ['NOTICE_TO_OWNER', 'PCN_POSTAL'],
+      proceduralStages: ['NEW', 'NOTICE_TO_OWNER', 'FORMAL_REPRESENTATION'],
+      conditions: [
+        'Applies to an enforcement notice: a Notice to Owner, or a regulation 10 (postal) penalty charge notice.',
+        'Not the regulation 9 windscreen PCN at the informal challenge stage.',
+      ],
     },
     source: {
       organisation: 'UK Parliament (legislation.gov.uk)',
-      documentTitle: 'Traffic Management Act 2004, Schedule 1',
-      canonicalUrl: TMA_2004_SCHEDULE_1,
+      documentTitle: `${REGS_2022_TITLE} (${REGS_2022_SI})`,
+      canonicalUrl: REGS_2022_URL,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: 'Schedule 1 — grounds for representations',
-      tier: 'PRIMARY_LEGISLATION',
+      provision: 'Regulation 5 — grounds for representations',
+      tier: 'STATUTORY_INSTRUMENT',
       documentDate: null,
       retrievedAt: null,
       retrieval: 'NOT_RETRIEVED',
@@ -287,9 +303,36 @@ const STATUTORY: readonly CandidateProposition[] = [
     applicability: {
       contraventionCodes: null,
       authoritySlug: null,
-      noticeTypes: ['NOTICE_TO_OWNER'],
-      proceduralStages: ['FORMAL_REPRESENTATION'],
-      conditions: [],
+      /*
+       * An enforcement notice, not a Notice to Owner.
+       *
+       * These were scoped to NOTICE_TO_OWNER alone, which is narrower than the
+       * statute: S.I. 2022/576 attaches representations to an *enforcement
+       * notice*, and that is a Notice to Owner OR a regulation 10 penalty
+       * charge notice. A regulation 10 PCN is the one served by post — the
+       * camera and CCTV route — and the recipient makes representations
+       * against it directly, with no Notice to Owner in between. Scoped to the
+       * NtO only, the ground would have been unavailable to every postal PCN.
+       *
+       * PCN_POSTAL is the application's existing name for that document; no
+       * new enum member is needed, and inventing one would give the codebase
+       * two names for one notice.
+       *
+       * PCN_ON_STREET stays out. That is the regulation 9 windscreen PCN,
+       * which precedes the enforcement notice — a challenge at that point is
+       * informal, and the statutory grounds do not yet apply to it.
+       */
+      noticeTypes: ['NOTICE_TO_OWNER', 'PCN_POSTAL'],
+      /*
+       * NEW is here for the regulation 10 PCN, which has no earlier stage: it
+       * arrives as the enforcement notice. The notice type is what carries the
+       * statutory scope, and the stage list must not be narrower than it.
+       */
+      proceduralStages: ['NEW', 'NOTICE_TO_OWNER', 'FORMAL_REPRESENTATION'],
+      conditions: [
+        'Applies to an enforcement notice: a Notice to Owner, or a regulation 10 (postal) penalty charge notice.',
+        'Not the regulation 9 windscreen PCN at the informal challenge stage.',
+      ],
     },
     source: {
       organisation: 'UK Parliament (legislation.gov.uk)',
@@ -328,9 +371,36 @@ const STATUTORY: readonly CandidateProposition[] = [
     applicability: {
       contraventionCodes: null,
       authoritySlug: null,
-      noticeTypes: ['NOTICE_TO_OWNER'],
-      proceduralStages: ['FORMAL_REPRESENTATION'],
-      conditions: [],
+      /*
+       * An enforcement notice, not a Notice to Owner.
+       *
+       * These were scoped to NOTICE_TO_OWNER alone, which is narrower than the
+       * statute: S.I. 2022/576 attaches representations to an *enforcement
+       * notice*, and that is a Notice to Owner OR a regulation 10 penalty
+       * charge notice. A regulation 10 PCN is the one served by post — the
+       * camera and CCTV route — and the recipient makes representations
+       * against it directly, with no Notice to Owner in between. Scoped to the
+       * NtO only, the ground would have been unavailable to every postal PCN.
+       *
+       * PCN_POSTAL is the application's existing name for that document; no
+       * new enum member is needed, and inventing one would give the codebase
+       * two names for one notice.
+       *
+       * PCN_ON_STREET stays out. That is the regulation 9 windscreen PCN,
+       * which precedes the enforcement notice — a challenge at that point is
+       * informal, and the statutory grounds do not yet apply to it.
+       */
+      noticeTypes: ['NOTICE_TO_OWNER', 'PCN_POSTAL'],
+      /*
+       * NEW is here for the regulation 10 PCN, which has no earlier stage: it
+       * arrives as the enforcement notice. The notice type is what carries the
+       * statutory scope, and the stage list must not be narrower than it.
+       */
+      proceduralStages: ['NEW', 'NOTICE_TO_OWNER', 'FORMAL_REPRESENTATION'],
+      conditions: [
+        'Applies to an enforcement notice: a Notice to Owner, or a regulation 10 (postal) penalty charge notice.',
+        'Not the regulation 9 windscreen PCN at the informal challenge stage.',
+      ],
     },
     source: {
       organisation: 'UK Parliament (legislation.gov.uk)',
@@ -351,7 +421,7 @@ const STATUTORY: readonly CandidateProposition[] = [
     proposition:
       'A motorist may ask the enforcement authority to consider mitigation even where no statutory ground is established.',
     reviewQuestion:
-      `Confirm from London Tribunals' published description of the parking enforcement process that a motorist may put mitigation to the authority independently of the statutory grounds, and record where it says so. If the tribunal material does not state it, look for it in ${REGS_2022_SI} or the statutory guidance and re-source this candidate accordingly. Reject if mitigation turns out to be available only as an adjunct to a statutory ground.`,
+      `Open ${REGS_2022_SI} regulation 5(2)(b)(i) and (ii) and confirm that a person may put circumstances to the authority alongside, or independently of, the grounds — and record the wording verbatim. London Tribunals (${LONDON_TRIBUNALS}) describes the same thing in practice and is a useful cross-check, but it is not the source: a tribunal page is competent about how the tribunal runs, not about what the instrument says. Reject if mitigation turns out to be available only as an adjunct to an established ground.`,
     doesNotEstablish: [
       'That mitigation is a statutory ground. It is the opposite: this candidate exists to hold the two apart, and it is classified PROCEDURE so that approving it can never make a ground available.',
       'That an authority must consider mitigation, or must cancel where it does.',
@@ -368,12 +438,12 @@ const STATUTORY: readonly CandidateProposition[] = [
       ],
     },
     source: {
-      organisation: 'London Tribunals',
-      documentTitle: 'Parking enforcement — how the process works',
-      canonicalUrl: LONDON_TRIBUNALS,
+      organisation: 'UK Parliament (legislation.gov.uk)',
+      documentTitle: `${REGS_2022_TITLE} (${REGS_2022_SI})`,
+      canonicalUrl: REGS_2022_URL,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: 'To be identified by the reviewer: where the process description covers mitigation',
-      tier: 'TRIBUNAL',
+      provision: 'Regulation 5(2)(b)(i) and (ii)',
+      tier: 'STATUTORY_INSTRUMENT',
       documentDate: null,
       retrievedAt: null,
       retrieval: 'NOT_RETRIEVED',
@@ -413,7 +483,7 @@ const POLICY: readonly CandidateProposition[] = [
       documentTitle: 'Consideration of parking ticket challenges',
       canonicalUrl: WESTMINSTER_CHALLENGE,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: null,
+      provision: 'Merits of the case',
       tier: 'ISSUING_AUTHORITY_POLICY',
       documentDate: null,
       retrievedAt: null,
@@ -447,7 +517,7 @@ const POLICY: readonly CandidateProposition[] = [
       documentTitle: 'Consideration of parking ticket challenges',
       canonicalUrl: WESTMINSTER_CHALLENGE,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: null,
+      provision: 'Genuine mistakes, mitigation and discretion',
       tier: 'ISSUING_AUTHORITY_POLICY',
       documentDate: null,
       retrievedAt: null,
@@ -478,7 +548,7 @@ const POLICY: readonly CandidateProposition[] = [
       documentTitle: 'Consideration of parking ticket challenges',
       canonicalUrl: WESTMINSTER_CHALLENGE,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: null,
+      provision: "Full consideration of evidence and the 'balance of probabilities'",
       tier: 'ISSUING_AUTHORITY_POLICY',
       documentDate: null,
       retrievedAt: null,
@@ -610,6 +680,10 @@ const DEADLINES: readonly CandidateProposition[] = [
  * a reviewer when nine of them are the point is how the nine get skimmed.
  */
 export const INITIAL_LAUNCH_REVIEW: readonly string[] = [
+  // The code itself comes first. A suffix modifies a contravention, so
+  // reviewing what "x" means before confirming what code 12 alleges is
+  // reviewing an adjective without the noun.
+  'CAND-CODE12-DEFINITION',
   'CAND-CODE12-SUFFIXES',
   'CAND-CODE12-ELECTRONIC-PAYMENT',
   'CAND-WCC-INDIVIDUAL-MERITS',
