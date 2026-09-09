@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '@/lib/supabase/server';
-import { publicEnv, featureFlags } from '@/lib/env';
+import { featureFlags } from '@/lib/env';
 import { AppError, logError } from '@/lib/errors';
 import { getProduct } from '@/server/payments/catalogue';
 import { createCheckoutSession } from '@/server/payments/stripe';
 import { attachSession, findOpenAttempt, openAttempt } from '@/server/payments/attempts';
 import { stripeReady } from '@/server/payments/mode';
+import { checkoutOrigin, checkoutReturnUrls } from '@/server/payments/origin';
 import { rateLimit } from '@/server/rate-limit';
 
 /**
@@ -45,6 +46,23 @@ export async function POST(request: Request) {
   const mode = stripeReady();
   if (!mode.allowed) {
     logError('api.checkout.mode', new Error(mode.reason));
+    return NextResponse.json(
+      { ok: false, reason: 'PAYMENTS_UNAVAILABLE' as const, message: 'Payments are not available on this deployment.' },
+      { status: 503 },
+    );
+  }
+
+  /*
+   * Where the user comes back to, established before anything is written.
+   *
+   * A Checkout Session that returns to the wrong deployment is worse than no
+   * session at all: the payment succeeds and the customer lands somewhere their
+   * session cookie does not exist, looking at a case that appears not to be
+   * theirs. So an origin we cannot establish refuses checkout.
+   */
+  const origin = checkoutOrigin();
+  if (!origin.ok) {
+    logError('api.checkout.origin', new Error(origin.reason));
     return NextResponse.json(
       { ok: false, reason: 'PAYMENTS_UNAVAILABLE' as const, message: 'Payments are not available on this deployment.' },
       { status: 503 },
@@ -147,15 +165,19 @@ export async function POST(request: Request) {
     }));
     if (!paymentId) throw new Error('PAYMENT_ROW_NOT_CREATED');
 
-    const base = publicEnv.NEXT_PUBLIC_SITE_URL.replace(/\/$/, '');
+    /*
+     * Where Stripe sends them back. Derived from the deployment, never from
+     * the request — see `origin.ts`. Identifies where to look on return, and
+     * proves nothing about payment.
+     */
+    const { successUrl, cancelUrl } = checkoutReturnUrls(origin.origin, caseId);
     const session = await createCheckoutSession({
       product,
       userId: user.id,
       caseId,
       customerEmail: user.email ?? undefined,
-      // Identifies where to look on return. It proves nothing.
-      successUrl: `${base}/case/${caseId}/defence?checkout=returned`,
-      cancelUrl: `${base}/case/${caseId}/defence?checkout=cancelled`,
+      successUrl,
+      cancelUrl,
       // One attempt, one session. See CheckoutSessionRequest.attemptId.
       attemptId: paymentId,
     });

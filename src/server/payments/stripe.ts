@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { serverEnv, isConfigured } from '@/lib/env';
-import { AppError } from '@/lib/errors';
+import { AppError, logError } from '@/lib/errors';
 import { getProduct, type Product } from './catalogue';
 
 /**
@@ -129,6 +129,22 @@ export async function createCheckoutSession(
   });
 
   if (!response.ok) {
+    /*
+     * Say why, in the log, without saying anything that must not be in a log.
+     *
+     * The first real Checkout failure was a Stripe Price configured as
+     * recurring against a `mode: payment` session. Stripe said so precisely;
+     * this code discarded the answer and raised "we could not start the
+     * payment", so the only way to find out was the Stripe dashboard.
+     *
+     * What is recorded is the diagnostic envelope and nothing else: the error
+     * type, the machine-readable code, the offending parameter, the HTTP
+     * status and Stripe's request id. Deliberately NOT the human message —
+     * it is Stripe's prose rather than a field we control, and the request id
+     * fetches it from the dashboard, which is the safe channel for it. Never
+     * the key, never the request body, never anything about the case.
+     */
+    await logStripeFailure(response, 'checkout.session');
     throw new AppError(
       'STRIPE_CHECKOUT_FAILED',
       'We could not start the payment.',
@@ -359,4 +375,58 @@ export async function fetchLatestCharge(paymentIntentId: string): Promise<string
   } catch {
     return null;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Diagnostics                                                         */
+/* ------------------------------------------------------------------ */
+
+/** Stripe's error envelope. Only the machine-readable half is ever read. */
+interface StripeErrorEnvelope {
+  readonly error?: {
+    readonly type?: unknown;
+    readonly code?: unknown;
+    readonly decline_code?: unknown;
+    readonly param?: unknown;
+  };
+}
+
+/** Keeps a stray object out of the log line if Stripe ever changes shape. */
+function scalar(value: unknown): string | null {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
+}
+
+/**
+ * Records why Stripe refused, from the fields that are safe to record.
+ *
+ * Best effort by design: a failure to read the diagnostic must not replace the
+ * failure being diagnosed, so everything here is inside one try.
+ */
+export async function logStripeFailure(response: Response, operation: string): Promise<void> {
+  let type: string | null = null;
+  let code: string | null = null;
+  let declineCode: string | null = null;
+  let param: string | null = null;
+
+  try {
+    const body = (await response.clone().json()) as StripeErrorEnvelope;
+    type = scalar(body.error?.type);
+    code = scalar(body.error?.code);
+    declineCode = scalar(body.error?.decline_code);
+    param = scalar(body.error?.param);
+  } catch {
+    // A non-JSON body (a gateway error page) leaves the status and request id,
+    // which is still enough to find the request in Stripe's logs.
+  }
+
+  logError('stripe.api', new Error(`Stripe refused ${operation}.`), {
+    operation,
+    status: response.status,
+    stripeType: type,
+    stripeCode: code,
+    stripeDeclineCode: declineCode,
+    // e.g. "line_items[0][price]" — a field name of ours, not a value of theirs.
+    stripeParam: param,
+    stripeRequestId: response.headers.get('request-id'),
+  });
 }
