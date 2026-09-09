@@ -8,6 +8,7 @@ import { loadPack } from '@/server/defence/persist';
 import { getProduct } from '@/server/payments/catalogue';
 import { featureFlags } from '@/lib/env';
 import { Card, Disclaimer, formatPence } from '@/components/primitives';
+import { GlassCard, Pill } from '@/components/marketing';
 import { CaseUnavailable } from '../CaseUnavailable';
 import { DefencePanel, type StoredPackView } from './DefencePanel';
 import { PurchaseCta } from './PurchaseCta';
@@ -78,29 +79,52 @@ export default async function DefencePage({
           </p>
         </Card>
       ) : !access.granted ? (
-        <Card style={{ marginTop: 20 }}>
-          <div className="fr-eyebrow" style={{ marginBottom: 8 }}>
-            Defence Pack
-          </div>
-          <h2 style={{ fontSize: 19, fontWeight: 620, marginBottom: 8 }}>
-            {product ? formatPence(product.pricePence) : ''} one-off
-          </h2>
-          <p style={{ margin: '0 0 14px', fontSize: 15, color: 'var(--text-muted)' }}>
-            {access.reason}
-          </p>
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14.5, color: 'var(--text-muted)' }}>
-            {product?.includes.map((line) => <li key={line}>{line}</li>)}
-          </ul>
-          <PurchaseCta
-            caseId={id}
-            priceLabel={product ? formatPence(product.pricePence) : ''}
-            paymentsEnabled={featureFlags.payments}
-            returnState={returnState}
-          />
-          <p style={{ margin: '16px 0 0', fontSize: 13.5, color: 'var(--text-faint)' }}>
-            Your deadlines, the evidence checklist and the evidence basis stay free.
-          </p>
-        </Card>
+        <div style={{ marginTop: 24 }}>
+          <GlassCard accent="brand" style={{ padding: 26, borderColor: 'rgb(47 123 255 / 0.32)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div className="fr-eyebrow">Defence Pack</div>
+              <Pill accent="brand">One-off payment</Pill>
+            </div>
+            <h2
+              className="fr-numeric"
+              style={{ fontSize: 40, fontWeight: 700, marginTop: 12, letterSpacing: '-0.03em' }}
+            >
+              {product ? formatPence(product.pricePence) : ''}
+            </h2>
+            <p style={{ margin: '12px 0 0', fontSize: 15, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+              {access.reason}
+            </p>
+            <ul
+              style={{
+                margin: '18px 0 0',
+                padding: 0,
+                listStyle: 'none',
+                display: 'grid',
+                gap: 9,
+                fontSize: 14.5,
+                color: 'var(--text-muted)',
+              }}
+            >
+              {product?.includes.map((line) => (
+                <li key={line} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <span aria-hidden="true" style={{ color: 'var(--color-cyan-400)', flexShrink: 0 }}>
+                    ✓
+                  </span>
+                  {line}
+                </li>
+              ))}
+            </ul>
+            <PurchaseCta
+              caseId={id}
+              priceLabel={product ? formatPence(product.pricePence) : ''}
+              paymentsEnabled={featureFlags.payments}
+              returnState={returnState}
+            />
+            <p style={{ margin: '18px 0 0', fontSize: 13.5, color: 'var(--text-faint)', lineHeight: 1.55 }}>
+              The evidence checklist, the evidence basis and the dates on your notice stay free.
+            </p>
+          </GlassCard>
+        </div>
       ) : (
         /*
          * No basis gate.

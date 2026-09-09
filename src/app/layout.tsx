@@ -7,11 +7,11 @@ import './globals.css';
 export const metadata: Metadata = {
   metadataBase: new URL(publicEnv.NEXT_PUBLIC_SITE_URL),
   title: {
-    default: 'PCNWatch — see where tickets happen',
+    default: 'PCNWatch — fight unfair parking tickets with clarity',
     template: '%s · PCNWatch',
   },
   description:
-    'Explore where parking and traffic penalties are actually being issued in London. Already received a PCN? Decode it, organise your evidence and build your challenge.',
+    'Scan your penalty charge notice, understand what it means in plain English, and build a stronger response with clear guidance and an evidence checklist.',
   applicationName: 'PCNWatch',
   openGraph: {
     type: 'website',
@@ -25,10 +25,8 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#fbfbf9' },
-    { media: '(prefers-color-scheme: dark)', color: '#0b0d0f' },
-  ],
+  // One colour, because the site is dark whichever way the system is set.
+  themeColor: '#05070d',
 };
 
 /**
@@ -58,7 +56,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="fr-container fr-header-inner">
             <Link href="/" className="fr-brand">
               <RadarMark />
-              <span>PCNWatch</span>
+              <span>
+                PCN<span style={{ color: 'var(--color-brand-400)' }}>Watch</span>
+              </span>
             </Link>
 
             {/* Secondary navigation. A scrollable strip on narrow screens rather
@@ -88,6 +88,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
             {/* The primary action stays beside the brand at every width. On a
                 phone this is what someone standing by their car needs first. */}
+            {/* The dominant action at every width. See the tests that pin it
+                outside the navigation and still styled as the primary. */}
             <Link href="/analyse" className="fr-touch fr-cta">
               Analyse my PCN
             </Link>
@@ -99,73 +101,95 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <footer
           style={{
             borderTop: '1px solid var(--border)',
-            marginTop: 72,
-            paddingBlock: '40px 56px',
-            background: 'var(--surface-sunken)',
+            marginTop: 0,
+            paddingBlock: '52px 44px',
+            background: 'rgb(3 5 10 / 0.6)',
           }}
         >
-          <div className="fr-container">
+          <div className="fr-container fr-stack">
             <div
               style={{
                 display: 'grid',
-                gap: 28,
-                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: 32,
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
               }}
             >
-              <div>
-                <div className="fr-eyebrow" style={{ marginBottom: 10 }}>
-                  Coverage
-                </div>
-                <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', maxWidth: 320 }}>
+              <div style={{ maxWidth: 320 }}>
+                <Link
+                  href="/"
+                  className="fr-brand"
+                  style={{ marginRight: 0, marginBottom: 14 }}
+                >
+                  <RadarMark />
+                  <span>
+                    PCN<span style={{ color: 'var(--color-brand-400)' }}>Watch</span>
+                  </span>
+                </Link>
+                <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
                   {COVERAGE_SCOPE.statement} {COVERAGE_SCOPE.explanation}
                 </p>
               </div>
+
               <div>
-                <div className="fr-eyebrow" style={{ marginBottom: 10 }}>
+                <div className="fr-eyebrow" style={{ marginBottom: 12 }}>
                   Explore
                 </div>
-                <ul style={{ listStyle: 'none', margin: 0, padding: 0, fontSize: 13 }}>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, fontSize: 13.5 }}>
                   {NAV.map((item) => (
-                    <li key={item.href} style={{ marginBottom: 7 }}>
-                      <Link href={item.href} style={{ color: 'var(--text-muted)' }}>
+                    <li key={item.href} style={{ marginBottom: 9 }}>
+                      <Link href={item.href} className="fr-footer-link">
                         {item.label}
                       </Link>
                     </li>
                   ))}
                 </ul>
               </div>
+
               <div>
-                <div className="fr-eyebrow" style={{ marginBottom: 10 }}>
+                <div className="fr-eyebrow" style={{ marginBottom: 12 }}>
                   Legal
                 </div>
-                <ul style={{ listStyle: 'none', margin: 0, padding: 0, fontSize: 13 }}>
-                  <li style={{ marginBottom: 7 }}>
-                    <Link href="/legal/privacy" style={{ color: 'var(--text-muted)' }}>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, fontSize: 13.5 }}>
+                  <li style={{ marginBottom: 9 }}>
+                    <Link href="/legal/privacy" className="fr-footer-link">
                       Privacy
                     </Link>
                   </li>
-                  <li style={{ marginBottom: 7 }}>
-                    <Link href="/legal/scope" style={{ color: 'var(--text-muted)' }}>
+                  <li style={{ marginBottom: 9 }}>
+                    <Link href="/legal/scope" className="fr-footer-link">
                       What PCNWatch does and does not do
                     </Link>
                   </li>
-                  <li style={{ marginBottom: 7 }}>
-                    <Link href="/legal/sources" style={{ color: 'var(--text-muted)' }}>
+                  <li style={{ marginBottom: 9 }}>
+                    <Link href="/legal/sources" className="fr-footer-link">
                       Data sources
                     </Link>
                   </li>
                 </ul>
               </div>
+
+              <div>
+                <div className="fr-eyebrow" style={{ marginBottom: 12 }}>
+                  Get started
+                </div>
+                <p style={{ margin: '0 0 14px', fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  Already have a notice? Start with a photo of it.
+                </p>
+                <Link href="/analyse" className="fr-touch fr-cta">
+                  Analyse my PCN
+                </Link>
+              </div>
             </div>
 
             <p
               style={{
-                marginTop: 32,
-                paddingTop: 20,
+                marginTop: 40,
+                paddingTop: 22,
                 borderTop: '1px solid var(--border)',
                 fontSize: 12.5,
                 color: 'var(--text-faint)',
-                maxWidth: 720,
+                maxWidth: 760,
+                lineHeight: 1.6,
               }}
             >
               PCNWatch provides information and document-preparation tools. It does not provide
@@ -180,13 +204,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 }
 
+/**
+ * The brand mark: a sweep over a location.
+ *
+ * Same idea as before — a radar finding something — drawn a little heavier so
+ * it holds its own beside a bolder wordmark, and tinted with the brand blue
+ * rather than the old instrument cyan.
+ */
 function RadarMark() {
   return (
-    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" stroke="var(--color-ink-400)" strokeWidth="1.2" />
-      <circle cx="12" cy="12" r="5.5" stroke="var(--color-ink-400)" strokeWidth="1.2" />
-      <path d="M12 12 L20 7" stroke="var(--color-signal-500)" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="12" cy="12" r="1.9" fill="var(--color-signal-500)" />
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="10.2" stroke="var(--color-ink-600)" strokeWidth="1.3" />
+      <circle cx="12" cy="12" r="5.8" stroke="var(--color-ink-600)" strokeWidth="1.3" />
+      <path
+        d="M12 12 L20.2 6.6"
+        stroke="var(--color-cyan-400)"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <circle cx="12" cy="12" r="2.4" fill="var(--color-brand-500)" />
+      <circle cx="12" cy="12" r="4.6" stroke="var(--color-brand-500)" strokeOpacity="0.45" strokeWidth="1" />
     </svg>
   );
 }

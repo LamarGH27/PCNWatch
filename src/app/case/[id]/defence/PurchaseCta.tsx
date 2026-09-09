@@ -153,7 +153,12 @@ export function PurchaseCta({
           in a minute or two. If it has not appeared within an hour, contact us with the case link
           and we will sort it out.
         </p>
-        <button type="button" className="fr-touch" style={secondary} onClick={() => window.location.reload()}>
+        <button
+          type="button"
+          className="fr-touch fr-btn fr-btn-secondary"
+          style={{ marginTop: 12 }}
+          onClick={() => window.location.reload()}
+        >
           Check again
         </button>
       </div>
@@ -171,7 +176,7 @@ export function PurchaseCta({
       {paymentsEnabled ? (
         <button
           type="button"
-          className="fr-touch"
+          className="fr-touch fr-btn fr-btn-primary"
           onClick={() => void start()}
           disabled={phase === 'STARTING'}
           style={primary}
@@ -213,27 +218,8 @@ const noticeStyle = {
   background: 'var(--surface-raised, transparent)',
 } as const;
 
-const primary = {
-  minHeight: 46,
-  padding: '0 20px',
-  background: 'var(--color-ink-900)',
-  color: 'var(--color-ink-50)',
-  border: 'none',
-  borderRadius: 'var(--radius-md)',
-  fontSize: 15.5,
-  fontWeight: 570,
-  cursor: 'pointer',
-} as const;
+/* Empty: the button now carries `fr-btn fr-btn-primary`, so its appearance
+   lives with every other primary action rather than in this file. */
+const primary = {} as const;
 
-const secondary = {
-  marginTop: 12,
-  minHeight: 42,
-  padding: '0 18px',
-  background: 'transparent',
-  color: 'var(--text)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-md)',
-  fontSize: 15,
-  fontWeight: 550,
-  cursor: 'pointer',
-} as const;
+

@@ -512,8 +512,8 @@ const listStyle = { margin: 0, paddingLeft: 18, display: 'grid', gap: 5, fontSiz
 
 const primaryButton = {
   padding: '0 20px',
-  background: 'var(--color-ink-900)',
-  color: 'var(--color-ink-50)',
+  background: 'var(--btn-primary-bg)',
+  color: 'var(--btn-primary-fg)',
   border: 'none',
   borderRadius: 'var(--radius-md)',
   fontSize: 15,

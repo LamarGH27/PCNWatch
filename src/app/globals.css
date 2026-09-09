@@ -10,86 +10,126 @@
  */
 
 @theme {
-  /* Ink — near-black through to paper. */
-  --color-ink-950: #0b0d0f;
-  --color-ink-900: #131619;
-  --color-ink-800: #1c2024;
-  --color-ink-700: #2a2f35;
-  --color-ink-600: #3c434b;
-  --color-ink-500: #5a626c;
-  --color-ink-400: #838b95;
-  --color-ink-300: #adb4bd;
-  --color-ink-200: #d2d7dd;
-  --color-ink-100: #e7eaee;
-  --color-ink-50: #f4f5f7;
+  /* Ink — deep navy through to paper. The base is navy rather than neutral
+     black: it is what makes the blue and cyan accents read as a system rather
+     than as decoration on grey. */
+  --color-ink-950: #05070d;
+  --color-ink-900: #0a0e18;
+  --color-ink-850: #0e1421;
+  --color-ink-800: #141b2b;
+  --color-ink-700: #1e2739;
+  --color-ink-600: #2c3850;
+  --color-ink-500: #4a5872;
+  --color-ink-400: #7b8aa6;
+  --color-ink-300: #a8b4c9;
+  --color-ink-200: #ccd4e2;
+  --color-ink-100: #e4e9f1;
+  --color-ink-50: #f2f5f9;
   --color-paper: #fbfbf9;
 
-  /* Accent — a single instrument-panel cyan, used for wayfinding only. */
-  --color-signal-600: #0e6b7a;
-  --color-signal-500: #12879a;
-  --color-signal-400: #1ba8bd;
-  --color-signal-300: #6fcbd9;
-  --color-signal-100: #d6eff3;
+  /* Brand — electric blue leads, cyan carries intelligence, violet supports.
+     Three hues, used for three jobs, so nothing is coloured for its own sake. */
+  --color-brand-700: #1546c7;
+  --color-brand-600: #1d5ce8;
+  --color-brand-500: #2f7bff;
+  --color-brand-400: #5c9bff;
+  --color-brand-300: #93bcff;
+
+  --color-cyan-600: #0d9aad;
+  --color-cyan-500: #17bcd4;
+  --color-cyan-400: #3fd6ea;
+  --color-cyan-300: #86e7f4;
+
+  --color-violet-600: #6d3fe0;
+  --color-violet-500: #8659f0;
+  --color-violet-400: #a685f7;
+
+  /* Accent — a single instrument-panel cyan, kept for wayfinding and focus. */
+  --color-signal-600: #0d9aad;
+  --color-signal-500: #17bcd4;
+  --color-signal-400: #3fd6ea;
+  --color-signal-300: #86e7f4;
+  --color-signal-100: #d6f4f9;
 
   /* Activity ramp — five steps matching the score classifications.
-     Deliberately sequential rather than a red alarm gradient. */
-  --color-activity-1: #4c9f8a;
-  --color-activity-2: #a8bf6a;
-  --color-activity-3: #e0b452;
-  --color-activity-4: #d9803f;
-  --color-activity-5: #b8443c;
+     Warm only at the top, so amber and red still mean something on the map. */
+  --color-activity-1: #3fa88f;
+  --color-activity-2: #9ec463;
+  --color-activity-3: #e8b445;
+  --color-activity-4: #ef8642;
+  --color-activity-5: #e04b46;
 
   /* Status — restrained, used for case state and deadlines. */
-  --color-ok: #2f7d5e;
-  --color-warn: #a8722a;
-  --color-urgent: #b8543c;
-  --color-critical: #9c2f28;
+  --color-ok: #35b37e;
+  --color-warn: #d99b2e;
+  --color-urgent: #ef6a5a;
+  --color-critical: #e04b46;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
     Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
 
-  --radius-sm: 3px;
-  --radius-md: 5px;
-  --radius-lg: 8px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
 }
 
+/* ---------------------------------------------------------------------------
+   Semantic surfaces.
+
+   Dark is the default rather than a preference, because the product's own
+   visual language — a night city, an enforcement heat map, a scan overlay — is
+   a dark one, and a light default meant the marketing pages and the map looked
+   like two different products. A light theme stays available on `data-theme`,
+   and print forces it, so nothing is lost.
+   --------------------------------------------------------------------------- */
 :root {
+  --surface: var(--color-ink-950);
+  --surface-raised: var(--color-ink-850);
+  --surface-sunken: #03050a;
+  /* Glass: a raised surface that lets the gradient behind it through. */
+  --surface-glass: rgb(20 27 43 / 0.62);
+  --border: rgb(255 255 255 / 0.09);
+  --border-strong: rgb(255 255 255 / 0.16);
+  --text: var(--color-ink-50);
+  --text-muted: var(--color-ink-300);
+  --text-faint: var(--color-ink-400);
+
+  /* Buttons are semantic rather than a hardcoded ink value, so a primary
+     action stays legible whichever theme it lands on. Eleven components used
+     `--color-ink-900` as a button background, which on a navy ground is a dark
+     button on a dark page. */
+  /*
+   * Both stops carry white at 4.5:1 or better.
+   *
+   * The first version ran brand-600 into brand-500, and white on brand-500 is
+   * 3.89:1 — below AA for text this size. The brighter blue is still the accent
+   * everywhere it is used as a colour rather than as a background for text.
+   */
+  --btn-primary-bg: linear-gradient(135deg, var(--color-brand-600), var(--color-brand-700));
+  --btn-primary-fg: #ffffff;
+  --btn-primary-glow: 0 6px 20px -6px rgb(47 123 255 / 0.55);
+
+  --glow-brand: 0 0 0 1px rgb(47 123 255 / 0.18), 0 18px 48px -24px rgb(47 123 255 / 0.5);
+  --glow-cyan: 0 0 0 1px rgb(23 188 212 / 0.2), 0 18px 48px -24px rgb(23 188 212 / 0.45);
+
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
   --surface: var(--color-paper);
   --surface-raised: #ffffff;
   --surface-sunken: var(--color-ink-50);
+  --surface-glass: rgb(255 255 255 / 0.8);
   --border: var(--color-ink-200);
   --border-strong: var(--color-ink-300);
   --text: var(--color-ink-900);
   --text-muted: var(--color-ink-500);
   --text-faint: var(--color-ink-400);
+  --btn-primary-bg: linear-gradient(135deg, var(--color-brand-700), var(--color-brand-600));
+  --btn-primary-fg: #ffffff;
   color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --surface: var(--color-ink-950);
-    --surface-raised: var(--color-ink-900);
-    --surface-sunken: #07090a;
-    --border: var(--color-ink-800);
-    --border-strong: var(--color-ink-700);
-    --text: var(--color-ink-50);
-    --text-muted: var(--color-ink-400);
-    --text-faint: var(--color-ink-500);
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme='dark'] {
-  --surface: var(--color-ink-950);
-  --surface-raised: var(--color-ink-900);
-  --surface-sunken: #07090a;
-  --border: var(--color-ink-800);
-  --border-strong: var(--color-ink-700);
-  --text: var(--color-ink-50);
-  --text-muted: var(--color-ink-400);
-  --text-faint: var(--color-ink-500);
-  color-scheme: dark;
 }
 
 * {
@@ -102,6 +142,17 @@ html {
 
 body {
   background: var(--surface);
+  /*
+   * Two very soft radial washes, fixed to the viewport.
+   *
+   * This is the whole of the "glow" in the design: it gives the dark ground
+   * depth so cards read as floating rather than as boxes drawn on black, and it
+   * costs one paint. Everything else that looks like a glow is a border colour.
+   */
+  background-image:
+    radial-gradient(1100px 620px at 12% -8%, rgb(47 123 255 / 0.16), transparent 62%),
+    radial-gradient(900px 560px at 92% 4%, rgb(109 63 224 / 0.13), transparent 60%);
+  background-attachment: fixed;
   color: var(--text);
   font-family: var(--font-sans);
   font-size: 16px;
@@ -158,11 +209,232 @@ p {
 }
 
 .fr-eyebrow {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--color-cyan-400);
+}
+
+/* --- Marketing surfaces --------------------------------------------------
+   A small vocabulary, used everywhere, rather than a class string per section.
+   Every one of these is a border, a background and a shadow: no filters, no
+   backdrop blur on large areas, nothing that costs a frame on a phone. */
+
+.fr-glass {
+  background: var(--surface-glass);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 0 0 rgb(255 255 255 / 0.04) inset, 0 20px 44px -32px rgb(0 0 0 / 0.9);
+}
+
+/* A card that lifts and warms its border on hover. The lift is 2px: enough to
+   register as interactive, not enough to shift the layout under a thumb. */
+.fr-lift {
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.fr-lift:hover,
+.fr-lift:focus-within {
+  transform: translateY(-2px);
+  border-color: rgb(47 123 255 / 0.4);
+  box-shadow: var(--glow-brand);
+}
+
+/* The hero.
+
+   One column until 940px. The breakpoint is high on purpose: at tablet widths
+   a two-column hero squeezes the headline into four words a line and puts the
+   illustration where the button should be. Below it the art still shows, but
+   after the call to action and capped so it cannot eat the viewport. */
+.fr-hero-grid {
+  display: grid;
+  gap: clamp(32px, 5vw, 56px);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+
+.fr-hero-art {
+  order: 2;
+  max-width: 420px;
+  margin-inline: auto;
+  width: 100%;
+}
+
+@media (min-width: 940px) {
+  .fr-hero-grid {
+    grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+  }
+
+  .fr-hero-art {
+    max-width: none;
+  }
+}
+
+/* Section rhythm. One value, so sections cannot drift apart. */
+.fr-section {
+  padding-block: clamp(56px, 8vw, 96px);
+}
+
+.fr-section-head {
+  max-width: 640px;
+  margin-bottom: clamp(28px, 4vw, 44px);
+}
+
+.fr-h2 {
+  font-size: clamp(26px, 3.6vw, 40px);
+  font-weight: 680;
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+}
+
+/* Readable measure. Applied to supporting copy rather than left to chance. */
+.fr-lede {
+  max-width: 60ch;
+  font-size: clamp(15.5px, 1.4vw, 17.5px);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* Buttons ---------------------------------------------------------------- */
+
+.fr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 22px;
+  min-height: 48px;
+  border-radius: var(--radius-md);
+  font-size: 15.5px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.fr-btn-primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  box-shadow: var(--btn-primary-glow);
+}
+
+.fr-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px -8px rgb(47 123 255 / 0.7);
+}
+
+.fr-btn-secondary {
+  background: rgb(255 255 255 / 0.04);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.fr-btn-secondary:hover {
+  transform: translateY(-1px);
+  border-color: rgb(47 123 255 / 0.5);
+  background: rgb(255 255 255 / 0.07);
+}
+
+.fr-btn:disabled,
+.fr-btn[aria-disabled='true'] {
+  opacity: 0.5;
+  transform: none;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* A pill used for status: live, coming soon, planned. Colour comes from a
+   custom property so one class covers every state. */
+.fr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--pill-fg, var(--text-muted));
+  background: var(--pill-bg, rgb(255 255 255 / 0.05));
+  border: 1px solid var(--pill-border, var(--border));
+}
+
+/* An icon tile. Square, rounded, tinted by a custom property. */
+.fr-icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--tile-bg, rgb(47 123 255 / 0.14));
+  border: 1px solid var(--tile-border, rgb(47 123 255 / 0.28));
+  color: var(--tile-fg, var(--color-brand-400));
+  flex-shrink: 0;
+}
+
+/* Section entrance. Deliberately one keyframe and a short distance — the whole
+   effect is "it settled", not "it flew in". Disabled wholesale by the
+   reduced-motion block above, which also resets the starting opacity so a
+   section can never be left invisible. */
+/* The hero scan sweep. See HeroGraphic for why this is CSS and not SMIL. */
+@keyframes fr-scan {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.15;
+  }
+  50% {
+    transform: translateY(208px);
+    opacity: 0.9;
+  }
+}
+
+.fr-scanline {
+  animation: fr-scan 4.6s ease-in-out infinite;
+}
+
+@keyframes fr-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * Entrance, on load, for everything at once.
+ *
+ * This was a scroll-driven `animation-timeline: view()` with `both` fill, and
+ * that combination strands content: anything that has not yet entered the
+ * viewport sits at the keyframe's starting `opacity: 0`. In a browser that
+ * never scrolls — a print, a full-page capture, a crawler, an embedded webview
+ * — the entire page below the fold rendered blank. Playwright did not catch it
+ * because `toBeVisible()` does not read opacity, so the tests passed against an
+ * invisible page.
+ *
+ * A plain load animation cannot do that. Half a second after paint every
+ * element is at its final state whatever the viewport did, and the effect at
+ * the top of the page — the only place a visitor actually sees it — is
+ * identical.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .fr-rise {
+    animation: fr-rise 520ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  }
 }
 
 .fr-panel {
@@ -250,8 +522,24 @@ p {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: var(--surface);
+  /* Translucent rather than solid, so the ambient wash carries through the
+     header instead of stopping at a hard edge under it. */
+  background: rgb(5 7 13 / 0.78);
+  backdrop-filter: saturate(150%) blur(14px);
+  -webkit-backdrop-filter: saturate(150%) blur(14px);
   border-bottom: 1px solid var(--border);
+}
+
+:root[data-theme='light'] .fr-header {
+  background: rgb(255 255 255 / 0.82);
+}
+
+/* No blur where it is not supported: a translucent bar over scrolling text is
+   unreadable, so fall back to an opaque one. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .fr-header {
+    background: var(--surface);
+  }
 }
 
 .fr-header-inner {
@@ -278,15 +566,25 @@ p {
 .fr-cta {
   display: inline-flex;
   align-items: center;
-  padding: 0 14px;
-  font-size: 14px;
-  font-weight: 550;
-  background: var(--color-ink-900);
-  color: var(--color-ink-50);
+  gap: 7px;
+  padding: 0 18px;
+  font-size: 14.5px;
+  font-weight: 620;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  box-shadow: var(--btn-primary-glow);
   border-radius: var(--radius-md);
   text-decoration: none;
   white-space: nowrap;
   flex-shrink: 0;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.fr-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px -8px rgb(47 123 255 / 0.72);
 }
 
 .fr-nav {
@@ -310,12 +608,37 @@ p {
   display: inline-flex;
   align-items: center;
   padding: 0 12px;
-  font-size: 14px;
+  font-size: 14.5px;
+  font-weight: 500;
   color: var(--text-muted);
   text-decoration: none;
   border-radius: var(--radius-sm);
   white-space: nowrap;
   flex-shrink: 0;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+.fr-nav-link:hover {
+  color: var(--text);
+  background: rgb(255 255 255 / 0.06);
+}
+
+/* The page you are on, said once, in the place the eye already is. */
+.fr-footer-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+.fr-footer-link:hover {
+  color: var(--color-brand-400);
+}
+
+.fr-nav-link[aria-current='page'] {
+  color: var(--text);
+  background: rgb(47 123 255 / 0.14);
 }
 
 @media (min-width: 720px) {
@@ -350,6 +673,27 @@ p {
    than to the document, and let the page break sensibly.
    --------------------------------------------------------------------------- */
 @media print {
+  /* The Pack is a document somebody sends to a council. Force the light
+     palette regardless of theme: printing the navy ground would empty a
+     cartridge and produce something nobody can read. */
+  :root {
+    --surface: #ffffff;
+    --surface-raised: #ffffff;
+    --surface-sunken: #ffffff;
+    --surface-glass: #ffffff;
+    --border: #cccccc;
+    --border-strong: #999999;
+    --text: #111111;
+    --text-muted: #444444;
+    --text-faint: #666666;
+    color-scheme: light;
+  }
+
+  body {
+    background: #ffffff !important;
+    background-image: none !important;
+  }
+
   .fr-no-print,
   .fr-pack-actions,
   header,

@@ -83,7 +83,15 @@ test.describe('landing and navigation', () => {
   test('the landing page leads to the two things the product does', async ({ page }) => {
     await page.goto('/');
 
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Know before the ticket.');
+    /*
+     * The headline changed with the redesign — "Know before the ticket" led
+     * with the map, which is one borough, rather than with the thing most
+     * visitors arrive holding. The assertion it was making is unchanged: one
+     * h1, and both halves of the product reachable from it.
+     */
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+      'Fight unfair parking tickets with clarity.',
+    );
     await expect(page.getByRole('link', { name: 'Explore the map' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Analyse my PCN' }).first()).toBeVisible();
   });
@@ -1475,5 +1483,195 @@ test.describe('finding your way back to a saved case', () => {
     await page.goto('/');
     const footerLinks = page.locator('footer').getByRole('link', { name: /your cases/i });
     await expect(footerLinks).toHaveCount(0);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Waits for the entrance animations to finish.
+ *
+ * Playwright does not wait for CSS animations, so an opacity assertion fired
+ * mid-flight reads whatever frame it lands on — 0.88, in the run that caught
+ * this. Infinite animations are excluded or this would never settle: the hero
+ * scan line runs forever by design.
+ */
+async function settled(page: import('@playwright/test').Page) {
+  await page.waitForFunction(() => {
+    return document.getAnimations().every((animation) => {
+      const iterations = animation.effect?.getTiming().iterations;
+      return iterations === Infinity || animation.playState !== 'running';
+    });
+  });
+}
+
+test.describe('the redesigned marketing surface', () => {
+  test('the homepage renders every major section', async ({ page }) => {
+    await page.goto('/');
+    await settled(page);
+
+    // One h1, carrying the promise rather than a slogan about the map.
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+      /Fight unfair parking tickets with clarity/i,
+    );
+
+    /*
+     * Opacity, not just presence.
+     *
+     * The first version of the entrance animation left every section below the
+     * fold at `opacity: 0` until it scrolled into view, and `toBeVisible()`
+     * passed on all of them — it does not read opacity. A page can be entirely
+     * blank and satisfy a visibility assertion, so this checks what a person
+     * would actually see.
+     */
+    for (const heading of [
+      /How PCNWatch works/i,
+      /Tools for drivers/i,
+      /From Camden to every borough/i,
+      /Built to be checkable/i,
+      /Understanding your ticket is free/i,
+      /Straight answers/i,
+    ]) {
+      const target = page.getByRole('heading', { name: heading });
+      await expect(target, `${heading} is missing from the homepage`).toBeVisible();
+      const opacity = await target.evaluate((el) => {
+        // The heading can be opaque while an ancestor fades it to nothing.
+        let node: HTMLElement | null = el as HTMLElement;
+        let lowest = 1;
+        while (node) {
+          lowest = Math.min(lowest, Number(getComputedStyle(node).opacity));
+          node = node.parentElement;
+        }
+        return lowest;
+      });
+      expect(opacity, `${heading} is rendered but invisible`).toBeGreaterThan(0.99);
+    }
+
+    // The four-step journey strip, and the three how-it-works steps.
+    for (const step of [
+      /Scan a notice/i,
+      /Understand the contravention/i,
+      /Keep the dates together/i,
+      /Build your challenge/i,
+      /Upload or scan your PCN/i,
+      /Check what we found/i,
+      /Get guidance and build your challenge/i,
+    ]) {
+      await expect(page.getByText(step).first(), `${step} is missing`).toBeVisible();
+    }
+  });
+
+  test('the primary hero call to action reaches the analyse flow', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('link', { name: /^Scan your PCN$/i }).click();
+    await expect(page).toHaveURL(/\/analyse$/);
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  });
+
+  test('the header call to action reaches the analyse flow at phone width', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    await page.goto('/');
+
+    const cta = page.getByRole('link', { name: /analyse my pcn/i }).first();
+    await expect(cta).toBeVisible();
+    await cta.click();
+    await expect(page).toHaveURL(/\/analyse$/);
+  });
+
+  test('every feature card links to a route that exists', async ({ page }) => {
+    await page.goto('/');
+    for (const [name, url] of [
+      [/^View hotspots$|Live borough hotspots/i, /\/hotspots$/],
+      [/PCN code library/i, /\/codes$/],
+    ] as const) {
+      await page.goto('/');
+      await page.getByRole('link', { name }).first().click();
+      await expect(page).toHaveURL(url);
+    }
+  });
+
+  test('shows no testimonial section, because there are no real testimonials', async ({ page }) => {
+    await page.goto('/');
+
+    /*
+     * The reference design this was built from carried three named customer
+     * quotes. There are no customers to quote yet, and inventing some would
+     * undermine the one thing the product actually sells — that it does not
+     * make things up. So the trust section is claims about behaviour, and this
+     * fails the moment somebody pastes a quote block back in.
+     */
+    await expect(page.getByText(/what drivers say|real drivers|testimonial/i)).toHaveCount(0);
+    // A blockquote or a cite element would be the shape a quote arrives in.
+    await expect(page.locator('main blockquote')).toHaveCount(0);
+    await expect(page.getByText(/Sophie R\.|James T\.|Priya M\./)).toHaveCount(0);
+  });
+
+  test('coverage copy separates Camden from the boroughs that are not live', async ({ page }) => {
+    await page.goto('/');
+
+    await expect(page.getByRole('heading', { name: /From Camden to every borough/i })).toBeVisible();
+    await expect(page.getByText(/Live now/i).first()).toBeVisible();
+    await expect(page.getByText(/Coming soon/i).first()).toBeVisible();
+    await expect(page.getByText(/Camden/).first()).toBeVisible();
+
+    // And it never claims the map covers more than it does.
+    const body = (await page.locator('body').innerText()).toLowerCase();
+    expect(body).not.toMatch(/\d+\+?\s*(london\s*)?boroughs?\s+live/);
+    expect(body).not.toMatch(/nationwide (enforcement )?data/);
+    expect(body).not.toMatch(/uk-wide coverage/);
+
+    await expect(page.getByRole('link', { name: /see all boroughs/i })).toBeVisible();
+  });
+
+  test('the boroughs page distinguishes live, coming soon and planned', async ({ page }) => {
+    await page.goto('/boroughs');
+    await expect(page.getByText(/Live now — data ingested/i)).toBeVisible();
+    await expect(page.getByText(/Coming soon — identified, not yet live/i)).toBeVisible();
+    await expect(page.getByText(/Planned — no dataset yet/i)).toBeVisible();
+  });
+
+  test('makes none of the claims the product cannot support', async ({ page }) => {
+    for (const path of ['/', '/analyse', '/boroughs']) {
+      await page.goto(path);
+      const body = (await page.locator('body').innerText()).toLowerCase();
+      for (const forbidden of [
+        'guaranteed',
+        'guarantee your',
+        'win your appeal',
+        'legal advice from',
+        'ai legal advice',
+        'legal representation',
+        'thousands of drivers',
+        'success rate',
+      ]) {
+        expect(body, `"${forbidden}" appears on ${path}`).not.toContain(forbidden);
+      }
+    }
+  });
+
+  test('the marketing pages never scroll sideways', async ({ page }) => {
+    for (const path of ['/', '/analyse', '/boroughs']) {
+      for (const [width, height] of [[320, 568], [375, 720], [768, 1024], [1440, 900]] as const) {
+        await page.setViewportSize({ width, height });
+        await page.goto(path);
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        expect(overflow, `${path} scrolls sideways at ${width}px`).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  test('the hero illustration does not push the call to action off a phone screen', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    await page.goto('/');
+
+    const cta = page.getByRole('link', { name: /^Scan your PCN$/i });
+    const box = await cta.boundingBox();
+    expect(box, 'the hero call to action was not rendered').not.toBeNull();
+    // Above the fold on the shortest common phone.
+    expect(box!.y, 'the illustration pushed the call to action below the fold').toBeLessThan(720);
   });
 });

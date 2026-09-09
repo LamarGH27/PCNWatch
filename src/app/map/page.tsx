@@ -50,10 +50,15 @@ export default async function MapPage() {
           }}
         >
           <div style={{ minWidth: 260 }}>
-            <div className="fr-eyebrow" style={{ marginBottom: 6 }}>
-              Enforcement map
-            </div>
-            <h1 style={{ fontSize: 'clamp(22px, 3vw, 30px)', fontWeight: 620 }}>
+            <div className="fr-eyebrow">Enforcement map · {COVERAGE_SCOPE.shortStatement}</div>
+            <h1
+              style={{
+                marginTop: 10,
+                fontSize: 'clamp(24px, 3.4vw, 34px)',
+                fontWeight: 700,
+                letterSpacing: '-0.025em',
+              }}
+            >
               Where PCNs have been issued
             </h1>
             <p
