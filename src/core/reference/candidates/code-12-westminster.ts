@@ -37,22 +37,28 @@ const WESTMINSTER_CHALLENGE =
   'https://www.westminster.gov.uk/parking/parking-tickets-and-fines';
 
 /*
- * The 2022 Regulations are named by title rather than by SI number.
+ * The 2022 Regulations, now with their SI number.
  *
- * Several propositions below now live in the Civil Enforcement of Road Traffic
- * Contraventions (Representations and Appeals) (England) Regulations 2022,
- * made under the 2004 Act. I do not have the SI number to a standard I would
- * put in a URL a reviewer will trust, and guessing one is precisely the failure
- * this file exists to prevent — a wrong legislation.gov.uk link looks exactly
- * like a checked one.
+ * The instrument was previously named by title only: I did not have the number
+ * to a standard I would put in a URL a reviewer would trust, and a wrong
+ * legislation.gov.uk link looks exactly like a checked one. The number was
+ * supplied with the review instructions, so the canonical URL now points at the
+ * instrument rather than at the enabling Act.
  *
- * So the canonical URL stays on the enabling Act, which I can state correctly,
- * and locating the instrument is the reviewer's first task on each affected
- * candidate. Their review question says so in as many words.
+ * It is still NOT_RETRIEVED. Knowing where a document lives is not the same as
+ * having read it, and the excerpt stays null until a reviewer opens it.
  */
 const REGS_2022_TITLE =
   'The Civil Enforcement of Road Traffic Contraventions (Representations and Appeals) (England) Regulations 2022';
-const LEGISLATION_UKSI_2022 = 'https://www.legislation.gov.uk/uksi/2022';
+const REGS_2022_SI = 'S.I. 2022/576';
+const REGS_2022_URL = 'https://www.legislation.gov.uk/uksi/2022/576';
+
+/**
+ * London Tribunals — the adjudicator's own published explanation of the
+ * process. Competent about how an appeal runs; never about what the law says,
+ * which is why the TRIBUNAL tier may establish PROCEDURE and nothing else.
+ */
+const LONDON_TRIBUNALS = 'https://www.londontribunals.gov.uk/';
 
 function candidate(
   input: Omit<CandidateProposition, 'version' | 'review' | 'supersedes' | 'supersededBy'>,
@@ -114,22 +120,24 @@ const CONTRAVENTION: readonly CandidateProposition[] = [
     id: 'CAND-CODE12-SUFFIXES',
     kind: 'CONTRAVENTION_METADATA',
     proposition:
-      'For permit contraventions including code 12, the code-specific suffix "x" denotes an incorrect vehicle registration mark.',
+      'For permit contraventions including codes 01, 12, 16, 19 and 85, the code-specific suffix "x" means an incorrect vehicle registration mark.',
     reviewQuestion:
-      'Open the London Councils suffix table and confirm that "x" is a code-specific suffix denoting an incorrect VRM, and that it is in current use with code 12. Record the exact table wording. Reject if the suffix has been withdrawn, renumbered, or means something else for this code.',
+      'Open the London Councils code and suffix framework and confirm that "x" is a code-specific suffix meaning incorrect VRM, and that it is in current use with each of codes 01, 12, 16, 19 and 85. Record the exact table wording. Reject if the suffix has been withdrawn, if it means something different for any of those codes, or if the list of codes it applies to is not as stated — a suffix that means one thing on code 12 and another on code 19 is two propositions, not one.',
     doesNotEstablish: [
-      'That the notice is cancelled, or must be cancelled, because the suffix is present.',
-      'That an incorrect VRM is a statutory defence or a ground of representation.',
-      'That payment was in fact made. The suffix records what the authority alleges, not what happened.',
+      'That payment was made. The suffix records what the authority alleges about the registration, not what the motorist did.',
+      'That the contravention did not occur. Whether it occurred is a question of fact for the authority and, on appeal, the adjudicator.',
+      'That the notice must be cancelled, or that cancellation follows from the suffix being present.',
+      'Any statutory ground of representation or appeal.',
       'That the authority is obliged to search for a payment made against a different registration.',
     ],
     applicability: {
-      contraventionCodes: ['12'],
+      contraventionCodes: ['01', '12', '16', '19', '85'],
       authoritySlug: null,
       noticeTypes: null,
       proceduralStages: null,
       conditions: [
         'London local-authority parking PCNs only.',
+        'Permit contraventions only. The suffix is code-specific, so its meaning outside codes 01, 12, 16, 19 and 85 is not covered by this candidate.',
         'PCNWatch currently declines to interpret a suffix at all and says so. This candidate exists to replace that silence with one enumerated meaning, not to license inference from it.',
       ],
     },
@@ -138,7 +146,7 @@ const CONTRAVENTION: readonly CandidateProposition[] = [
       documentTitle: 'Parking contravention codes used by London enforcement authorities',
       canonicalUrl: LONDON_COUNCILS_CODES,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: 'Code 12 — code-specific suffix table, suffix "x"',
+      provision: 'Code-specific suffix table — suffix "x" (codes 01, 12, 16, 19, 85)',
       tier: 'LONDON_COUNCILS_FRAMEWORK',
       documentDate: null,
       retrievedAt: null,
@@ -152,13 +160,14 @@ const CONTRAVENTION: readonly CandidateProposition[] = [
     proposition:
       'The general suffix "u" denotes electronic payment.',
     reviewQuestion:
-      'Open the London Councils suffix table and confirm that "u" is a general suffix denoting electronic payment, and that it may be used with code 12. Record the exact table wording. Reject if the suffix is code-specific rather than general, or denotes something else.',
+      'Open the London Councils code and suffix framework and confirm that "u" is a general suffix denoting electronic payment. Record the exact table wording. Reject if it is code-specific rather than general, or denotes something else. Note for the record which codes a general suffix may accompany.',
     doesNotEstablish: [
-      'That a valid parking session existed. The suffix records the payment method alleged, not that payment succeeded.',
-      'That any payment covered the correct vehicle, the correct location, or the correct period.',
-      'That the notice is cancelled, or must be cancelled, because the suffix is present.',
-      'Any statutory ground, and in particular not the ground concerning payment of the penalty charge.',
-      'How an enforcement officer verifies electronic payment or virtual permit status against a registration. That mechanism is not established by this candidate and would need its own, from a source that states it.',
+      'That a valid parking session existed. The suffix records the payment method involved, not that payment succeeded.',
+      'That any payment was made against the correct vehicle.',
+      'That any payment covered the correct location.',
+      'That any payment covered the correct time or period.',
+      'Any entitlement to cancellation, and any statutory ground — in particular not the ground concerning payment of the penalty charge.',
+      'How an enforcement officer verifies electronic payment or virtual permit status against a registration. That mechanism would need its own candidate, from a source that states it.',
     ],
     applicability: {
       contraventionCodes: null,
@@ -266,11 +275,12 @@ const STATUTORY: readonly CandidateProposition[] = [
     id: 'CAND-TMA-GROUND-NO-CONTRAVENTION',
     kind: 'STATUTORY_GROUND',
     proposition:
-      'One of the grounds of representation is that the alleged contravention did not occur.',
+      'That the contravention did not occur is a statutory ground of representation and of appeal for a parking penalty charge notice.',
     reviewQuestion:
-      `Confirm the exact statutory wording of this ground and record it verbatim. Check ${REGS_2022_TITLE} as well as the enabling Act — the representations and appeals regime is now set out in that instrument, and its SI number must be located and recorded here before approval. This is the only ground the paid-by-app scenario would plausibly engage, so its wording matters more than any other candidate in this bundle.`,
+      `Open ${REGS_2022_SI} and record the exact statutory wording of this ground, verbatim, together with the regulation and paragraph it sits in. London Tribunals' published grounds of appeal (${LONDON_TRIBUNALS}) is a useful cross-check on how the ground is described in practice, but do not approve on the strength of it: a tribunal page is competent about how the tribunal runs, not about what the instrument says. This is the only ground the paid-by-app scenario would plausibly engage, so its wording matters more than any other candidate in this bundle.`,
     doesNotEstablish: [
-      'That a payment made against a different registration means the contravention did not occur. That is a question of fact for the authority and, on appeal, the adjudicator.',
+      'That the ground is available on the facts of any particular case. It must never be asserted merely because a user says "I paid for parking" or "I used RingGo" — those are accounts of what happened, and whether they mean the contravention did not occur is a question of fact for the authority and, on appeal, the adjudicator.',
+      'That a payment made against a different registration means the contravention did not occur.',
       'That raising this ground obliges an authority to cancel.',
       'Any view about how likely the ground is to succeed.',
     ],
@@ -283,11 +293,11 @@ const STATUTORY: readonly CandidateProposition[] = [
     },
     source: {
       organisation: 'UK Parliament (legislation.gov.uk)',
-      documentTitle: 'Traffic Management Act 2004, Schedule 1',
-      canonicalUrl: TMA_2004_SCHEDULE_1,
+      documentTitle: `${REGS_2022_TITLE} (${REGS_2022_SI})`,
+      canonicalUrl: REGS_2022_URL,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: 'Schedule 1 — ground: contravention did not occur',
-      tier: 'PRIMARY_LEGISLATION',
+      provision: 'To be identified by the reviewer: the regulation and paragraph stating this ground',
+      tier: 'STATUTORY_INSTRUMENT',
       documentDate: null,
       retrievedAt: null,
       retrieval: 'NOT_RETRIEVED',
@@ -307,13 +317,13 @@ const STATUTORY: readonly CandidateProposition[] = [
      */
     kind: 'STATUTORY_GROUND_INTERPRETATION',
     proposition:
-      'The statutory ground that the penalty charge has already been paid refers to payment of the penalty charge itself, and not to payment of the underlying parking charge.',
+      'The statutory ground that the penalty charge has already been paid refers to payment of the penalty charge itself, not payment for the underlying parking session.',
     reviewQuestion:
       'Confirm the wording of the payment-related ground. PCNWatch holds a record keyed GROUND-ALREADY_PAID; check whether it describes payment of the penalty or payment for parking. If it conflates the two, REJECT the existing record — a user who paid by app has not paid the penalty, and telling them otherwise would send a representation on a ground that does not apply.',
     doesNotEstablish: [
       'That paying for parking engages any ground. A user saying "I paid for parking" must never reach GROUND-ALREADY_PAID.',
       'That paying for parking is irrelevant. It is a factual matter, which is where PCNWatch already puts it.',
-      'Any ground at all. This narrows a ground; approving it never makes one available.',
+      'Any ground at all. This narrows a ground; approving it never makes one available. It is classified STATUTORY_GROUND_INTERPRETATION precisely so that it can never satisfy `hasApprovedStatutoryGround` and therefore can never itself enable `canStateGrounds`.',
     ],
     applicability: {
       contraventionCodes: null,
@@ -324,11 +334,11 @@ const STATUTORY: readonly CandidateProposition[] = [
     },
     source: {
       organisation: 'UK Parliament (legislation.gov.uk)',
-      documentTitle: 'Traffic Management Act 2004, Schedule 1',
-      canonicalUrl: TMA_2004_SCHEDULE_1,
+      documentTitle: `${REGS_2022_TITLE} (${REGS_2022_SI})`,
+      canonicalUrl: REGS_2022_URL,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: 'Schedule 1 — ground relating to payment of the penalty charge',
-      tier: 'PRIMARY_LEGISLATION',
+      provision: 'To be identified by the reviewer: the regulation stating the payment ground',
+      tier: 'STATUTORY_INSTRUMENT',
       documentDate: null,
       retrievedAt: null,
       retrieval: 'NOT_RETRIEVED',
@@ -339,11 +349,11 @@ const STATUTORY: readonly CandidateProposition[] = [
     id: 'CAND-MITIGATION-SEPARATE',
     kind: 'PROCEDURE',
     proposition:
-      'A motorist may ask an enforcement authority to consider mitigating circumstances even where no statutory ground of representation is established.',
+      'A motorist may ask the enforcement authority to consider mitigation even where no statutory ground is established.',
     reviewQuestion:
-      `Confirm that asking an authority to exercise discretion is available independently of the statutory grounds, and identify where that is stated \u2014 ${REGS_2022_TITLE}, the statutory guidance, or the authority's own published policy. Record which. Reject if mitigation is only available as an adjunct to a statutory ground.`,
+      `Confirm from London Tribunals' published description of the parking enforcement process that a motorist may put mitigation to the authority independently of the statutory grounds, and record where it says so. If the tribunal material does not state it, look for it in ${REGS_2022_SI} or the statutory guidance and re-source this candidate accordingly. Reject if mitigation turns out to be available only as an adjunct to a statutory ground.`,
     doesNotEstablish: [
-      'That mitigation is a statutory ground. It is the opposite: this candidate exists to hold the two apart.',
+      'That mitigation is a statutory ground. It is the opposite: this candidate exists to hold the two apart, and it is classified PROCEDURE so that approving it can never make a ground available.',
       'That an authority must consider mitigation, or must cancel where it does.',
       'That an adjudicator has the same discretion an authority has. An adjudicator\u2019s powers are narrower and that is a separate proposition.',
       'That the contravention did not occur.',
@@ -358,13 +368,12 @@ const STATUTORY: readonly CandidateProposition[] = [
       ],
     },
     source: {
-      organisation: 'UK Parliament (legislation.gov.uk)',
-      documentTitle: REGS_2022_TITLE,
-      canonicalUrl: LEGISLATION_UKSI_2022,
+      organisation: 'London Tribunals',
+      documentTitle: 'Parking enforcement — how the process works',
+      canonicalUrl: LONDON_TRIBUNALS,
       jurisdiction: 'ENGLAND_LONDON',
-      provision:
-        'To be identified: the SI number and the provision (or the statutory guidance paragraph) under which discretion is exercised',
-      tier: 'STATUTORY_INSTRUMENT',
+      provision: 'To be identified by the reviewer: where the process description covers mitigation',
+      tier: 'TRIBUNAL',
       documentDate: null,
       retrievedAt: null,
       retrieval: 'NOT_RETRIEVED',
@@ -382,13 +391,15 @@ const POLICY: readonly CandidateProposition[] = [
     id: 'CAND-WCC-INDIVIDUAL-MERITS',
     kind: 'AUTHORITY_POLICY',
     proposition:
-      'Westminster City Council states that it considers each challenge to a penalty charge notice on its individual merits.',
+      'Westminster City Council states that the circumstances surrounding a particular PCN are unique and each PCN should be considered on its own merits.',
     reviewQuestion:
       'Find and confirm the published Westminster statement to this effect, and record where it appears. If Westminster publishes no such statement, REJECT rather than substituting a general expectation about how authorities behave.',
     doesNotEstablish: [
-      'Any obligation to cancel a notice.',
-      'Any statutory ground or entitlement.',
-      'That any other authority does the same.',
+      'Any statutory right to cancellation. The council saying it will look at a case on its merits is a statement about how it decides, not about what a motorist is entitled to.',
+      'That Westminster will cancel any particular notice, or that a challenge on the merits will succeed.',
+      'That an adjudicator applies the same approach. An adjudicator\u2019s powers are narrower than an authority\u2019s discretion.',
+      'Any statutory ground of representation or appeal.',
+      'That any other authority says or does the same.',
     ],
     applicability: {
       contraventionCodes: null,
@@ -399,7 +410,7 @@ const POLICY: readonly CandidateProposition[] = [
     },
     source: {
       organisation: 'Westminster City Council',
-      documentTitle: 'Parking tickets and fines — challenging a PCN',
+      documentTitle: 'Consideration of parking ticket challenges',
       canonicalUrl: WESTMINSTER_CHALLENGE,
       jurisdiction: 'ENGLAND_LONDON',
       provision: null,
@@ -414,7 +425,7 @@ const POLICY: readonly CandidateProposition[] = [
     id: 'CAND-WCC-GENUINE-MISTAKE',
     kind: 'AUTHORITY_POLICY',
     proposition:
-      'Westminster City Council states that discretion can be exercised where a motorist made an honest attempt to park legally and correctly but made a genuine mistake.',
+      'Westminster City Council states that discretion can be given where it is evident that the motorist made an honest attempt to park legally and correctly but made a genuine mistake and incurred the PCN in doing so.',
     reviewQuestion:
       'Confirm whether Westminster publishes such a policy and record its actual terms and any stated conditions. This is the proposition closest to the paid-by-app scenario and the easiest to overstate: confirm the words, and confirm they describe discretion rather than entitlement.',
     doesNotEstablish: [
@@ -433,7 +444,7 @@ const POLICY: readonly CandidateProposition[] = [
     },
     source: {
       organisation: 'Westminster City Council',
-      documentTitle: 'Parking tickets and fines — challenging a PCN',
+      documentTitle: 'Consideration of parking ticket challenges',
       canonicalUrl: WESTMINSTER_CHALLENGE,
       jurisdiction: 'ENGLAND_LONDON',
       provision: null,
@@ -448,7 +459,7 @@ const POLICY: readonly CandidateProposition[] = [
     id: 'CAND-WCC-EVIDENCE-CONSIDERED',
     kind: 'AUTHORITY_POLICY',
     proposition:
-      'Westminster City Council states that relevant evidence should be considered, and that decisions should be based on the weight of the evidence.',
+      'Westminster City Council states that all relevant evidence should be fully considered and decisions should be based on the weight of the evidence.',
     reviewQuestion:
       'Confirm what Westminster publishes about submitting evidence with a challenge, including any format or deadline it states. PCNWatch tells users an authority will weigh their documents; confirm that is what Westminster actually says.',
     doesNotEstablish: [
@@ -464,7 +475,7 @@ const POLICY: readonly CandidateProposition[] = [
     },
     source: {
       organisation: 'Westminster City Council',
-      documentTitle: 'Parking tickets and fines — challenging a PCN',
+      documentTitle: 'Consideration of parking ticket challenges',
       canonicalUrl: WESTMINSTER_CHALLENGE,
       jurisdiction: 'ENGLAND_LONDON',
       provision: null,
@@ -549,9 +560,9 @@ const DEADLINES: readonly CandidateProposition[] = [
     id: 'CAND-DEADLINE-APPEAL-28D',
     kind: 'DEADLINE_RULE',
     proposition:
-      'An appeal against the rejection of representations is ordinarily made within 28 days beginning with the date of service of the notice of rejection, subject to any longer period the adjudicator allows.',
+      'An appeal against a decision rejecting representations must ordinarily be made within 28 days beginning with the date of service of the decision notice, or such longer period as the adjudicator may allow.',
     reviewQuestion:
-      `Confirm the period, the event it runs from, whether it is "beginning with" or "from" that date, and how service is deemed to occur. Locate and record the SI number of ${REGS_2022_TITLE} and the regulation. Cross-check against London Tribunals' published guidance, but do not approve on the strength of the guidance alone \u2014 a tribunal page is competent about how the tribunal runs, not about what the instrument says.`,
+      `Open ${REGS_2022_SI} regulation 7(2) and confirm the period, the event it runs from, that it is "beginning with" rather than "from" that date, and how service is deemed to occur for each service method. Record the wording verbatim. Cross-check against London Tribunals (${LONDON_TRIBUNALS}), but do not approve on the strength of the tribunal page alone. Approving this candidate does NOT release a calculated date to users: the deadline projection reads its own rule store, and that rule needs its own review.`,
     doesNotEstablish: [
       'Any period for making representations, or any discount period. Those are separate rules with separate triggers and separate candidates.',
       'That an appeal made outside the period will be refused. The adjudicator may allow a longer period, and PCNWatch must not tell anybody their appeal is out of time.',
@@ -566,14 +577,15 @@ const DEADLINES: readonly CandidateProposition[] = [
       conditions: [
         'London civil parking enforcement.',
         'Independently reviewable: approving this rule must not release any other deadline, and approving any other deadline must not release this one.',
+        'Separate from the deadline projection. `projectDeadlines` gates on its own rule store, so approving this candidate does not by itself put a calculated date in front of a user.',
       ],
     },
     source: {
       organisation: 'UK Parliament (legislation.gov.uk)',
-      documentTitle: REGS_2022_TITLE,
-      canonicalUrl: LEGISLATION_UKSI_2022,
+      documentTitle: `${REGS_2022_TITLE} (${REGS_2022_SI})`,
+      canonicalUrl: REGS_2022_URL,
       jurisdiction: 'ENGLAND_LONDON',
-      provision: 'To be identified: the SI number and the regulation fixing the appeal period',
+      provision: 'Regulation 7(2)',
       tier: 'STATUTORY_INSTRUMENT',
       documentDate: null,
       retrievedAt: null,
@@ -581,6 +593,32 @@ const DEADLINES: readonly CandidateProposition[] = [
       excerpt: null,
     },
   }),
+];
+
+/**
+ * The nine propositions the first review sitting has to get through.
+ *
+ * Ordered as the review instructions set them out, not as the file happens to
+ * be arranged, because the order is itself a decision: the two suffix meanings
+ * before the policies, the statutory ground before the interpretation that
+ * narrows it, and the deadline last because approving it releases nothing on
+ * its own.
+ *
+ * The other five candidates in the bundle are real and still need deciding.
+ * They are not in this list because none of them is on the critical path to a
+ * Defence Pack for the launch scenario, and putting fourteen things in front of
+ * a reviewer when nine of them are the point is how the nine get skimmed.
+ */
+export const INITIAL_LAUNCH_REVIEW: readonly string[] = [
+  'CAND-CODE12-SUFFIXES',
+  'CAND-CODE12-ELECTRONIC-PAYMENT',
+  'CAND-WCC-INDIVIDUAL-MERITS',
+  'CAND-WCC-GENUINE-MISTAKE',
+  'CAND-WCC-EVIDENCE-CONSIDERED',
+  'CAND-TMA-GROUND-NO-CONTRAVENTION',
+  'CAND-TMA-GROUND-PAID-DISTINCTION',
+  'CAND-MITIGATION-SEPARATE',
+  'CAND-DEADLINE-APPEAL-28D',
 ];
 
 export const CODE_12_WESTMINSTER_BUNDLE: readonly CandidateProposition[] = [

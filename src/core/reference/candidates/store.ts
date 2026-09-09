@@ -4,7 +4,7 @@ import {
   type CandidateProposition,
   type PropositionKind,
 } from './types';
-import { CODE_12_WESTMINSTER_BUNDLE } from './code-12-westminster';
+import { CODE_12_WESTMINSTER_BUNDLE, INITIAL_LAUNCH_REVIEW } from './code-12-westminster';
 
 /**
  * The candidate store, and the four conditions a proposition passes before
@@ -19,6 +19,20 @@ export const CANDIDATE_PROPOSITIONS: readonly CandidateProposition[] =
 
 export function allCandidates(): readonly CandidateProposition[] {
   return CANDIDATE_PROPOSITIONS;
+}
+
+export { INITIAL_LAUNCH_REVIEW };
+
+/**
+ * The bundle ordered for a review sitting: the launch nine first, in the order
+ * they were set, then everything else.
+ */
+export function forReview(): readonly CandidateProposition[] {
+  const rank = (id: string) => {
+    const index = INITIAL_LAUNCH_REVIEW.indexOf(id);
+    return index === -1 ? INITIAL_LAUNCH_REVIEW.length : index;
+  };
+  return [...CANDIDATE_PROPOSITIONS].sort((a, b) => rank(a.id) - rank(b.id));
 }
 
 export function getCandidate(id: string): CandidateProposition | undefined {

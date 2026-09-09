@@ -24,7 +24,9 @@
     "camden:trace": "tsx scripts/camden-trace.ts",
     "db:setup": "tsx scripts/db-setup.ts",
     "check:runtime-config": "NODE_ENV=production tsx scripts/check-runtime-config.ts",
-    "scanner:smoke": "tsx scripts/scanner-smoke-test.ts"
+    "scanner:smoke": "tsx scripts/scanner-smoke-test.ts",
+    "review:list": "tsx scripts/review-bundle.ts",
+    "review:pack": "tsx scripts/review-bundle-markdown.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",

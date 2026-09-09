@@ -33,11 +33,18 @@ become a statutory ground however it is worded.
 
 | Tier | May establish |
 | --- | --- |
-| `PRIMARY_LEGISLATION` | statutory ground, procedure, deadline rule |
-| `STATUTORY_INSTRUMENT` | statutory ground, procedure, deadline rule |
-| `LONDON_COUNCILS_FRAMEWORK` | what a contravention code alleges |
-| `ISSUING_AUTHORITY_POLICY` | authority policy, procedure |
-| `TRIBUNAL` | procedure |
+| `PRIMARY_LEGISLATION` | `STATUTORY_GROUND`, `STATUTORY_GROUND_INTERPRETATION`, `PROCEDURE`, `DEADLINE_RULE` |
+| `STATUTORY_INSTRUMENT` | `STATUTORY_GROUND`, `STATUTORY_GROUND_INTERPRETATION`, `PROCEDURE`, `DEADLINE_RULE` |
+| `LONDON_COUNCILS_FRAMEWORK` | `CONTRAVENTION_DEFINITION`, `CONTRAVENTION_METADATA` |
+| `ISSUING_AUTHORITY_POLICY` | `AUTHORITY_POLICY`, `PROCEDURE` |
+| `TRIBUNAL` | `PROCEDURE`, `DEADLINE_RULE` |
+
+`STATUTORY_GROUND_INTERPRETATION` is not a ground and the distinction is a safety
+boundary rather than a taxonomy preference. `hasApprovedStatutoryGround` keys on
+`STATUTORY_GROUND`, so a proposition whose purpose is to *narrow* what may be said —
+"the already-paid ground means the penalty, not the parking charge" — would have
+switched statutory drafting **on** when approved. A guard that unlocks the thing it
+guards is worse than no guard.
 
 There is no tier for a blog, a forum, a solicitor's marketing page or a model's
 recollection, so there is no way to record one as the basis of an approved
@@ -46,10 +53,21 @@ proposition.
 ## Reviewing
 
 ```
-npx tsx scripts/review-bundle.ts            # everything still to decide
+npm run review:list                # everything still to decide, in the terminal
 npx tsx scripts/review-bundle.ts --all      # including decided ones
 npx tsx scripts/review-bundle.ts --usable   # what PCNWatch may actually say
+
+npm run review:pack                # regenerate docs/legal-review-bundle.md
 ```
+
+`docs/legal-review-bundle.md` is the document a reviewer actually works through:
+every candidate with its source, provision, applicability, constraints, the question
+being asked, and blank boxes for the excerpt, comments, decision and signature. It is
+generated from the candidates so it cannot drift from them, and a test fails if the
+committed copy is stale.
+
+The nine propositions on the critical path for the launch scenario appear first, under
+**Initial Launch Review**.
 
 For each candidate the worklist prints the proposition, the document and
 provision to open, the question you are being asked, and what the proposition

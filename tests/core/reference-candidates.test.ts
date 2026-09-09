@@ -81,12 +81,26 @@ describe('the bundle as prepared', () => {
   });
 
   it('comes only from authoritative organisations', () => {
-    // legislation.gov.uk, London Councils, and the issuing authority. There is
-    // no tier for anything else, so there is no way to record one.
+    /*
+     * legislation.gov.uk, London Councils, the issuing authority, and the
+     * adjudicator. One domain per source tier, and there is no tier for a blog,
+     * a forum or a solicitor's marketing page — so there is no way to record
+     * one as the basis of an approved proposition.
+     *
+     * londontribunals.gov.uk was added when the mitigation candidate was
+     * sourced from the adjudicator's own description of the process. The
+     * TRIBUNAL tier already existed for exactly that, and is competent for
+     * PROCEDURE and nothing that resembles a statement of law.
+     */
+    const ALLOWED = [
+      'legislation.gov.uk',
+      'londoncouncils.gov.uk',
+      'westminster.gov.uk',
+      'londontribunals.gov.uk',
+    ];
     for (const candidate of allCandidates()) {
-      expect(candidate.source.canonicalUrl, candidate.id).toMatch(
-        /legislation\.gov\.uk|londoncouncils\.gov\.uk|westminster\.gov\.uk/,
-      );
+      const host = new URL(candidate.source.canonicalUrl).hostname.replace(/^www\./, '');
+      expect(ALLOWED, `${candidate.id} cites ${host}`).toContain(host);
     }
   });
 
