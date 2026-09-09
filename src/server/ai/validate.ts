@@ -159,6 +159,13 @@ export function validateAiResponse<K extends AiJobType>(
       }
     }
 
+    // The letter is the writer's, in their name. See the list's own comment.
+    for (const phrase of FORBIDDEN_REPRESENTATION_PHRASES) {
+      if (phrase.pattern.test(draft.body)) {
+        errors.push(`The draft contains ${phrase.description}, which PCNWatch must never produce.`);
+      }
+    }
+
     /*
      * A legal proposition with nothing reviewed behind it.
      *
@@ -436,4 +443,44 @@ function extractCitedKeys(data: unknown): string[] {
 }
 
 /** Test helper: the patterns a draft is checked against. */
+/**
+ * Who the letter is from, and who it is not from.
+ *
+ * A real generated Pack contained "I have also told my adviser…". PCNWatch is
+ * not the writer's adviser, representative or solicitor, and a letter that
+ * says otherwise misrepresents the relationship to an authority — in a
+ * document sent in the writer's own name.
+ *
+ * Kept separate from FORBIDDEN_DRAFT_PHRASES because that list is applied to
+ * evidence transcriptions too, and a document a user photographs may perfectly
+ * well contain the word "solicitor". This applies to the letter alone.
+ *
+ * Deliberately narrow. The trigger is a possessive claim to an adviser, not
+ * the vocabulary of advice: "I sought advice" and "I was advised by the
+ * council" are ordinary, true and must pass. Only "my adviser" and its
+ * relatives assert that somebody is acting for the writer.
+ */
+const FORBIDDEN_REPRESENTATION_PHRASES: readonly { pattern: RegExp; description: string }[] = [
+  {
+    // "my adviser", "our legal representative", "my solicitor".
+    pattern:
+      /\b(?:my|our)\s+(?:(?:legal|appointed|authorised|authorized|own)\s+)?(?:advisers?|advisors?|representatives?|solicitors?|lawyers?|barristers?|legal\s+team|counsel)\b/i,
+    description: 'a claim that the writer has an adviser or representative',
+  },
+  {
+    // The product is not a party to the letter and is never named in it.
+    pattern: /\bPCN[\s-]?Watch\b/i,
+    description: 'a mention of PCNWatch, which is not a party to the letter',
+  },
+  {
+    // "my AI tool says…" is not an argument, and inviting one is not the job.
+    pattern:
+      /\b(?:an?|my|our|the)\s+(?:AI|A\.I\.)\b|\bAI\s+(?:tool|assistant|adviser|advisor|system|service|model|software)\b|\b(?:language model|chatbot)\b/i,
+    description: 'an attribution of the letter to a tool rather than to the writer',
+  },
+];
+
+/** Test helper: the representation patterns a letter is checked against. */
+export const __forbiddenRepresentationPhrases = FORBIDDEN_REPRESENTATION_PHRASES;
+
 export const __forbiddenDraftPhrases = FORBIDDEN_DRAFT_PHRASES;

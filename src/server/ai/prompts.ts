@@ -341,6 +341,13 @@ Rules:
   given no reviewed legal material, the letter argues facts only. This is not a
   stylistic preference: wording nobody has reviewed is wording we will not send
   to a council in somebody's name.
+- The letter is the writer's own, in the first person, and nobody else appears
+  in it. They have no adviser, representative, solicitor or legal team, so
+  never write "my adviser", "my representative" or anything like it. Never name
+  PCNWatch, and never attribute a word of the letter to a tool, an app or an
+  AI. Ordinary English about advice is fine where it is true — "I sought
+  advice", "I was advised by the council" — because that says nothing about who
+  wrote this.
 - Never predict the outcome. No probability, no "should succeed", no "strong
   case", no "the PCN is invalid", no "this is a valid ground of appeal".
 - Never threaten, never demand, never accuse anyone of bad faith, and do not
