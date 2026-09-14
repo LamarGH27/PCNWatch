@@ -33,6 +33,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const entries: MetadataRoute.Sitemap = [
     { url: `${base}/`, lastModified: now, changeFrequency: 'weekly', priority: 1 },
+    /*
+     * The page somebody arrives at holding a notice.
+     *
+     * It was missing, which made the one page the product converts on the one
+     * page a crawler had to find by following a link. It is `index: true` in
+     * its own metadata, and robots.txt disallows `/analyse/` with a trailing
+     * slash — which blocks paths *below* it and not `/analyse` itself, so
+     * listing it contradicts nothing.
+     */
+    { url: `${base}/analyse`, lastModified: now, changeFrequency: 'monthly', priority: 0.95 },
     { url: `${base}/map`, lastModified: now, changeFrequency: 'daily', priority: 0.9 },
     { url: `${base}/hotspots`, lastModified: now, changeFrequency: 'daily', priority: 0.9 },
     { url: `${base}/codes`, lastModified: now, changeFrequency: 'monthly', priority: 0.7 },

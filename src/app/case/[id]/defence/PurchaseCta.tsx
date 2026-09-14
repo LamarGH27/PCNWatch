@@ -200,6 +200,24 @@ export function PurchaseCta({
           One-off payment, taken securely by Stripe. We never see your card details.
         </p>
       )}
+
+      {/*
+        What the buyer is actually getting, said before they pay.
+
+        Access is tied to this browser: there is no account, and if somebody
+        clears their browsing data the entitlement survives on our side while
+        their way back to it does not. That was disclosed on the cases list and
+        in the assessment, and nowhere on the surface where money changes hands
+        — which is the one place it has to be, now that money does.
+
+        Deliberately quiet rather than a warning box. It is a fact about how the
+        product works today, not an error, and styling it as an alert would
+        frighten people away from a £5.99 purchase that is fine.
+      */}
+      <p style={{ margin: '10px 0 0', fontSize: 13, color: 'var(--text-faint)', lineHeight: 1.55 }}>
+        Your Defence Pack is linked to this browser for now. Keep this browser and its data
+        available so you can return to your case. Account recovery is coming later.
+      </p>
     </div>
   );
 }
