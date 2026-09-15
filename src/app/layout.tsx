@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
+import { Analytics } from '@vercel/analytics/next';
 import { publicEnv } from '@/lib/env';
 import { COVERAGE_SCOPE } from '@/core/coverage/coverage';
 import './globals.css';
@@ -199,6 +200,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </p>
           </div>
         </footer>
+
+        {/*
+          Vercel Web Analytics.
+
+          Aggregate page views and visitor counts, and nothing else. It sets no
+          cookie, stores no IP address and follows nobody between sites, which
+          is why it needs no consent banner and why the privacy page can say
+          plainly what it does. It is also inert in development and collects
+          only from deployments where it has been enabled.
+
+          Last in the body so a failure to load it cannot delay anything the
+          reader is actually here for.
+        */}
+        <Analytics />
       </body>
     </html>
   );

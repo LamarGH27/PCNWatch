@@ -18,12 +18,31 @@ export default function PrivacyPage() {
 
       <Section title="What we hold">
         <ul style={list}>
-          <li>Your email address, so you can sign in and find your cases again.</li>
           <li>Vehicle registrations you add, so a case can be matched to a vehicle.</li>
           <li>The notices and evidence you upload.</li>
           <li>The details extracted from those documents, and the corrections you make.</li>
           <li>A record of payments, so you keep access to what you bought.</li>
         </ul>
+      </Section>
+
+      <Section title="How your case is identified">
+        <p style={paragraph}>
+          We do not ask you to create an account and we do not ask for your email address. When you
+          save a case, your browser is given an anonymous identity, and the case belongs to that.
+          It is what lets your cases be private to you without us holding anything that identifies
+          you as a person.
+        </p>
+        <p style={{ ...paragraph, marginTop: 12 }}>
+          The trade-off is worth stating plainly: because the identity lives in your browser,
+          clearing this site&rsquo;s data or moving to another device means losing the way back to
+          your case. Account recovery is coming later.
+        </p>
+        <p style={{ ...paragraph, marginTop: 12 }}>
+          Separately, the small number of people who operate PCNWatch sign in to an internal
+          dashboard with an email address. That is a staff sign-in and has nothing to do with
+          customer cases: no customer is asked for an email address, and no customer account
+          exists to sign in to.
+        </p>
       </Section>
 
       <Section title="What we do not ask for">
@@ -66,13 +85,32 @@ export default function PrivacyPage() {
           <li>Delete an individual piece of evidence at any time from the case.</li>
           <li>Delete a whole case, which removes its documents, evidence, drafts and deadlines.</li>
           <li>
-            Delete your account, which removes everything above along with your profile and
-            vehicles.
+            Delete everything held for your browser&rsquo;s anonymous identity, which removes
+            everything above along with the vehicles you added.
           </li>
         </ul>
         <p style={paragraph}>
           Deletion removes the stored files as well as the database rows. We keep a minimal record
           that a payment occurred, without case details, where we are required to.
+        </p>
+      </Section>
+
+      <Section title="Website analytics">
+        <p style={paragraph}>
+          We use Vercel Web Analytics to understand how the website is used overall &mdash; how many
+          visits the site receives, which pages people read, and where they arrived from. We use it
+          to see whether the product is working and worth continuing, not to build a picture of any
+          individual.
+        </p>
+        <p style={{ ...paragraph, marginTop: 12 }}>
+          It sets no cookies. It does not retain your IP address; it derives a short-lived
+          identifier from your request so that one visit is counted once, and that identifier is
+          changed daily and cannot be traced back to you. There are no advertising or marketing
+          cookies on this site, and nothing here follows you to other websites.
+        </p>
+        <p style={{ ...paragraph, marginTop: 12 }}>
+          The analytics are aggregate counts only. Nothing from your case reaches them &mdash; not
+          your PCN number, your registration, your documents, your evidence or anything you wrote.
         </p>
       </Section>
 

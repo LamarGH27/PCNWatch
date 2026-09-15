@@ -210,7 +210,10 @@ export function AnalyseFlow({ extractionAvailable }: { extractionAvailable: bool
         // The account itself is not in `context` — `toUserContext` reduced it to
         // a boolean before it got here. What goes over the wire is question ids
         // and fixed answers.
-        body: JSON.stringify({ ...facts, context }),
+        // `caseId` is the row saved a moment ago, sent so the server can record
+        // that the assessment completed. Optional: a save that failed leaves it
+        // null and the assessment runs exactly as it did before.
+        body: JSON.stringify({ ...facts, context, caseId: caseId ?? undefined }),
       });
       const body = (await response.json()) as
         | { ok: true; assessment: VerifiedAssessment }

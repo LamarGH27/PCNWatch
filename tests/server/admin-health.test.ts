@@ -24,25 +24,30 @@ function run(overrides: Record<string, unknown> = {}) {
   } as Parameters<typeof summariseHealth>[1][number];
 }
 
+/** A confirmed, non-anonymous operator holding the given address. */
+const operator = (email: string) => ({ email, isAnonymous: false, emailConfirmed: true });
+
 describe('admin access', () => {
   it('denies everyone when the allow-list is empty', () => {
-    expect(decideAdminAccess([], 'someone@example.com')).toEqual({
+    expect(decideAdminAccess([], operator('someone@example.com'))).toEqual({
       allowed: false,
       reason: 'ALLOWLIST_EMPTY',
     });
   });
 
-  it('denies an anonymous visitor', () => {
+  it('denies a visitor with no session at all', () => {
     expect(decideAdminAccess(['admin@example.com'], null).allowed).toBe(false);
   });
 
   it('denies a signed-in user who is not on the list', () => {
-    const result = decideAdminAccess(['admin@example.com'], 'someone.else@example.com');
+    const result = decideAdminAccess(['admin@example.com'], operator('someone.else@example.com'));
     expect(result).toEqual({ allowed: false, reason: 'NOT_ON_ALLOWLIST' });
   });
 
   it('allows a listed user, case-insensitively', () => {
-    expect(decideAdminAccess(['admin@example.com'], 'Admin@Example.COM').allowed).toBe(true);
+    expect(decideAdminAccess(['admin@example.com'], operator('Admin@Example.COM')).allowed).toBe(
+      true,
+    );
   });
 
   it('parses an allow-list tolerantly but does not invent entries', () => {

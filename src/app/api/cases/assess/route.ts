@@ -2,8 +2,13 @@ import { NextResponse } from 'next/server';
 import { logError } from '@/lib/errors';
 import { rateLimit } from '@/server/rate-limit';
 import { assessVerifiedNotice, type VerifiedFacts } from '@/server/cases/assess-verified';
+import { markAssessed } from '@/server/cases/persist';
 import { reconcileContext } from '@/core/context/reconcile';
-import { caseFieldsSchema } from '../schema';
+// `caseBodySchema` rather than `caseFieldsSchema`: same fields, plus the
+// optional id of the case that was saved a moment ago, which is what lets a
+// completed assessment be recorded against it. The id is still optional, so an
+// assessment run without a saved case behaves exactly as before.
+import { caseBodySchema } from '../schema';
 import type { UserContext } from '@/core/context/types';
 
 /**
@@ -36,7 +41,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, reason: 'BAD_REQUEST' as const }, { status: 400 });
   }
 
-  const parsed = caseFieldsSchema.safeParse(raw);
+  const parsed = caseBodySchema.safeParse(raw);
   if (!parsed.success) {
     // The notice details are never logged — only that validation failed.
     logError('api.cases.assess.validation', new Error('Verified facts failed validation.'));
@@ -44,7 +49,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { context, ...facts } = parsed.data;
+    const { context, caseId, ...facts } = parsed.data;
 
     /*
      * An assessment is not produced while the user's own facts contradict
@@ -74,13 +79,38 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      ok: true as const,
-      assessment: assessVerifiedNotice(
-        facts as VerifiedFacts,
-        context as UserContext | undefined,
-      ),
-    });
+    const assessment = assessVerifiedNotice(
+      facts as VerifiedFacts,
+      context as UserContext | undefined,
+    );
+
+    /*
+     * Records that an assessment completed. Nothing else.
+     *
+     * After the assessment exists, so a case can never be marked assessed on
+     * the strength of a request that then failed — and deliberately not before
+     * the response, because this is the only durable trace that the step
+     * happened at all. `pcn_cases.status` is written by nothing else and read
+     * by nothing at all, so moving VERIFIED to ASSESSED changes no behaviour:
+     * not the reasoning above, not the evidence rules, not the deadline engine,
+     * not who owns the case, and not what the Defence Pack will let anyone do.
+     *
+     * Wrapped in its own catch rather than trusting `markAssessed` to keep
+     * swallowing. It does today — but it sits inside this route's try block,
+     * so the day it stops, a datastore blip would turn a completed assessment
+     * into a 503 and the user would lose work they had already finished. The
+     * guarantee is worth more when it is local and unconditional than when it
+     * depends on a function somewhere else continuing to behave.
+     */
+    if (caseId) {
+      try {
+        await markAssessed(caseId);
+      } catch (error) {
+        logError('api.cases.assess.markAssessed', error);
+      }
+    }
+
+    return NextResponse.json({ ok: true as const, assessment });
   } catch (error) {
     logError('api.cases.assess', error);
     return NextResponse.json({ ok: false, reason: 'UNAVAILABLE' as const }, { status: 503 });

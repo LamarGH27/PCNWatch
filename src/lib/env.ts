@@ -144,6 +144,42 @@ const serverSchema = z.object({
 
   ADMIN_EMAIL_ALLOWLIST: z.string().default(''),
   INGEST_TRIGGER_SECRET: nonEmpty,
+
+  /**
+   * Vercel Web Analytics, read side.
+   *
+   * A read-scoped Vercel access token, the project it may read, and the team
+   * that owns it. Server-only and deliberately not `NEXT_PUBLIC_` — a token in
+   * the client bundle would let anyone with the page source read the traffic of
+   * every project it is scoped to.
+   */
+  VERCEL_ANALYTICS_TOKEN: nonEmpty,
+  VERCEL_PROJECT_ID: nonEmpty,
+  VERCEL_TEAM_ID: nonEmpty,
+
+  /**
+   * Whether this deployment's Supabase project holds Production data only.
+   *
+   * There is no marker on a `pcn_cases` or `pcn_drafts` row saying which
+   * deployment wrote it, so if Preview and Production share one Supabase
+   * project then operator testing is mixed into the customer counts and nothing
+   * in the database can separate them again.
+   *
+   * The application cannot answer this about itself: from inside Production
+   * there is no way to see what `NEXT_PUBLIC_SUPABASE_URL` is set to in
+   * Preview. So it is asserted here by whoever compared the two, and **absent
+   * means unknown, not clean** — the counts that depend on it are then reported
+   * as unavailable rather than shown as if they were Production-only.
+   *
+   * Payments are not governed by this. `livemode = true` can only be produced
+   * by a deployment holding Live Stripe keys, and `checkStripeMode` refuses
+   * Live keys outside Production, so revenue is Production-only whatever this
+   * says.
+   */
+  ANALYTICS_DB_SCOPE: z.preprocess(
+    emptyAsUndefined,
+    z.enum(['PRODUCTION_ONLY', 'SHARED_WITH_PREVIEW']).optional().catch(undefined),
+  ),
 });
 
 export type ServerEnv = z.infer<typeof serverSchema>;
@@ -185,7 +221,8 @@ export type IntegrationName =
   | 'stripe'
   | 'dtro'
   | 'camden'
-  | 'posthog';
+  | 'posthog'
+  | 'vercel-analytics';
 
 export interface IntegrationStatus {
   name: IntegrationName;
@@ -244,6 +281,11 @@ export function integrationStatuses(): IntegrationStatus[] {
     statusFor('dtro', ['DTRO_CLIENT_ID', 'DTRO_CLIENT_SECRET', 'DTRO_BASE_URL']),
     statusFor('camden', ['CAMDEN_PCN_DATASET_URL']),
     statusFor('posthog', ['NEXT_PUBLIC_POSTHOG_KEY']),
+    statusFor('vercel-analytics', [
+      'VERCEL_ANALYTICS_TOKEN',
+      'VERCEL_PROJECT_ID',
+      'VERCEL_TEAM_ID',
+    ]),
   ];
 }
 
