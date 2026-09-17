@@ -1,4 +1,24 @@
 import { normaliseStreetName } from '../shared/normalise';
+
+/**
+ * The key two publishers' spellings of one street must agree on.
+ *
+ * `normaliseStreetName` settles case and spacing but keeps apostrophes, which
+ * is right for a location slug and wrong for a cross-source join: Barnet writes
+ * REGENTS PARK ROAD and Ordnance Survey writes Regent's Park Road. They are the
+ * same street, and 83 Barnet locations carrying 6,976 notices failed to match
+ * for no other reason.
+ *
+ * This is a second key layered on top, not a change to the shared normaliser —
+ * that one produces Camden's location slugs, and altering it would silently
+ * repartition a borough that is already live.
+ *
+ * Still deterministic and still exact: punctuation is removed from both sides
+ * and the result must be equal. Nothing here measures similarity.
+ */
+export function joinKey(name: string): string {
+  return normaliseStreetName(name).replace(/['’]/g, '');
+}
 import { classifyBarnetLocation } from './location-class';
 
 /**
@@ -49,6 +69,8 @@ export interface GazetteerEntry {
   readonly district: string | null;
   /** Postcode district, e.g. "N3". Absent on many entries. */
   readonly postcodeDistrict: string | null;
+  /** Populated place, e.g. "Finchley". Absent on many entries. */
+  readonly populatedPlace: string | null;
   readonly longitude: number;
   readonly latitude: number;
 }
@@ -68,6 +90,16 @@ export interface MatchOptions {
   readonly district: string;
   /** Barnet's own postcode district for this street, when it published one. */
   readonly postcodeDistrict?: string | null;
+  /**
+   * Barnet's own locality for this street, when it published one.
+   *
+   * "HIGH ROAD, North Finchley" and "STATION ROAD, Edgware" are how Barnet
+   * distinguishes streets that share a name, and Ordnance Survey records the
+   * same thing as a populated place. Discarding it left the two busiest
+   * ambiguities in Barnet unresolvable when the publisher had already said
+   * which one it meant.
+   */
+  readonly locality?: string | null;
   /** The feed the location came from; camera feeds are never matched. */
   readonly enforcementType?: string;
 }
@@ -95,10 +127,10 @@ export function matchStreet(
     return refuse('NOT_ELIGIBLE_CLASS', classification.reason);
   }
 
-  const wanted = normaliseStreetName(barnetLocation);
+  const wanted = joinKey(barnetLocation);
 
   // Name equality on the normalised form, never similarity.
-  const named = candidates.filter((c) => normaliseStreetName(c.name) === wanted);
+  const named = candidates.filter((c) => joinKey(c.name) === wanted);
   if (named.length === 0) {
     return refuse('NO_CANDIDATE', 'No official road of that name was found.');
   }
@@ -126,11 +158,27 @@ export function matchStreet(
    * discarding the best disambiguator available.
    */
   let surviving = inDistrict;
+
+  /*
+   * Locality first, because it is the coarser and more reliable of the two:
+   * Barnet's own "North Finchley" against Ordnance Survey's populated place.
+   * Applied only when it narrows the field, never when it would empty it — a
+   * publisher naming a locality OS spells differently is a reason to fall back
+   * to the postcode, not a reason to refuse.
+   */
+  if (options.locality) {
+    const wantedPlace = joinKey(options.locality);
+    const byPlace = surviving.filter(
+      (c) => c.populatedPlace !== null && joinKey(c.populatedPlace) === wantedPlace,
+    );
+    if (byPlace.length > 0) surviving = byPlace;
+  }
+
   if (options.postcodeDistrict) {
-    const byPostcode = inDistrict.filter(
+    const byPostcode = surviving.filter(
       (c) => c.postcodeDistrict?.toUpperCase() === options.postcodeDistrict?.toUpperCase(),
     );
-    if (byPostcode.length === 0 && inDistrict.every((c) => c.postcodeDistrict !== null)) {
+    if (byPostcode.length === 0 && surviving.every((c) => c.postcodeDistrict !== null)) {
       return refuse(
         'POSTCODE_CONFLICT',
         `Barnet records this street in ${options.postcodeDistrict}, and every official road of that name in ${options.district} is somewhere else.`,

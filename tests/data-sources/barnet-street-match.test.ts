@@ -20,6 +20,7 @@ const entry = (over: Partial<GazetteerEntry> = {}): GazetteerEntry => ({
   kind: 'NAMED_ROAD',
   district: 'Barnet',
   postcodeDistrict: 'N3',
+  populatedPlace: 'Finchley',
   longitude: -0.1936,
   latitude: 51.6006,
   ...over,

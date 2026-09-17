@@ -67,6 +67,19 @@ export interface SplitLocation {
  * the same convention Camden already uses for "MAPLE STREET W1", which is why
  * this reads as a parsing difference rather than a different product rule.
  *
+ * But only a *postcode district* qualifier works that way, and assuming a
+ * locality did too was wrong. "BALLARDS LANE, N3" and "BALLARDS LANE, N12" are
+ * one road crossing a district boundary. "HIGH ROAD, North Finchley",
+ * "HIGH ROAD, Whetstone" and "HIGH ROAD, East Finchley" are three different
+ * roads, carrying 15,144, 8,417 and 3,194 notices — and Ordnance Survey holds
+ * them as separate records too. Merging those would not merely lose precision,
+ * it would add three roads' enforcement together and rank the total as one
+ * place.
+ *
+ * So the locality stays part of what makes this location distinct, and is
+ * additionally reported on its own so a gazetteer match can use it. The
+ * postcode district is stripped, as before.
+ *
  * Safe because the shape is regular: no Barnet value contains more than one
  * comma, so there is exactly one place to split and no ambiguity about which
  * comma meant what.

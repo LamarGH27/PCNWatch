@@ -368,9 +368,16 @@ export function normaliseBarnetRow(
         issuedAt,
         issuedHour,
         issuedDayOfWeek: parsed.getUTCDay(),
-        streetName: split.street,
+        // The locality is part of what makes this location distinct, not just
+        // metadata: three different High Roads in Barnet would otherwise share
+        // one slug and have their enforcement added together.
+        streetName: split.locality ? `${split.street}, ${split.locality}` : split.street,
         streetNameNormalised,
-        locationSlug: slugify(streetNameNormalised),
+        locationSlug: slugify(
+          split.locality
+            ? `${streetNameNormalised} ${normaliseStreetName(split.locality)}`
+            : streetNameNormalised,
+        ),
         locality: split.locality,
         postcodeDistrict: split.postcodeDistrict,
         /*
