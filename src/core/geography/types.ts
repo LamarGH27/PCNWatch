@@ -24,6 +24,32 @@
  */
 
 /** Where a coordinate came from. */
+/**
+ * A rectangular geographic extent, in WGS84 degrees.
+ *
+ * Lives here rather than beside any one authority or data source because two
+ * unrelated things need the same shape: the coverage layer, deciding which
+ * sentence to show a visitor whose search landed somewhere, and the ingestion
+ * quality gate, checking that a source's published coordinates fall where that
+ * source says it operates. Neither owns the idea.
+ */
+export interface BoundingBox {
+  readonly minLon: number;
+  readonly minLat: number;
+  readonly maxLon: number;
+  readonly maxLat: number;
+}
+
+/** Whether a point falls inside a box. Inclusive on every edge. */
+export function withinBounds(bounds: BoundingBox, longitude: number, latitude: number): boolean {
+  return (
+    longitude >= bounds.minLon &&
+    longitude <= bounds.maxLon &&
+    latitude >= bounds.minLat &&
+    latitude <= bounds.maxLat
+  );
+}
+
 export type GeometryOrigin =
   /** The authority published the coordinate on the record itself. */
   | 'SOURCE_PUBLISHED'

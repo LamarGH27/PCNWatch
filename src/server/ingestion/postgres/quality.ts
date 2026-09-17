@@ -1,6 +1,6 @@
 import type { NormalisedPcnEvent } from '@/data-sources/shared/types';
 import type { IngestionError } from '@/data-sources/shared/types';
-import { CAMDEN_BBOX } from '@/data-sources/camden/schema';
+import { type BoundingBox, withinBounds } from '@/core/geography/types';
 
 /**
  * Data-quality measurement over a normalised batch.
@@ -135,11 +135,27 @@ export const PLACEHOLDER_COORDINATE_STREETS = 4;
 /** Anything before civil parking enforcement is implausible in this dataset. */
 export const IMPLAUSIBLY_OLD_BEFORE = '2004-01-01';
 
+/**
+ * Where a batch is expected to have come from.
+ *
+ * Supplied by the source being ingested rather than imported, because this file
+ * is run for every authority and a rectangle belonging to one of them is the
+ * wrong answer for all the others. Absent means the bounds check does not run:
+ * a source that asserts nothing about its extent is not measured against a
+ * rectangle we made up for it.
+ */
+export interface QualityContext {
+  readonly bounds?: BoundingBox | null;
+  /** How the area is named in warnings, e.g. "Camden". */
+  readonly areaLabel?: string;
+}
+
 export function analyseQuality(
   events: readonly NormalisedPcnEvent[],
   errors: readonly IngestionError[],
   knownCodes: ReadonlySet<string>,
   today: string,
+  context: QualityContext = {},
 ): QualityReport {
   const warnings: string[] = [];
 
@@ -180,13 +196,10 @@ export function analyseQuality(
       }
     }
   }
-  const outsideBounds = located.filter(
-    (e) =>
-      e.longitude! < CAMDEN_BBOX.minLon ||
-      e.longitude! > CAMDEN_BBOX.maxLon ||
-      e.latitude! < CAMDEN_BBOX.minLat ||
-      e.latitude! > CAMDEN_BBOX.maxLat,
-  ).length;
+  const bounds = context.bounds ?? null;
+  const outsideBounds = bounds
+    ? located.filter((e) => !withinBounds(bounds, e.longitude!, e.latitude!)).length
+    : 0;
 
   const noGeometryReasons: Record<string, number> = {};
   let sourcePublishedCoordinateColumn = false;
@@ -241,7 +254,7 @@ export function analyseQuality(
   }
   if (outsideBounds > 0) {
     warnings.push(
-      `${outsideBounds} accepted records carry coordinates outside the expected Camden bounding box. This should be impossible — investigate before trusting the map.`,
+      `${outsideBounds} accepted records carry coordinates outside the expected ${context.areaLabel ?? 'source'} bounding box. This should be impossible — investigate before trusting the map.`,
     );
   }
   if (vague.length > 0) {

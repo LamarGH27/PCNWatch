@@ -20,11 +20,17 @@
 
 import './load-env';
 import {
-  createCamdenAdapter,
   CAMDEN_AUTHORITY_SLUG,
   CamdenFetchError,
-  camdenDatasetUrl,
 } from '../src/data-sources/camden/adapter';
+import {
+  isOfficialSourceUrl,
+  knownSourceSlugs,
+  requireSource,
+  UnknownSourceError,
+  type SourceRegistration,
+} from '../src/data-sources/registry';
+import type { IngestionAdapter } from '../src/data-sources/shared/types';
 import { runIngestion } from '../src/data-sources/shared/pipeline';
 import {
   runCamdenAggregateIngestion,
@@ -39,6 +45,8 @@ import { knownContraventionCodes } from '../src/core/reference/store';
 import type { IngestionError, NormalisedPcnEvent } from '../src/data-sources/shared/types';
 
 interface Args {
+  /** Which registered source to ingest. Required, and never defaulted. */
+  source: string;
   limit?: number;
   since?: string;
   dryRun: boolean;
@@ -50,13 +58,33 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { dryRun: false };
-  for (let i = 0; i < argv.length; i += 1) {
-    const flag = argv[i];
+  /*
+   * The source is the first positional argument, and there is no default.
+   *
+   * Defaulting to Camden would mean `npm run ingest -- --limit 100` silently
+   * refreshing a borough the operator was not thinking about. Naming it is
+   * cheap; guessing it is not recoverable.
+   */
+  const [source, ...rest] = argv;
+  if (!source || source.startsWith('--')) {
+    fail(2, 'No ingestion source given.', [
+      'Usage: npm run ingest -- <source> [options]',
+      '',
+      `Known sources: ${knownSourceSlugs().join(', ')}`,
+      '',
+      'Example:',
+      '  npm run ingest -- camden-pcn --dry-run --limit 5000',
+    ]);
+  }
+
+  const args: Args = { source, dryRun: false };
+  const argv2 = rest;
+  for (let i = 0; i < argv2.length; i += 1) {
+    const flag = argv2[i];
     if (flag === '--dry-run') args.dryRun = true;
-    else if (flag === '--limit') args.limit = Number(argv[++i]);
-    else if (flag === '--since') args.since = argv[++i];
-    else if (flag === '--source-override') args.sourceOverride = argv[++i];
+    else if (flag === '--limit') args.limit = Number(argv2[++i]);
+    else if (flag === '--since') args.since = argv2[++i];
+    else if (flag === '--source-override') args.sourceOverride = argv2[++i];
     else {
       // Silently ignoring an unknown flag is how `--source` gets typed for
       // `--source-override` and the run quietly hits the real dataset instead.
@@ -69,20 +97,29 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-const OFFICIAL_HOST = 'opendata.camden.gov.uk';
-
-function isOfficialSource(url: string): boolean {
-  try {
-    return new URL(url).hostname.endsWith(OFFICIAL_HOST);
-  } catch {
-    return false;
-  }
-}
-
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
-  const datasetUrl = args.sourceOverride ?? camdenDatasetUrl();
+  /*
+   * Resolved before anything else touches the network or the database.
+   *
+   * An unknown slug stops here, naming what is available, rather than being
+   * discovered three stages in when a foreign key does not match.
+   */
+  let source: SourceRegistration;
+  try {
+    source = requireSource(args.source);
+  } catch (error) {
+    if (error instanceof UnknownSourceError) {
+      fail(2, error.message, [
+        'Sources are registered in src/data-sources/registry.ts. A source that is',
+        'not listed there cannot be ingested, which is deliberate.',
+      ]);
+    }
+    throw error;
+  }
+
+  const datasetUrl = args.sourceOverride ?? source.defaultDatasetUrl();
   const databaseUrl = process.env.DATABASE_URL;
 
   if (!args.dryRun && !databaseUrl) {
@@ -91,7 +128,7 @@ async function main(): Promise<void> {
       'DATABASE_URL is not set.',
       [
         'A dry run needs no database:',
-        '  npm run ingest:camden -- --dry-run --limit 5000',
+        `  npm run ingest -- ${args.source} --dry-run --limit 5000`,
         '',
         'To write, you need PostgreSQL 15+ with PostGIS. If you have Docker:',
         '  docker run -d --name pcnwatch-db -p 5432:5432 \\',
@@ -105,30 +142,29 @@ async function main(): Promise<void> {
     );
   }
 
-  const official = isOfficialSource(datasetUrl);
+  const official = isOfficialSourceUrl(source, datasetUrl);
   const isDemo = !official;
 
   if (isDemo) {
     console.warn(
-      `\n⚠  ${datasetUrl} is not Camden's official open-data host.\n` +
+      `\n⚠  ${datasetUrl} is not ${source.label}'s official open-data host.\n` +
         '   This run will be recorded as DEMO data. The map and hotspot pages will\n' +
         '   refuse to present it as real enforcement activity.\n',
     );
   }
 
-  const adapter = createCamdenAdapter({
+  const adapter = source.create({
     datasetUrl,
     onProgress: ({ page, rowsSoFar }) => {
       // A fetch of a full borough takes minutes. Silence for that long is
       // indistinguishable from a hang.
       process.stdout.write(`\r  fetching… page ${page}, ${rowsSoFar.toLocaleString('en-GB')} rows`);
     },
-    appToken: process.env.CAMDEN_APP_TOKEN,
   });
 
   try {
     if (args.dryRun) {
-      await dryRun(adapter, args, datasetUrl);
+      await dryRun(source, adapter, args, datasetUrl);
       return;
     }
 
@@ -150,7 +186,7 @@ async function main(): Promise<void> {
     });
     process.stdout.write('\n');
 
-    printAggregateReport(result, datasetUrl, args.limit);
+    printAggregateReport(result, datasetUrl, args.limit, official);
 
     if (result.status === 'FAILED') {
       console.error(
@@ -173,7 +209,8 @@ async function main(): Promise<void> {
 
 /** Validates the source without touching the database. */
 async function dryRun(
-  adapter: ReturnType<typeof createCamdenAdapter>,
+  source: SourceRegistration,
+  adapter: IngestionAdapter,
   args: Args,
   datasetUrl: string,
 ): Promise<void> {
@@ -213,7 +250,7 @@ async function dryRun(
       contentHash: result.contentHash,
       retrievedAt: result.retrievedAt,
       durationMs: Date.now() - startedAt,
-      isDemo: !isOfficialSource(datasetUrl),
+      isDemo: !isOfficialSourceUrl(source, datasetUrl),
       counters: {
         fetched: result.report.fetched,
         accepted: result.report.accepted,
@@ -421,13 +458,14 @@ function printAggregateReport(
   result: AggregateIngestionResult,
   datasetUrl: string,
   limit: number | undefined,
+  official: boolean,
 ): void {
   const c = result.counters;
 
   section('SOURCE');
   row('URL', datasetUrl);
   row('Dataset id', datasetIdFromUrl(datasetUrl) ?? '(not a Socrata URL)');
-  row('Official source', isOfficialSource(datasetUrl) ? 'yes' : 'NO — recorded as DEMO');
+  row('Official source', official ? 'yes' : 'NO — recorded as DEMO');
   row('Run id', result.runId || '(not started)');
   row('Dataset version', result.datasetVersionId ?? '(none)');
   row('Status', result.status);

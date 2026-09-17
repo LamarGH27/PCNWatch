@@ -1,3 +1,5 @@
+import type { BoundingBox } from '@/core/geography/types';
+
 /**
  * Shared ingestion adapter contract.
  *
@@ -89,6 +91,21 @@ export interface SourceDescriptor {
   readonly sourceUrl: string | null;
   readonly attributionText: string;
   readonly coverageNotes: string;
+  /**
+   * Where this source's coordinates are expected to fall.
+   *
+   * The source owns this, not the quality gate. The gate used to import one
+   * borough's rectangle directly, which meant every other borough's coordinates
+   * would be reported as impossible — a check that grows more wrong with each
+   * source added is worse than no check, because it still looks like it is
+   * working.
+   *
+   * Optional, and a source that declares nothing simply gets no bounds check:
+   * measuring against a rectangle nobody asserted would be inventing the
+   * assertion. A source that does declare one should take it from the same
+   * authority area the coverage layer reads, so the two cannot disagree.
+   */
+  readonly bounds?: BoundingBox | null;
 }
 
 export interface FetchResult {

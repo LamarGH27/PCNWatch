@@ -92,6 +92,10 @@ export const CAMDEN_SOURCE: SourceDescriptor = {
     'Contains public sector information from the London Borough of Camden licensed under the Open Government Licence v3.0.',
   coverageNotes:
     'Penalty charge notices issued in the London Borough of Camden. Coverage is limited to what Camden publishes; it is not a complete record of all enforcement activity.',
+  // The same rectangle the coverage layer uses, so the quality gate checks this
+  // source against the area the product says it covers rather than against a
+  // constant the gate happens to import.
+  bounds: CAMDEN_BBOX,
 };
 
 export class CamdenFetchError extends Error {

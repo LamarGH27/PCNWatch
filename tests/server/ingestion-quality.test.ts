@@ -7,6 +7,7 @@ import {
 } from '@/server/ingestion/postgres/quality';
 import { periodStartFor } from '@/server/ingestion/postgres/aggregate-run';
 import type { IngestionError, NormalisedPcnEvent } from '@/data-sources/shared/types';
+import { CAMDEN_BBOX } from '@/data-sources/camden/schema';
 
 const KNOWN_CODES = new Set(['01', '12', '21']);
 const TODAY = '2026-09-04';
@@ -62,15 +63,33 @@ describe('data-quality measurement', () => {
   });
 
   it('flags coordinates outside the expected bounds', () => {
+    // The bounds now come from the source being analysed rather than from an
+    // import, so the test says which area it is measuring against. Camden's
+    // own rectangle, read from the coverage registry — the same one the adapter
+    // declares — so this still asserts exactly what it asserted before.
+    const q = analyseQuality(
+      [...batch(99), event({ sourceRecordId: 'X', longitude: -2.24, latitude: 53.48 })],
+      [],
+      KNOWN_CODES,
+      TODAY,
+      { bounds: CAMDEN_BBOX, areaLabel: 'Camden' },
+    );
+    expect(q.location.outsideBounds).toBe(1);
+    expect(q.warnings.some((w) => w.includes('outside the expected Camden bounding box'))).toBe(true);
+    expect(evaluateQualityGate(q, 100, 0).pass).toBe(false);
+  });
+
+  it('runs no bounds check when the source declares no extent', () => {
+    // Manchester coordinates, and nothing to say they are wrong. A source that
+    // asserts no extent is not measured against a rectangle we invented for it.
     const q = analyseQuality(
       [...batch(99), event({ sourceRecordId: 'X', longitude: -2.24, latitude: 53.48 })],
       [],
       KNOWN_CODES,
       TODAY,
     );
-    expect(q.location.outsideBounds).toBe(1);
-    expect(q.warnings.some((w) => w.includes('outside the expected Camden bounding box'))).toBe(true);
-    expect(evaluateQualityGate(q, 100, 0).pass).toBe(false);
+    expect(q.location.outsideBounds).toBe(0);
+    expect(q.warnings.some((w) => w.includes('bounding box'))).toBe(false);
   });
 
   it('identifies location values that carry no meaning', () => {

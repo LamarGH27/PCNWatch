@@ -367,7 +367,12 @@ export async function ingestAggregates(
 
     const today = new Date().toISOString().slice(0, 10);
     const { quality, qualityGate } = await timer.time('QUALITY_GATE', async () => {
-      const q = analyseQuality(qualitySample, errors, new Set(knownContraventionCodes()), today);
+      // The bounds come from the adapter being run, so each authority is
+      // measured against its own declared extent.
+      const q = analyseQuality(qualitySample, errors, new Set(knownContraventionCodes()), today, {
+        bounds: adapter.descriptor.bounds ?? null,
+        areaLabel: authorityAreaLabel(adapter.descriptor),
+      });
       return { quality: q, qualityGate: evaluateQualityGate(q, counters.fetched, counters.rejected) };
     });
 
@@ -675,4 +680,16 @@ export function periodStartFor(periodKey: '30D' | '90D' | '12M', asOf: string): 
   const date = new Date(`${asOf}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() - (days - 1));
   return date.toISOString().slice(0, 10);
+}
+
+
+/**
+ * How a source's area is named in a quality warning.
+ *
+ * Derived from the publisher rather than carried as another descriptor field:
+ * "London Borough of Camden" is already there, and a warning that reads
+ * "outside the expected Camden bounding box" is what an operator needs.
+ */
+function authorityAreaLabel(descriptor: { readonly publisher: string }): string {
+  return descriptor.publisher.replace(/^London Borough of\s+/i, '').replace(/\s+Council$/i, '');
 }

@@ -1,3 +1,6 @@
+import { authorityArea, type AuthorityArea } from '@/core/coverage/area';
+import type { BoundingBox } from '@/core/geography/types';
+
 import { z } from 'zod';
 
 /**
@@ -287,10 +290,25 @@ export function resolvePoint(
  * Used to reject coordinates that cannot plausibly be in the borough — swapped
  * lat/long, null island, or an unconverted British National Grid easting.
  * Padded generously; the point is to catch corruption, not to clip the boundary.
+ *
+ * Read from the coverage layer rather than written out again here. It was
+ * duplicated: the same four numbers appeared in `core/coverage/area.ts` for
+ * deciding what to tell a visitor, and here for validating the source. Editing
+ * one and not the other would have left the map claiming to cover ground the
+ * ingestion was rejecting, with nothing failing to say so.
  */
-export const CAMDEN_BBOX = {
-  minLon: -0.24,
-  minLat: 51.5,
-  maxLon: -0.08,
-  maxLat: 51.6,
-} as const;
+export const CAMDEN_BBOX: BoundingBox = camdenArea().bounds;
+
+
+/**
+ * Camden's registered area.
+ *
+ * Throws rather than falling back. A missing registration is a programming
+ * error, and the alternative — a default rectangle — would validate Camden's
+ * coordinates against somewhere that is not Camden.
+ */
+function camdenArea(): AuthorityArea {
+  const area = authorityArea('camden');
+  if (!area) throw new Error('No registered coverage area for authority "camden".');
+  return area;
+}
