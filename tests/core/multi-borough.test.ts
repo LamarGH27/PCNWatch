@@ -99,9 +99,10 @@ describe('coverage is plural in structure', () => {
 });
 
 describe('an unlaunched borough is invisible', () => {
-  it('does not register Barnet at all yet', () => {
-    // Registering a rectangle for a borough whose data has not been inspected
-    // would be inventing its extent. Barnet is absent until that changes.
+  it('registers no coverage area for Barnet', () => {
+    // Barnet publishes no coordinates in any of its three datasets, so there is
+    // nothing to bound and nowhere on a map to put it. An area here would be a
+    // rectangle asserting an extent the data never describes.
     expect(authorityArea('barnet')).toBeNull();
     expect(registeredAreas().map((a) => a.slug)).toEqual(['camden']);
   });
@@ -145,21 +146,34 @@ describe('an unlaunched borough is invisible', () => {
 });
 
 describe('the source registry fails closed', () => {
-  it('knows Camden and nothing else', () => {
-    expect(knownSourceSlugs()).toEqual(['camden-pcn']);
-    expect(listSources()).toHaveLength(1);
+  it('knows exactly the sources that have been registered', () => {
+    expect(knownSourceSlugs()).toEqual(['camden-pcn', 'barnet-pcn']);
+    expect(listSources()).toHaveLength(2);
+  });
+
+  it('registers Barnet without making it visible', () => {
+    /*
+     * The separation the registry exists for. Barnet's datasets are verified
+     * and ingestible, so it belongs here; whether anyone is told Barnet exists
+     * is `liveAuthoritySlugs`, which still names only Camden. Being ingestible
+     * and being shown are different decisions, and this is the test that says
+     * one does not imply the other.
+     */
+    expect(getSource('barnet-pcn')?.authoritySlug).toBe('barnet');
+    expect(COVERAGE_SCOPE.liveAuthoritySlugs).not.toContain('barnet');
+    expect(coveredAreas().map((a) => a.slug)).toEqual(['camden']);
   });
 
   it('refuses an unregistered source by name rather than defaulting', () => {
-    // The dangerous failure is a typo silently ingesting Camden's dataset and
-    // attributing it to another borough. Nothing downstream could detect that.
-    expect(getSource('barnet-pcn')).toBeNull();
-    expect(() => requireSource('barnet-pcn')).toThrow(UnknownSourceError);
-    expect(() => requireSource('barnet-pcn')).toThrow(/Known sources: camden-pcn/);
+    // The dangerous failure is a typo silently ingesting one borough's dataset
+    // and attributing it to another. Nothing downstream could detect that.
+    expect(getSource('haringey-pcn')).toBeNull();
+    expect(() => requireSource('haringey-pcn')).toThrow(UnknownSourceError);
+    expect(() => requireSource('haringey-pcn')).toThrow(/Known sources: camden-pcn/);
   });
 
   it('refuses an empty or near-miss slug', () => {
-    for (const slug of ['', 'camden', 'CAMDEN-PCN', 'camden-pcn ']) {
+    for (const slug of ['', 'camden', 'CAMDEN-PCN', 'camden-pcn ', 'barnet', 'BARNET-PCN']) {
       expect(getSource(slug)).toBeNull();
     }
   });

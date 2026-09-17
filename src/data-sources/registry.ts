@@ -5,6 +5,12 @@ import {
   camdenDatasetUrl,
   createCamdenAdapter,
 } from './camden/adapter';
+import {
+  BARNET_AUTHORITY_SLUG,
+  BARNET_SOURCE,
+  barnetFilesFromEnv,
+  createBarnetAdapter,
+} from './barnet/adapter';
 
 /**
  * The sources PCNWatch knows how to ingest.
@@ -61,6 +67,28 @@ const REGISTRY: readonly SourceRegistration[] = [
         onProgress,
         appToken: process.env.CAMDEN_APP_TOKEN,
       }),
+  },
+  {
+    /*
+     * Registered, and not live.
+     *
+     * Barnet's three datasets are readable, verified and ingestible, which is
+     * what this list means. Whether anybody is told Barnet exists is
+     * `COVERAGE_SCOPE.liveAuthoritySlugs`, and it does not contain Barnet — so
+     * a run here fills a dataset version that no public surface reads.
+     *
+     * Barnet is a snapshot rather than a feed: it is published as CSV files
+     * rather than an API, so `defaultDatasetUrl` names the dataset page a
+     * human retrieved them from and the files themselves come from the
+     * environment. That is also why the official-host check is against the
+     * open-data portal: a run pointed anywhere else is recorded as demo.
+     */
+    sourceSlug: BARNET_SOURCE.slug,
+    authoritySlug: BARNET_AUTHORITY_SLUG,
+    label: BARNET_SOURCE.name,
+    officialHost: 'open.barnet.gov.uk',
+    defaultDatasetUrl: () => 'https://open.barnet.gov.uk/',
+    create: () => createBarnetAdapter({ files: barnetFilesFromEnv() }),
   },
 ];
 
