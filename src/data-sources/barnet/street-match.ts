@@ -20,6 +20,7 @@ export function joinKey(name: string): string {
   return normaliseStreetName(name).replace(/['’]/g, '');
 }
 import { classifyBarnetLocation } from './location-class';
+import { districtForBarnetLocality } from './locality-districts';
 
 /**
  * Matching a Barnet enforcement street to an official gazetteer entry.
@@ -174,14 +175,29 @@ export function matchStreet(
     if (byPlace.length > 0) surviving = byPlace;
   }
 
-  if (options.postcodeDistrict) {
+  /*
+   * Where Barnet named a locality but no postcode, the reviewed table supplies
+   * the district that locality names.
+   *
+   * This is why the place-name comparison above is not enough: Ordnance Survey
+   * calls both North Finchley and East Finchley "Finchley", so its own place
+   * name cannot separate the two High Roads it holds. The postal district can.
+   *
+   * Barnet's own postcode always wins — the table is consulted only when the
+   * publisher gave none, and it narrows candidates rather than supplying any
+   * position.
+   */
+  const effectivePostcode =
+    options.postcodeDistrict ?? districtForBarnetLocality(options.locality);
+
+  if (effectivePostcode) {
     const byPostcode = surviving.filter(
-      (c) => c.postcodeDistrict?.toUpperCase() === options.postcodeDistrict?.toUpperCase(),
+      (c) => c.postcodeDistrict?.toUpperCase() === effectivePostcode.toUpperCase(),
     );
     if (byPostcode.length === 0 && surviving.every((c) => c.postcodeDistrict !== null)) {
       return refuse(
         'POSTCODE_CONFLICT',
-        `Barnet records this street in ${options.postcodeDistrict}, and every official road of that name in ${options.district} is somewhere else.`,
+        `Barnet records this street in ${effectivePostcode}, and every official road of that name in ${options.district} is somewhere else.`,
       );
     }
     if (byPostcode.length > 0) surviving = byPostcode;
